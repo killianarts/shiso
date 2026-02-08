@@ -7,34 +7,17 @@
            #:*request*
            #:*response
            #:application
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 330b7e6 (Removed :content-length, added exports.)
            #:application-routes
            #:start
            #:stop
            #:routes
            #:routes-mapper))
-<<<<<<< HEAD
-=======
-           #:application-routes))
->>>>>>> 0731194 (Initial commit)
-=======
->>>>>>> 330b7e6 (Removed :content-length, added exports.)
 
 (in-package #:shiso/main)
 
 (defclass routes ()
   ((mapper :initarg :mapper :reader routes-mapper :initform nil)))
-<<<<<<< HEAD
-<<<<<<< HEAD
 
-=======
->>>>>>> 0731194 (Initial commit)
-=======
-
->>>>>>> 330b7e6 (Removed :content-length, added exports.)
 (defparameter *routes* (make-instance 'routes :mapper (myway:make-mapper)))
 
 ;; An instance of this class will be sent to clack:clackup or first lack:builder
@@ -65,41 +48,19 @@
           (lack/response:finalize-response (lack/response:make-response 404 '(:content-type "text/html") '("Not found")))))))
 
 (defun http-response (body &key (code 200) (headers nil))
-<<<<<<< HEAD
-<<<<<<< HEAD
-  (let ((headers (append `(:content-type "text/html; charset=utf-8")
-=======
-  (let ((headers (append `(:content-type "text/html; charset=utf-8"
-                           :content-length ,(length body))
->>>>>>> 0731194 (Initial commit)
-=======
-  (let ((headers (append `(:content-type "text/html; charset=utf-8")
->>>>>>> 330b7e6 (Removed :content-length, added exports.)
-                         headers)))
+  (let ((headers (append `(:content-type "text/html; charset=utf-8") headers)))
     `(,code ,headers (,body))))
 
 
 (defun make-endpoint (fn)
   (lambda (params)
-<<<<<<< HEAD
-<<<<<<< HEAD
     (funcall fn params)))
-=======
-    (funcall (symbol-function fn) params)))
->>>>>>> 0731194 (Initial commit)
-=======
-    (funcall fn params)))
->>>>>>> a0f2c65 (Initial commit)
 
 (defun route (method routing-rule endpoint)
   (myway:connect (routes-mapper (application-routes *app*))
                  routing-rule
                  (make-endpoint endpoint)
                  :method method))
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 330b7e6 (Removed :content-length, added exports.)
 
 (defparameter *server-connection* nil)
 
@@ -116,8 +77,3 @@
   (prog1
       (clack:stop *server-connection*)
     (setf *server-connection* nil)))
-<<<<<<< HEAD
-=======
->>>>>>> 0731194 (Initial commit)
-=======
->>>>>>> 330b7e6 (Removed :content-length, added exports.)
