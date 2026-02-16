@@ -56,11 +56,14 @@
   (lambda (params)
     (funcall fn params)))
 
-(defun define-route (method routing-rule endpoint)
+(defun define-route (method routing-rule endpoint name &optional regexp)
+  "Define a route. Name should be a keyword."
   (myway:connect (routes-mapper (application-routes *app*))
                  routing-rule
                  (make-endpoint endpoint)
-                 :method method))
+                 :method method
+                 :name name
+                 :regexp regexp))
 
 (defparameter *server-connection* nil)
 
