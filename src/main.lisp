@@ -56,7 +56,7 @@
   (lambda (params)
     (funcall fn params)))
 
-(defun route (method routing-rule endpoint)
+(defun define-route (method routing-rule endpoint)
   (myway:connect (routes-mapper (application-routes *app*))
                  routing-rule
                  (make-endpoint endpoint)
