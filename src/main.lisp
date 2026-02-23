@@ -1,28 +1,25 @@
 (uiop:define-package #:shiso
   (:use #:cl)
   (:nicknames #:shiso/main)
-  (:export #:*routes*
-           #:route
-           #:http-response
+  (:export #:http-response
            #:*request*
            #:*response
            #:application
            #:application-routes
            #:start
            #:stop
+           #:*routes*
            #:routes
-           #:routes-mapper))
+           #:routes-mapper
+           #:define-route
+           #:current-path
+           #:static))
 
 (in-package #:shiso/main)
 
-(defclass routes ()
-  ((mapper :initarg :mapper :reader routes-mapper :initform nil)))
 
-(defparameter *routes* (make-instance 'routes :mapper (myway:make-mapper)))
-
-;; An instance of this class will be sent to clack:clackup or first lack:builder
-;; and then clack:clackup to start the server.
-
+;; * Request/Response
+;; 
 (defclass application (lack/component::lack-component)
   ((routes :initarg :routes :accessor application-routes)))
 
@@ -51,20 +48,51 @@
   (let ((headers (append `(:content-type "text/html; charset=utf-8") headers)))
     `(,code ,headers (,body))))
 
+;; * Routes
 
-(defun make-endpoint (fn)
-  (lambda (params)
-    (funcall fn params)))
+(defparameter *global-routes-namespace* :global)
 
-(defun define-route (method routing-rule endpoint name &optional regexp)
-  "Define a route. Name should be a keyword."
-  (myway:connect (routes-mapper (application-routes *app*))
-                 routing-rule
-                 (make-endpoint endpoint)
-                 :method method
-                 :name name
-                 :regexp regexp))
+(defclass routes ()
+  ((mapper :initarg :mapper :reader routes-mapper :initform nil)))
 
+(defparameter *routes* (make-instance 'routes :mapper (myway:make-mapper)))
+
+
+
+(defun make-endpoint (fn param-keys)
+  (if param-keys
+      (lambda (params)
+        (apply fn (mapcar (lambda (key) (getf params key)) param-keys)))
+      (lambda (params)
+        (declare (ignore params))
+        (funcall fn))))
+
+(defun get-name-and-namespace (name)
+  (let ((pos (position #\: name)))
+    (if pos
+        (values (intern (string-upcase (subseq name (1+ pos))) :keyword)
+                (intern (string-upcase (subseq name 0 pos)) :keyword))
+        (values (intern (string-upcase name) :keyword)
+                *global-routes-namespace*))))
+
+(defun define-route (method routing-rule &key controller name (regexp nil))
+  (let ((param-keys (myway.rule::rule-param-keys
+                     (myway.rule::make-rule routing-rule))))
+    (multiple-value-bind (name namespace)
+        (get-name-and-namespace name)
+      (myway:connect (routes-mapper (application-routes *app*))
+                     routing-rule
+                     (make-endpoint controller param-keys)
+                     :method method
+                     :name name
+                     :namespace namespace
+                     :regexp regexp))))
+
+(defun url (name &rest params)
+  "Return the url for a named route given the parameters. For use in templates."
+  (myway:url-for (myway:find-route-by-name (routes-mapper *routes*) name) params))
+
+;; * Server
 (defparameter *server-connection* nil)
 
 (defun start (app &optional (port 5000))
@@ -80,3 +108,14 @@
   (prog1
       (clack:stop *server-connection*)
     (setf *server-connection* nil)))
+
+;; * Template Utils
+(defun current-path ()
+  "Get the path to the current page."
+  (lack/request:request-path-info *request*))
+
+(defun static (path)
+  (let ((scheme (lack.request:request-uri-scheme *request*))
+        (server-name (lack.request:request-server-name *request*)))
+    (format nil "~a://~a/~a" scheme server-name path)))
+
