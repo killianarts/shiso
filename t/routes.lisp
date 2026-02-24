@@ -1,0 +1,131 @@
+(defpackage #:shiso/t/routes
+  (:use #:cl #:lisp-unit2))
+
+(in-package #:shiso/t/routes)
+
+;;; --- Helper ---
+
+(defun fresh-app ()
+  "Create a fresh application with an empty mapper for testing."
+  (let* ((routes (make-instance 'shiso::routes
+                                :mapper (myway:make-mapper)))
+         (app (make-instance 'shiso::application :routes routes)))
+    app))
+
+(defmacro with-fresh-app (&body body)
+  `(let ((shiso::*app* (fresh-app)))
+     ,@body))
+
+(defun registered-routes ()
+  "Return all routes from the current *app* mapper."
+  (myway.mapper:mapper-routes
+   (shiso:routes-mapper (shiso:application-routes shiso::*app*))))
+
+(defun find-route (name namespace)
+  "Find a route by name and namespace keywords."
+  (find-if (lambda (route)
+             (and (eq (myway.route:route-name route) name)
+                  (eq (myway.route:route-namespace route) namespace)))
+           (registered-routes)))
+
+(defun route-url (route)
+  "Get the URL string from a route's rule."
+  (myway.rule::rule-url (myway.route:route-rule route)))
+
+;;; --- define-route tests ---
+
+(define-test define-route-registers-a-route ()
+  (with-fresh-app
+    (shiso:define-route :GET "/test"
+      :controller (lambda () "test")
+      :name "global:test")
+    (let ((route (find-route :TEST :GLOBAL)))
+      (assert-true route "Route should be registered")
+      (assert-string= "/test" (route-url route)))))
+
+(define-test define-route-parses-namespaced-name ()
+  (with-fresh-app
+    (shiso:define-route :GET "/admin/index"
+      :controller (lambda () "admin index")
+      :name "admin:index")
+    (let ((route (find-route :INDEX :ADMIN)))
+      (assert-true route "Namespaced route should be registered")
+      (assert-string= "/admin/index" (route-url route)))))
+
+(define-test define-route-without-namespace-uses-global ()
+  (with-fresh-app
+    (shiso:define-route :GET "/home"
+      :controller (lambda () "home")
+      :name "home")
+    (let ((route (find-route :HOME :GLOBAL)))
+      (assert-true route "Route without namespace should use :GLOBAL"))))
+
+
+;;; --- define-routes macro expansion tests ---
+
+(define-test define-routes-expands-to-define-route-calls ()
+  (let* ((form `(shiso::define-routes test-mod :root "/app"
+                  (:GET "/" #'identity "index")
+                  (:GET "/list" #'identity "list")))
+         (expansion (macroexpand-1 form)))
+    (assert-true (eq 'progn (first expansion)))
+    (assert-eql 2 (length (rest expansion))
+                "Should expand to two define-route calls")))
+
+(define-test define-routes-concatenates-root-with-path ()
+  (let* ((form `(shiso::define-routes test-mod :root "/app"
+                  (:GET "/users" #'identity "users")))
+         (expansion (macroexpand-1 form))
+         (call (second expansion)))
+    (assert-string= "/app/users" (third call)
+                    "Root should be concatenated with path")))
+
+(define-test define-routes-prefixes-module-name-to-route-name ()
+  (let* ((form `(shiso::define-routes admin :root "/admin"
+                  (:GET "/users" #'identity "users")))
+         (expansion (macroexpand-1 form))
+         (call (second expansion)))
+    (assert-string= "admin:users" (getf (cdddr call) :name)
+                    "Module name should be prefixed to route name")))
+
+(define-test define-routes-expands-multiple-methods-to-separate-calls ()
+  (let* ((form `(shiso::define-routes admin :root "/admin"
+                  ((:GET :POST) "/create" #'identity "create")))
+         (expansion (macroexpand-1 form))
+         (calls (rest expansion)))
+    (assert-eql 2 (length calls)
+                "Two methods should produce two define-route calls")
+    (assert-eq :GET (second (first calls))
+               "First call should use :GET")
+    (assert-eq :POST (second (second calls))
+               "Second call should use :POST")))
+
+(define-test define-routes-with-empty-root ()
+  (let* ((form `(shiso::define-routes teaser :root ""
+                  (:GET "/" #'identity "index")))
+         (expansion (macroexpand-1 form))
+         (call (second expansion)))
+    (assert-string= "/" (third call)
+                    "Empty root should leave path unchanged")))
+
+;;; --- define-routes integration tests ---
+
+(define-test define-routes-registers-all-routes ()
+  (with-fresh-app
+    (eval '(shiso::define-routes admin :root "/admin"
+            (:GET "/" (lambda () "index") "index")
+            (:GET "/users" (lambda () "users") "users")
+            (:DELETE "/delete" (lambda () "delete") "delete")))
+    (assert-eql 3 (length (registered-routes))
+                "All three routes should be registered")
+    (assert-true (find-route :INDEX :ADMIN) "admin:index should exist")
+    (assert-true (find-route :USERS :ADMIN) "admin:users should exist")
+    (assert-true (find-route :DELETE :ADMIN) "admin:delete should exist")))
+
+(define-test define-routes-registers-correct-rules ()
+  (with-fresh-app
+    (eval '(shiso::define-routes admin :root "/admin"
+            (:GET "/users" (lambda () "users") "users")))
+    (let ((route (find-route :USERS :ADMIN)))
+      (assert-string= "/admin/users" (route-url route)
+                      "Route rule should have root prepended"))))

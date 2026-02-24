@@ -17,5 +17,16 @@
   :components ((:module "src"
                 :serial t
                 :components
-                ((:file "main")))))
+                ((:file "main"))))
+  :in-order-to ((test-op (test-op "shiso/tests"))))
+
+(defsystem "shiso/tests"
+  :depends-on (:shiso :lisp-unit2)
+  :components ((:module "t"
+                :serial t
+                :components
+                ((:file "routes"))))
+  :perform (test-op (o s)
+             (uiop:symbol-call :lisp-unit2 :run-tests
+                               :package :shiso/t/routes)))
 

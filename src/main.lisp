@@ -57,8 +57,6 @@
 
 (defparameter *routes* (make-instance 'routes :mapper (myway:make-mapper)))
 
-
-
 (defun make-endpoint (fn param-keys)
   (if param-keys
       (lambda (params)
@@ -88,6 +86,20 @@
                      :namespace namespace
                      :regexp regexp))))
 
+(defmacro define-routes (module &rest args)
+  (let ((root (getf args :root ""))
+        (routes (member-if #'listp args))
+        (module-name (string-downcase (symbol-name module))))
+    `(progn
+       ,@(loop for (method path controller name) in routes
+               for full-path = (concatenate 'string root path)
+               for full-name = (concatenate 'string module-name ":" name)
+               append (let ((methods (if (listp method) method (list method))))
+                        (loop for m in methods
+                              collect `(define-route ,m ,full-path
+                                         :controller ,controller
+                                         :name ,full-name)))))))
+
 (defun url (name &rest params)
   "Return the url for a named route given the parameters. For use in templates."
   (myway:url-for (myway:find-route-by-name (routes-mapper *routes*) name) params))
@@ -95,14 +107,14 @@
 ;; * Server
 (defparameter *server-connection* nil)
 
-(defun start (app &optional (port 5000))
+(defun start (app &key (host "127.0.0.1") (port 5000) (debugp t))
   (when *server-connection*
     (restart-case (error "Server is already running.")
       (restart-server ()
         :report "Restart the server"
         (stop))))
   (setf *server-connection*
-        (clack:clackup app :server :woo :port port)))
+        (clack:clackup app :server :woo :address host :port port :debug debugp)))
 
 (defun stop ()
   (prog1

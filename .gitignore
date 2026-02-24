@@ -6,3 +6,5 @@ tmp/
 *.projectile
 *.fasl
 vendored/*
+
+.mcp.json
