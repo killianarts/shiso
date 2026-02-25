@@ -25,8 +25,11 @@
   :components ((:module "t"
                 :serial t
                 :components
-                ((:file "routes"))))
+                ((:file "routes")
+                 (:file "modules"))))
   :perform (test-op (o s)
              (uiop:symbol-call :lisp-unit2 :run-tests
-                               :package :shiso/t/routes)))
+                               :package :shiso/t/routes)
+             (uiop:symbol-call :lisp-unit2 :run-tests
+                               :package :shiso/t/modules)))
 
