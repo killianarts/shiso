@@ -1,0 +1,49 @@
+(defpackage #:shiso/utils
+  (:use #:cl)
+  (:local-nicknames (#:routing #:shiso/routing)
+                    (#:requests #:shiso/requests))
+  (:export
+   #:url
+   #:current-path
+   #:static
+   #:http-response))
+
+(in-package #:shiso/utils)
+
+(defun http-response (body &key (code 200) (headers nil))
+  (let ((headers (append `(:content-type "text/html; charset=utf-8") headers)))
+    `(,code ,headers (,body)) ))
+
+;; * Template Utilities
+
+(defun url (name &rest params)
+  "Return the URL for a named route, with module prefix prepended.
+Searches registered module mappers by namespace for namespaced routes
+(e.g., \"articles:index\"), falls back to global *routes* for others."
+  (if (and (stringp name) (position #\: name))
+      ;; Namespaced route — search the module's mapper
+      (let* ((pos (position #\: name))
+             (ns-str (subseq name 0 pos))
+             (ns-kw (intern (string-upcase ns-str) :keyword))
+             (mod (routing:get-module ns-kw))
+             (mapper (routing:routes-mapper (routing:module-routes mod)))
+             (route (myway:find-route-by-name mapper name)))
+        (when route
+          (let ((base-url (myway:url-for route params))
+                (prefix (routing:module-prefix mod)))
+            (concatenate 'string prefix base-url))))
+      ;; Non-namespaced route — fall back to global *routes*
+      (let* ((name-kw (intern (string-upcase name) :keyword))
+             (route (myway:find-route-by-name
+                     (routing:routes-mapper routing:*routes*) name-kw)))
+        (when route
+          (myway:url-for route params)))))
+
+(defun current-path ()
+  "Get the path to the current page."
+  (lack/request:request-path-info requests:*request*))
+
+(defun static (path)
+  (let ((scheme (lack.request:request-uri-scheme requests:*request*))
+        (server-name (lack.request:request-server-name requests:*request*)))
+    (format nil "~a://~a/~a" scheme server-name path)))

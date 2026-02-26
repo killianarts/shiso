@@ -9,16 +9,24 @@
   "Clear the module registry for a clean test."
   (clrhash shiso:*module-registry*))
 
-(defmacro with-fresh-registry (&body body)
-  `(progn
-     (fresh-registry)
-     (unwind-protect (progn ,@body)
-       (fresh-registry))))
+(defun fresh-routes ()
+  "Reset *routes* to a fresh mapper."
+  (setf shiso:*routes* (make-instance 'shiso:routes :mapper (myway:make-mapper))))
 
-(defun mapper-routes-list (module)
+(defmacro with-fresh-routes (&body body)
+  "Execute BODY with a fresh module registry and fresh global routes."
+  (let ((saved-routes (gensym "SAVED-ROUTES")))
+    `(let ((,saved-routes shiso:*routes*))
+       (fresh-registry)
+       (fresh-routes)
+       (unwind-protect (progn ,@body)
+         (fresh-registry)
+         (setf shiso:*routes* ,saved-routes)))))
+
+(defun module-routes-list (mod)
   "Get all routes from a module's mapper as a list."
   (let ((raw (myway.mapper:mapper-routes
-              (shiso:routes-mapper (shiso:module-routes module)))))
+              (shiso:routes-mapper (shiso:module-routes mod)))))
     (if (listp raw)
         raw
         (let ((routes nil))
@@ -27,12 +35,12 @@
            raw)
           routes))))
 
-(defun find-module-route (module name namespace)
-  "Find a route by name and namespace in a module."
+(defun find-module-route (mod name namespace)
+  "Find a route by name and namespace on a module's mapper."
   (find-if (lambda (route)
              (and (eq (myway.route:route-name route) name)
                   (eq (myway.route:route-namespace route) namespace)))
-           (mapper-routes-list module)))
+           (module-routes-list mod)))
 
 (defun route-url (route)
   "Get the URL string from a route's rule."
@@ -52,7 +60,7 @@
 ;;; --- Module Registry Tests ---
 
 (define-test register-module-stores-module ()
-  (with-fresh-registry
+  (with-fresh-routes
     (let ((mod (make-instance 'shiso:module
                               :routes (make-instance 'shiso:routes
                                                      :mapper (myway:make-mapper)))))
@@ -61,22 +69,22 @@
                    "get-module should return the registered module"))))
 
 (define-test get-module-signals-error-for-missing ()
-  (with-fresh-registry
+  (with-fresh-routes
     (assert-error 'error (shiso:get-module :nonexistent)
                   "get-module should signal an error for unregistered modules")))
 
 (define-test register-module-overwrites-existing ()
-  (with-fresh-registry
+  (with-fresh-routes
     (let ((mod1 (make-instance 'shiso:module
                                :routes (make-instance 'shiso:routes
                                                       :mapper (myway:make-mapper))))
           (mod2 (make-instance 'shiso:module
                                :routes (make-instance 'shiso:routes
                                                       :mapper (myway:make-mapper)))))
-      (shiso:register-module :test mod1)
-      (shiso:register-module :test mod2)
-      (assert-true (eq mod2 (shiso:get-module :test))
-                   "Re-registering should overwrite the previous module"))))
+      (shiso:register-module :overwrite-test mod1)
+      (shiso:register-module :overwrite-test mod2)
+      (assert-true (eq mod2 (shiso:get-module :overwrite-test))
+                   "Re-registering should silently overwrite the module"))))
 
 ;;; --- define-module Macro Expansion Tests ---
 
@@ -101,35 +109,48 @@
   (let ((expansion (macroexpand-1
                     '(shiso:define-module test-mod
                        (:urls ((:GET :POST) "/create" #'identity "create"))))))
-    ;; The let* body should have two connect forms (one for GET, one for POST)
-    ;; plus the final module creation let
-    (let* ((let-form (second expansion))       ; the let* form
-           (body (cddr let-form))              ; body of the let*
-           (connect-forms (butlast body)))     ; everything except the final let
-      (assert-eql 2 (length connect-forms)
-                  "Two methods should produce two connect forms"))))
+    ;; expansion = (PROGN (LET (#:MODULE-ROUTES...) (define-route :GET ...) (define-route :POST ...) (register-module ...)) 'test-mod)
+    (let* ((let-form (second expansion))        ; the LET form
+           (let-body (cddr let-form))            ; body of the LET
+           (route-forms (remove-if-not
+                         (lambda (f) (and (listp f)
+                                          (eq (car f) 'shiso/routing:define-route)))
+                         let-body)))
+      (assert-eql 2 (length route-forms)
+                  "Two methods should produce two define-route forms"))))
 
 ;;; --- define-module Integration Tests ---
 
 (define-test define-module-registers-in-registry ()
-  (with-fresh-registry
+  (with-fresh-routes
     (eval '(shiso:define-module registry-test
              (:urls (:GET "/" (lambda () (shiso:http-response "hi")) "index"))))
     (let ((mod (shiso:get-module :registry-test)))
       (assert-true (typep mod 'shiso:module)
-                   "Module should be registered and retrievable"))))
+                   "Module should be registered as a module instance"))))
 
-(define-test define-module-creates-routes ()
-  (with-fresh-registry
+(define-test define-module-creates-routes-on-module ()
+  (with-fresh-routes
     (eval '(shiso:define-module routes-test
              (:urls (:GET "/" (lambda () (shiso:http-response "index")) "index")
                     (:GET "/list" (lambda () (shiso:http-response "list")) "list"))))
-    (let ((mod (shiso:get-module :routes-test)))
-      (assert-eql 2 (length (mapper-routes-list mod))
-                  "Module should have two routes registered"))))
+    (let* ((mod (shiso:get-module :routes-test))
+           (routes (module-routes-list mod)))
+      (assert-eql 2 (length routes)
+                  "Module mapper should have two routes"))))
+
+(define-test define-module-routes-are-unprefixed ()
+  (with-fresh-routes
+    (eval '(shiso:define-module prefix-test
+             (:urls (:GET "/" (lambda () (shiso:http-response "index")) "index"))))
+    (let* ((mod (shiso:get-module :prefix-test))
+           (route (find-module-route mod :INDEX :PREFIX-TEST)))
+      (assert-true route "Route should exist on module mapper")
+      (assert-string= "/" (route-url route)
+                      "Route path should be un-prefixed on module mapper"))))
 
 (define-test define-module-namespaces-route-names ()
-  (with-fresh-registry
+  (with-fresh-routes
     (eval '(shiso:define-module articles
              (:urls (:GET "/" (lambda () (shiso:http-response "index")) "index"))))
     (let ((mod (shiso:get-module :articles)))
@@ -137,92 +158,72 @@
                    "Route should be namespaced under module name"))))
 
 (define-test define-module-handles-multiple-methods ()
-  (with-fresh-registry
+  (with-fresh-routes
     (eval '(shiso:define-module multi-method
              (:urls ((:GET :POST) "/form" (lambda () (shiso:http-response "form")) "form"))))
     (let* ((mod (shiso:get-module :multi-method))
-           (routes (mapper-routes-list mod)))
+           (routes (module-routes-list mod)))
       (assert-eql 2 (length routes)
                   "Two methods should create two routes")
       (let ((all-methods (loop for r in routes append (route-methods r))))
         (assert-true (member :GET all-methods) "Should have a GET route")
         (assert-true (member :POST all-methods) "Should have a POST route")))))
 
-(define-test define-module-sets-star-module-star ()
-  (with-fresh-registry
-    (eval '(shiso:define-module star-test
-             (:urls (:GET "/" (lambda () (shiso:http-response "hi")) "index"))))
-    (assert-true (boundp 'shiso::*module*)
-                 "*module* should be bound")
-    (assert-true (functionp (symbol-value 'shiso::*module*))
-                 "*module* should be a Lack app function")))
-
 (define-test define-module-creates-correct-route-urls ()
-  (with-fresh-registry
+  (with-fresh-routes
     (eval '(shiso:define-module url-test
              (:urls (:GET "/users/:id" (lambda (id) (shiso:http-response id)) "show"))))
     (let* ((mod (shiso:get-module :url-test))
            (route (find-module-route mod :SHOW :URL-TEST)))
       (assert-true route "Route should exist")
       (assert-string= "/users/:id" (route-url route)
-                      "Route URL should be preserved"))))
+                      "Route URL should be un-prefixed on module mapper"))))
 
 ;;; --- define-application Macro Expansion Tests ---
 
 (define-test define-application-expands-to-defparameter ()
   (let ((expansion (macroexpand-1
                     '(shiso:define-application my-app ()
-                       (:modules '(blog shop))))))
-    (assert-true (eq 'defparameter (first expansion))
-                 "Should expand to defparameter")
-    (assert-true (char= #\* (char (symbol-name (second expansion)) 0))
-                 "Variable name should start with *")))
+                       (:modules ("/blog" blog) ("/shop" shop))))))
+    ;; expansion is (PROGN (SETF ...) (SETF ...) (DEFPARAMETER ...))
+    (let ((defparam (find-if (lambda (f) (and (listp f) (eq 'defparameter (first f))))
+                             (cdr expansion))))
+      (assert-true defparam
+                   "Should contain a defparameter form"))))
 
-(define-test define-application-generates-mount-entries ()
+(define-test define-application-contains-mount-forms ()
   (let ((expansion (macroexpand-1
                     '(shiso:define-application my-app ()
-                       (:modules '(blog shop))))))
-    ;; expansion = (DEFPARAMETER *MY-APP* (LACK:BUILDER mount1 mount2 fallback))
-    (let ((builder-args (cdr (third expansion)))) ; skip LACK/BUILDER:BUILDER symbol
-      ;; Should have :mount for blog, :mount for shop, and the 404 lambda
-      (assert-eql 3 (length builder-args)
-                  "Should have two mount entries plus fallback"))))
-
-(define-test define-application-bare-symbol-mounts-at-slash-name ()
-  (let ((expansion (macroexpand-1
-                    '(shiso:define-application my-app ()
-                       (:modules '(blog))))))
-    ;; expansion = (DEFPARAMETER *MY-APP* (LACK:BUILDER (:MOUNT "/blog" ...) (LAMBDA ...)))
-    (let* ((builder-form (third expansion))
-           (mount-entry (second builder-form))) ; first arg to builder
-      (assert-eq :mount (first mount-entry))
-      (assert-string= "/blog" (second mount-entry)
-                      "Bare symbol should mount at /name"))))
-
-(define-test define-application-tuple-uses-explicit-path ()
-  (let ((expansion (macroexpand-1
-                    '(shiso:define-application my-app ()
-                       (:modules '(("/" core)))))))
-    (let* ((builder-form (third expansion))
-           (mount-entry (second builder-form)))
-      (assert-eq :mount (first mount-entry))
-      (assert-string= "/" (second mount-entry)
-                      "Tuple should use the explicit path"))))
+                       (:modules ("/blog" blog) ("/shop" shop))))))
+    ;; expansion = (PROGN (SETF ...) (SETF ...) (DEFPARAMETER MY-APP (LACK:BUILDER (:MOUNT "/blog" ...) (:MOUNT "/shop" ...) ...)))
+    (let* ((defparam (find-if (lambda (f) (and (listp f) (eq 'defparameter (first f))))
+                              (cdr expansion)))
+           (builder-form (third defparam))
+           (builder-args (cdr builder-form))
+           (mount-forms (remove-if-not
+                         (lambda (f) (and (listp f) (eq (car f) :mount)))
+                         builder-args)))
+      (assert-eql 2 (length mount-forms)
+                  "Should have two :mount forms for two modules")
+      (assert-string= "/blog" (second (first mount-forms))
+                      "First mount should be at /blog")
+      (assert-string= "/shop" (second (second mount-forms))
+                      "Second mount should be at /shop"))))
 
 ;;; --- define-application Integration Tests ---
 
 (define-test define-application-creates-lack-app ()
-  (with-fresh-registry
+  (with-fresh-routes
     (eval '(shiso:define-module app-mod
              (:urls (:GET "/" (lambda () (shiso:http-response "hi")) "index"))))
     (eval '(shiso:define-application integration-app ()
-             (:modules '(app-mod))))
-    (assert-true (boundp (intern "*INTEGRATION-APP*" :cl-user))
+             (:modules ("" app-mod))))
+    (assert-true (boundp (intern "INTEGRATION-APP" :cl-user))
                  "Application variable should be bound")
-    (assert-true (functionp (symbol-value (intern "*INTEGRATION-APP*" :cl-user)))
+    (assert-true (functionp (symbol-value (intern "INTEGRATION-APP" :cl-user)))
                  "Application should be a function (Lack app)")))
 
-;;; --- Module call Method Tests ---
+;;; --- Module Dispatch Tests ---
 
 (defun make-test-env (path &key (method :GET))
   "Create a minimal Lack environment for testing."
@@ -241,8 +242,8 @@
         :headers (make-hash-table :test 'equal)
         :input (make-string-input-stream "")))
 
-(define-test module-call-dispatches-to-matching-route ()
-  (with-fresh-registry
+(define-test module-dispatches-unprefixed-route ()
+  (with-fresh-routes
     (eval '(shiso:define-module dispatch-test
              (:urls (:GET "/" (lambda () (shiso:http-response "hello")) "index"))))
     (let* ((mod (shiso:get-module :dispatch-test))
@@ -250,11 +251,67 @@
       (assert-true (listp response) "Response should be a list")
       (assert-eql 200 (first response) "Status should be 200"))))
 
-(define-test module-call-returns-404-for-unmatched ()
-  (with-fresh-registry
+(define-test module-returns-404-for-unmatched ()
+  (with-fresh-routes
     (eval '(shiso:define-module notfound-test
              (:urls (:GET "/" (lambda () (shiso:http-response "hi")) "index"))))
     (let* ((mod (shiso:get-module :notfound-test))
            (response (lack/component:call mod (make-test-env "/nonexistent"))))
       (assert-true (listp response) "Response should be a list")
       (assert-eql 404 (first response) "Status should be 404"))))
+
+(define-test mounted-app-dispatches-prefixed-route ()
+  (with-fresh-routes
+    (eval '(shiso:define-module mounted-test
+             (:urls (:GET "/" (lambda () (shiso:http-response "mounted")) "index"))))
+    (eval '(shiso:define-application mounted-app ()
+             (:modules ("/mounted-test" mounted-test))))
+    (let* ((app (symbol-value (intern "MOUNTED-APP" :cl-user)))
+           (response (funcall app (make-test-env "/mounted-test/"))))
+      (assert-true (listp response) "Response should be a list")
+      (assert-eql 200 (first response) "Status should be 200 for prefixed path"))))
+
+(define-test mounted-app-returns-404-for-unknown-prefix ()
+  (with-fresh-routes
+    (eval '(shiso:define-module fallback-test
+             (:urls (:GET "/" (lambda () (shiso:http-response "hi")) "index"))))
+    (eval '(shiso:define-application fallback-app ()
+             (:modules ("/fallback-test" fallback-test))))
+    (let* ((app (symbol-value (intern "FALLBACK-APP" :cl-user)))
+           (response (funcall app (make-test-env "/unknown/"))))
+      (assert-true (listp response) "Response should be a list")
+      (assert-eql 404 (first response) "Status should be 404 for unknown prefix"))))
+
+;;; --- URL Generation Tests ---
+
+(define-test url-returns-prefixed-path-for-namespaced-route ()
+  (with-fresh-routes
+    (eval '(shiso:define-module articles
+             (:urls (:GET "/" (lambda () (shiso:http-response "index")) "index"))))
+    (setf (shiso:module-prefix (shiso:get-module :articles)) "/articles")
+    (assert-string= "/articles/" (shiso:url "articles:index")
+                    "url should return prefixed path for namespaced route")))
+
+(define-test url-returns-prefixed-path-with-params ()
+  (with-fresh-routes
+    (eval '(shiso:define-module articles
+             (:urls (:GET "/users/:id" (lambda (id) (shiso:http-response id)) "show"))))
+    (setf (shiso:module-prefix (shiso:get-module :articles)) "/articles")
+    (assert-string= "/articles/users/42" (shiso:url "articles:show" :id "42")
+                    "url should return prefixed path with params")))
+
+(define-test url-returns-unprefixed-path-for-global-route ()
+  (with-fresh-routes
+    (shiso:define-route :GET "/about"
+      :controller (lambda () (shiso:http-response "about"))
+      :name "about")
+    (assert-string= "/about" (shiso:url "about")
+                    "url should return un-prefixed path for global route")))
+
+(define-test root-mounted-module-has-no-prefix ()
+  (with-fresh-routes
+    (eval '(shiso:define-module pages
+             (:urls (:GET "/about" (lambda () (shiso:http-response "about")) "about"))))
+    (setf (shiso:module-prefix (shiso:get-module :pages)) "")
+    (assert-string= "/about" (shiso:url "pages:about")
+                    "Root-mounted module should generate URLs without a prefix")))

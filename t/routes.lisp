@@ -5,21 +5,16 @@
 
 ;;; --- Helper ---
 
-(defun fresh-app ()
-  "Create a fresh application with an empty mapper for testing."
-  (let* ((routes (make-instance 'shiso::routes
-                                :mapper (myway:make-mapper)))
-         (app (make-instance 'shiso::application :routes routes)))
-    app))
-
-(defmacro with-fresh-app (&body body)
-  `(let ((shiso::*app* (fresh-app)))
+(defmacro with-fresh-routes (&body body)
+  "Bind shiso:*routes* to a fresh routes instance for testing."
+  `(let ((shiso:*routes* (make-instance 'shiso:routes
+                                        :mapper (myway:make-mapper))))
      ,@body))
 
 (defun registered-routes ()
-  "Return all routes from the current *app* mapper."
+  "Return all routes from the current *routes* mapper."
   (myway.mapper:mapper-routes
-   (shiso:routes-mapper (shiso:application-routes shiso::*app*))))
+   (shiso:routes-mapper shiso:*routes*)))
 
 (defun find-route (name namespace)
   "Find a route by name and namespace keywords."
@@ -35,7 +30,7 @@
 ;;; --- define-route tests ---
 
 (define-test define-route-registers-a-route ()
-  (with-fresh-app
+  (with-fresh-routes
     (shiso:define-route :GET "/test"
       :controller (lambda () "test")
       :name "global:test")
@@ -44,7 +39,7 @@
       (assert-string= "/test" (route-url route)))))
 
 (define-test define-route-parses-namespaced-name ()
-  (with-fresh-app
+  (with-fresh-routes
     (shiso:define-route :GET "/admin/index"
       :controller (lambda () "admin index")
       :name "admin:index")
@@ -53,7 +48,7 @@
       (assert-string= "/admin/index" (route-url route)))))
 
 (define-test define-route-without-namespace-uses-global ()
-  (with-fresh-app
+  (with-fresh-routes
     (shiso:define-route :GET "/home"
       :controller (lambda () "home")
       :name "home")
@@ -111,7 +106,7 @@
 ;;; --- define-routes integration tests ---
 
 (define-test define-routes-registers-all-routes ()
-  (with-fresh-app
+  (with-fresh-routes
     (eval '(shiso::define-routes admin :root "/admin"
             (:GET "/" (lambda () "index") "index")
             (:GET "/users" (lambda () "users") "users")
@@ -123,7 +118,7 @@
     (assert-true (find-route :DELETE :ADMIN) "admin:delete should exist")))
 
 (define-test define-routes-registers-correct-rules ()
-  (with-fresh-app
+  (with-fresh-routes
     (eval '(shiso::define-routes admin :root "/admin"
             (:GET "/users" (lambda () "users") "users")))
     (let ((route (find-route :USERS :ADMIN)))
