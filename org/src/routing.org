@@ -1,3 +1,13 @@
+#+title: Routing
+#+property: header-args:common-lisp :tangle ../../src/routing.lisp
+
+The routing layer for shiso. Provides route definition macros, a module
+abstraction (with per-module route mappers), and an application-level
+=define-application= macro that mounts modules at URL prefixes using Lack's
+=:mount= middleware.
+
+* Package Definition
+#+begin_src common-lisp
 (defpackage #:shiso/routing
   (:use #:cl)
   (:export
@@ -17,7 +27,14 @@
    #:get-module
 ))
 (in-package #:shiso/routing)
+#+end_src
 
+* Core Classes
+
+A =routes= object wraps a Myway mapper. A =module= is a Lack component that
+owns its own routes and carries a URL prefix for mounting using the Lack =:mount= middleware.
+
+#+begin_src common-lisp
 (defclass routes ()
   ((mapper :initarg :mapper :reader routes-mapper :initform nil)))
 
@@ -26,9 +43,21 @@
 (defclass module (lack/component::lack-component)
   ((routes :initarg :routes :accessor module-routes)
    (prefix :initarg :prefix :accessor module-prefix :initform "")))
+#+end_src
 
+* Route Helpers
+
+** Global Namespace
+#+begin_src common-lisp
 (defparameter *global-routes-namespace* :global)
+#+end_src
 
+** make-endpoint
+
+Wrap a controller function so it accepts a Myway params plist and applies
+the relevant values in the correct order.
+
+#+begin_src common-lisp
 (defun make-endpoint (fn param-keys)
   (if param-keys
       (lambda (params)
@@ -36,7 +65,38 @@
       (lambda (params)
         (declare (ignore params))
         (funcall fn))))
+#+end_src
 
+*** Implications of =apply= and =funcall=
+Making endpoints that return =apply= or =funcall= makes routes update when the
+controller itself is compiled. Without the call to =apply= or =funcall=, you
+need to also recompile the =myway:mapper= in =routes= (in other words, the call
+to =define-module=).
+
+
+*** =mapcar= makes URL arguments easy to get
+The use of the =mapcar= allows controller functions to simply define the
+controller with the arguments it accepts. If your route rule is =/book/:id=,
+then your =book-view= controller definition can looks like this:
+
+#+begin_src lisp :tangle no
+(defun book-view (id)
+  (let ((book (get-book id)))
+    (do-stuff-with-book book))
+#+end_src
+...rather than like this:
+#+begin_src lisp :tangle no
+(defun book-view (params)
+  (let ((book (get-book (getf :params :id))))
+    (do-stuff-with-book book)))
+#+end_src
+
+** get-name-and-namespace
+
+Split a route name string like ="admin:index"= into a name keyword and a
+namespace keyword. Names without a colon default to the global namespace.
+
+#+begin_src common-lisp
 (defun get-name-and-namespace (name)
   (let ((pos (position #\: name)))
     (if pos
@@ -44,7 +104,13 @@
                 (intern (string-upcase (subseq name 0 pos)) :keyword))
         (values (intern (string-upcase name) :keyword)
                 *global-routes-namespace*))))
+#+end_src
 
+** define-route
+
+Register a single route on a mapper.
+
+#+begin_src common-lisp
 (defun define-route (method routing-rule &key controller name (regexp nil) (routes *routes*))
   (let ((param-keys (myway.rule::rule-param-keys
                      (myway.rule::make-rule routing-rule))))
@@ -57,7 +123,14 @@
                      :name name
                      :namespace namespace
                      :regexp regexp))))
+#+end_src
 
+** define-routes
+
+Convenience macro: register multiple routes for a module in one form,
+automatically prepending a root path and module-name namespace.
+
+#+begin_src common-lisp
 (defmacro define-routes (module &rest args)
   (let ((root (getf args :root ""))
         (routes (member-if #'listp args))
@@ -71,7 +144,14 @@
                               collect `(define-route ,m ,full-path
                                          :controller ,controller
                                          :name ,full-name)))))))
+#+end_src
 
+* Module Registry
+
+Modules are stored in a global hash-table so that =define-application= and
+URL generation can look them up by keyword name.
+
+#+begin_src common-lisp
 (defvar *module-registry* (make-hash-table :test 'eq)
   "Global registry of defined modules, keyed by module name (keyword).")
 
@@ -81,7 +161,15 @@
 (defun get-module (name)
   (or (gethash name *module-registry*)
       (error "Module ~A is not registered." name)))
+#+end_src
 
+* define-module
+
+Define a module with its own private route mapper. Routes are registered
+un-prefixed on the module; the prefix is applied later when the module is
+mounted in an application.
+
+#+begin_src common-lisp
 (defmacro define-module (name &body options)
   "Define a module with routes on a per-module mapper (un-prefixed).
 
@@ -114,7 +202,13 @@ The module instance is stored in the registry for url generation and mounting."
          (register-module ,module-keyword
                           (make-instance 'module :routes ,module-routes-var)))
        ',name)))
+#+end_src
 
+* define-application
+
+Mount modules at explicit URL prefixes to form a complete Lack application.
+
+#+begin_src common-lisp
 (defmacro define-application (name () &body options)
   "Define an application that mounts each module at an explicit prefix.
 
@@ -144,3 +238,4 @@ this macro runs so that their routes are in the registry."
           (lambda (env)
             (declare (ignore env))
             '(404 (:content-type "text/html") ("Not found"))))))))
+#+end_src

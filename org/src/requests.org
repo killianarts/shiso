@@ -1,3 +1,12 @@
+#+title: Requests
+#+property: header-args:common-lisp :tangle ../../src/requests.lisp
+
+Request handling and module dispatch. Each incoming request is parsed into a
+Lack request object stored in =*request*=, then dispatched through the
+module's Myway route mapper.
+
+* Package Definition
+#+begin_src common-lisp
 (defpackage #:shiso/requests
   (:use #:cl)
   (:local-nicknames (#:routing #:shiso/routing)
@@ -7,9 +16,20 @@
    #:*request*))
 
 (in-package #:shiso/requests)
+#+end_src
 
+* Request Parameter
+#+begin_src common-lisp
 (defparameter *request* nil)
+#+end_src
 
+* Module Request Dispatch
+
+The =call= method on a =routing:module= parses the Lack environment into a
+request, dispatches it against the module's route mapper, and returns an
+appropriate HTTP response (or 404).
+
+#+begin_src common-lisp
 (defmethod lack/component:call ((this routing:module) env)
   (let ((*request* (handler-case (req:make-request env)
                      (error (e)
@@ -27,3 +47,4 @@
                  (res:make-response status headers body))))
           (res:finalize-response
            (res:make-response 404 '(:content-type "text/html") '("Not found")))))))
+#+end_src

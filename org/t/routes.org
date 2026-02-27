@@ -1,8 +1,19 @@
+#+title: Route Tests
+#+property: header-args:common-lisp :tangle ../../t/routes.lisp
+
+Tests for =define-route=, =define-routes= macro expansion, and integration
+tests verifying that routes are registered correctly.
+
+* Package Definition
+#+begin_src common-lisp
 (defpackage #:shiso/t/routes
   (:use #:cl #:lisp-unit2))
 
 (in-package #:shiso/t/routes)
+#+end_src
 
+* Helpers
+#+begin_src common-lisp
 (defmacro with-fresh-routes (&body body)
   "Bind shiso:*routes* to a fresh routes instance for testing."
   `(let ((shiso:*routes* (make-instance 'shiso:routes
@@ -24,7 +35,10 @@
 (defun route-url (route)
   "Get the URL string from a route's rule."
   (myway.rule::rule-url (myway.route:route-rule route)))
+#+end_src
 
+* define-route Tests
+#+begin_src common-lisp
 (define-test define-route-registers-a-route ()
   (with-fresh-routes
     (shiso:define-route :GET "/test"
@@ -50,7 +64,10 @@
       :name "home")
     (let ((route (find-route :HOME :GLOBAL)))
       (assert-true route "Route without namespace should use :GLOBAL"))))
+#+end_src
 
+* define-routes Macro Expansion Tests
+#+begin_src common-lisp
 (define-test define-routes-expands-to-define-route-calls ()
   (let* ((form `(shiso::define-routes test-mod :root "/app"
                   (:GET "/" #'identity "index")
@@ -95,7 +112,10 @@
          (call (second expansion)))
     (assert-string= "/" (third call)
                     "Empty root should leave path unchanged")))
+#+end_src
 
+* define-routes Integration Tests
+#+begin_src common-lisp
 (define-test define-routes-registers-all-routes ()
   (with-fresh-routes
     (eval '(shiso::define-routes admin :root "/admin"
@@ -115,3 +135,4 @@
     (let ((route (find-route :USERS :ADMIN)))
       (assert-string= "/admin/users" (route-url route)
                       "Route rule should have root prepended"))))
+#+end_src

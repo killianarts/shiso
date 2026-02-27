@@ -1,0 +1,73 @@
+#+title: Package
+#+property: header-args:common-lisp :tangle ../../src/package.lisp
+
+The umbrella =shiso= package. It re-exports the public API from each
+sub-package so that users only need to =(:use #:shiso)= or use the =shiso:=
+prefix.
+
+* Package Definition
+#+begin_src common-lisp
+(defpackage #:shiso
+  (:use #:cl)
+
+  (:import-from #:shiso/requests
+                #:*request*)
+
+  (:import-from #:shiso/routing
+                #:routes
+                #:routes-mapper
+                #:module
+                #:module-routes
+                #:module-prefix
+                #:*routes*
+                #:*global-routes-namespace*
+                #:define-route
+                #:define-routes
+                #:define-module
+                #:define-application
+                #:*module-registry*
+                #:register-module
+                #:get-module
+)
+
+  (:import-from #:shiso/scaffold
+                #:make-module)
+
+  (:import-from #:shiso/server
+                #:start
+                #:stop)
+
+  (:import-from #:shiso/utils
+                #:http-response
+                #:url
+                #:current-path
+                #:static)
+
+  (:export
+
+   #:*request*
+
+   #:routes
+   #:routes-mapper
+   #:module
+   #:module-routes
+   #:module-prefix
+   #:*routes*
+   #:*global-routes-namespace*
+   #:define-route
+   #:define-routes
+   #:define-module
+   #:define-application
+   #:*module-registry*
+   #:register-module
+   #:get-module
+   #:make-module
+
+   #:start
+   #:stop
+
+   #:http-response
+   #:url
+   #:current-path
+   #:static))
+#+end_src

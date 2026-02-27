@@ -1,0 +1,45 @@
+#+title: Server
+#+property: header-args:common-lisp :tangle ../../src/server.lisp
+
+Server lifecycle management -- starting and stopping the Clack/Woo HTTP server.
+
+* Package Definition
+#+begin_src common-lisp
+(defpackage #:shiso/server
+  (:use #:cl)
+  (:export
+   #:*server-connection*
+   #:start
+   #:stop))
+
+(in-package #:shiso/server)
+#+end_src
+
+* Server Connection
+#+begin_src common-lisp
+(defparameter *server-connection* nil)
+#+end_src
+
+* start
+
+Boot the HTTP server. If one is already running, offer a restart to stop
+it first.
+
+#+begin_src common-lisp
+(defun start (app &key (host "127.0.0.1") (port 5000) (debugp t))
+  (when *server-connection*
+    (restart-case (error "Server is already running.")
+      (restart-server ()
+        :report "Restart the server"
+        (stop))))
+  (setf *server-connection*
+        (clack:clackup app :server :woo :address host :port port :debug debugp)))
+#+end_src
+
+* stop
+#+begin_src common-lisp
+(defun stop ()
+  (prog1
+      (clack:stop *server-connection*)
+    (setf *server-connection* nil)))
+#+end_src

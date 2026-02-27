@@ -1,3 +1,11 @@
+#+title: Utilities
+#+property: header-args:common-lisp :tangle ../../src/utils.lisp
+
+Template-facing utilities: URL generation, current-path access, static asset
+URLs, and a convenience HTTP response builder.
+
+* Package Definition
+#+begin_src common-lisp
 (defpackage #:shiso/utils
   (:use #:cl)
   (:local-nicknames (#:routing #:shiso/routing)
@@ -9,11 +17,24 @@
    #:http-response))
 
 (in-package #:shiso/utils)
+#+end_src
 
+* http-response
+#+begin_src common-lisp
 (defun http-response (body &key (code 200) (headers nil))
   (let ((headers (append `(:content-type "text/html; charset=utf-8") headers)))
     `(,code ,headers (,body)) ))
+#+end_src
 
+* Template Utilities
+
+** url
+
+Resolve a named route to its URL path. Namespaced routes (e.g.
+="articles:index"=) look up the module's mapper and prepend its mount prefix.
+Non-namespaced routes fall back to the global =*routes*=.
+
+#+begin_src common-lisp
 (defun url (name &rest params)
   "Return the URL for a named route, with module prefix prepended.
 Searches registered module mappers by namespace for namespaced routes
@@ -36,12 +57,19 @@ Searches registered module mappers by namespace for namespaced routes
                      (routing:routes-mapper routing:*routes*) name-kw)))
         (when route
           (myway:url-for route params)))))
+#+end_src
 
+** current-path
+#+begin_src common-lisp
 (defun current-path ()
   "Get the path to the current page."
   (lack/request:request-path-info requests:*request*))
+#+end_src
 
+** static
+#+begin_src common-lisp
 (defun static (path)
   (let ((scheme (lack.request:request-uri-scheme requests:*request*))
         (server-name (lack.request:request-server-name requests:*request*)))
     (format nil "~a://~a/~a" scheme server-name path)))
+#+end_src

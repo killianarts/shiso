@@ -1,0 +1,42 @@
+#+title: Scaffold
+#+property: header-args:common-lisp :tangle ../../src/scaffold.lisp
+
+Scaffolding support for generating new shiso modules, similar to Django's
+=manage.py startapp=.
+
+* Package Definition
+#+begin_src common-lisp
+(defpackage #:shiso/scaffold
+  (:use #:cl)
+  (:export
+   #:make-module))
+(in-package #:shiso/scaffold)
+#+end_src
+
+* Skeleton Directory
+#+begin_src common-lisp
+(defvar *module-skeleton-directory*
+  (asdf:system-relative-pathname :shiso #P"skeleton/module/"))
+#+end_src
+
+* make-module
+
+Generate the directory structure for a new module under
+=src/modules/<module-name>/= of the given system. Uses =cl-project= to stamp
+out the skeleton.
+
+#+begin_src common-lisp
+(defun make-module (system-name module-name)
+  "Scaffold a new shiso module under src/modules/<module-name>/ of SYSTEM-NAME.
+   Like Django's manage.py startapp — creates the directory structure
+   with package, controllers, models, routes, forms, and components."
+  (let* ((path (merge-pathnames (format nil "src/modules/~A/" module-name)
+                                (asdf:system-source-directory system-name)))
+         (path (uiop:ensure-directory-pathname path))
+         (cl-project:*skeleton-directory* *module-skeleton-directory*))
+    (cl-project:generate-skeleton
+     *module-skeleton-directory*
+     path
+     :env (list :name module-name)
+     :verbose t)))
+#+end_src

@@ -1,8 +1,20 @@
+#+title: Module Tests
+#+property: header-args:common-lisp :tangle ../../t/modules.lisp
+
+Tests for the module system: registry, =define-module= macro expansion and
+integration, =define-application= macro expansion and integration, module
+dispatch, and URL generation.
+
+* Package Definition
+#+begin_src common-lisp
 (defpackage #:shiso/t/modules
   (:use #:cl #:lisp-unit2))
 
 (in-package #:shiso/t/modules)
+#+end_src
 
+* Helpers
+#+begin_src common-lisp
 (defun fresh-registry ()
   "Clear the module registry for a clean test."
   (clrhash shiso:*module-registry*))
@@ -54,7 +66,10 @@
            (lambda (m) (push m methods))
            raw)
           methods))))
+#+end_src
 
+* Module Registry Tests
+#+begin_src common-lisp
 (define-test register-module-stores-module ()
   (with-fresh-routes
     (let ((mod (make-instance 'shiso:module
@@ -81,7 +96,10 @@
       (shiso:register-module :overwrite-test mod2)
       (assert-true (eq mod2 (shiso:get-module :overwrite-test))
                    "Re-registering should silently overwrite the module"))))
+#+end_src
 
+* define-module Macro Expansion Tests
+#+begin_src common-lisp
 (define-test define-module-expands-to-progn ()
   (let ((expansion (macroexpand-1
                     '(shiso:define-module test-mod
@@ -112,7 +130,10 @@
                          let-body)))
       (assert-eql 2 (length route-forms)
                   "Two methods should produce two define-route forms"))))
+#+end_src
 
+* define-module Integration Tests
+#+begin_src common-lisp
 (define-test define-module-registers-in-registry ()
   (with-fresh-routes
     (eval '(shiso:define-module registry-test
@@ -170,7 +191,10 @@
       (assert-true route "Route should exist")
       (assert-string= "/users/:id" (route-url route)
                       "Route URL should be un-prefixed on module mapper"))))
+#+end_src
 
+* define-application Macro Expansion Tests
+#+begin_src common-lisp
 (define-test define-application-expands-to-defparameter ()
   (let ((expansion (macroexpand-1
                     '(shiso:define-application my-app ()
@@ -199,7 +223,10 @@
                       "First mount should be at /blog")
       (assert-string= "/shop" (second (second mount-forms))
                       "Second mount should be at /shop"))))
+#+end_src
 
+* define-application Integration Tests
+#+begin_src common-lisp
 (define-test define-application-creates-lack-app ()
   (with-fresh-routes
     (eval '(shiso:define-module app-mod
@@ -210,7 +237,10 @@
                  "Application variable should be bound")
     (assert-true (functionp (symbol-value (intern "INTEGRATION-APP" :cl-user)))
                  "Application should be a function (Lack app)")))
+#+end_src
 
+* Module Dispatch Tests
+#+begin_src common-lisp
 (defun make-test-env (path &key (method :GET))
   "Create a minimal Lack environment for testing."
   (list :request-method method
@@ -267,7 +297,10 @@
            (response (funcall app (make-test-env "/unknown/"))))
       (assert-true (listp response) "Response should be a list")
       (assert-eql 404 (first response) "Status should be 404 for unknown prefix"))))
+#+end_src
 
+* URL Generation Tests
+#+begin_src common-lisp
 (define-test url-returns-prefixed-path-for-namespaced-route ()
   (with-fresh-routes
     (eval '(shiso:define-module articles
@@ -299,3 +332,4 @@
     (setf (shiso:module-prefix (shiso:get-module :pages)) "")
     (assert-string= "/about" (shiso:url "pages:about")
                     "Root-mounted module should generate URLs without a prefix")))
+#+end_src
