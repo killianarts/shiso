@@ -175,20 +175,16 @@
   (let ((expansion (macroexpand-1
                     '(shiso:define-application my-app ()
                        (:modules ("/blog" blog) ("/shop" shop))))))
-    ;; expansion is (PROGN (SETF ...) (SETF ...) (DEFPARAMETER ...))
-    (let ((defparam (find-if (lambda (f) (and (listp f) (eq 'defparameter (first f))))
-                             (cdr expansion))))
-      (assert-true defparam
-                   "Should contain a defparameter form"))))
+    ;; expansion is (DEFPARAMETER MY-APP (LACK:BUILDER ...))
+    (assert-true (and (listp expansion) (eq 'defparameter (first expansion)))
+                 "Should expand to a defparameter form")))
 
 (define-test define-application-contains-mount-forms ()
   (let ((expansion (macroexpand-1
                     '(shiso:define-application my-app ()
                        (:modules ("/blog" blog) ("/shop" shop))))))
-    ;; expansion = (PROGN (SETF ...) (SETF ...) (DEFPARAMETER MY-APP (LACK:BUILDER (:MOUNT "/blog" ...) (:MOUNT "/shop" ...) ...)))
-    (let* ((defparam (find-if (lambda (f) (and (listp f) (eq 'defparameter (first f))))
-                              (cdr expansion)))
-           (builder-form (third defparam))
+    ;; expansion = (DEFPARAMETER MY-APP (LACK:BUILDER (:MOUNT "/blog" ...) (:MOUNT "/shop" ...) ...))
+    (let* ((builder-form (third expansion))
            (builder-args (cdr builder-form))
            (mount-forms (remove-if-not
                          (lambda (f) (and (listp f) (eq (car f) :mount)))

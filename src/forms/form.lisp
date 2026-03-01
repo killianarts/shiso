@@ -1,0 +1,87 @@
+(defpackage #:shiso/forms/form
+  (:use #:cl)
+  (:local-nicknames (#:fields #:shiso/forms/fields)
+                    (#:val #:shiso/validators))
+  (:export
+   #:form
+   #:form-fields
+   #:form-data
+   #:form-instance
+   #:form-errors
+   #:form-cleaned-data
+   #:form-validp
+   #:validate-form
+   #:clean))
+
+(in-package #:shiso/forms/form)
+
+(defclass form ()
+  ((fields       :initarg :fields       :reader form-fields)
+   (data         :initarg :data         :reader form-data         :initform nil)
+   (instance     :initarg :instance     :reader form-instance     :initform nil)
+   (errors       :accessor form-errors  :initform (make-hash-table))
+   (cleaned-data :accessor form-cleaned-data :initform (make-hash-table))))
+
+(defun has-validator-p (designator validators)
+  "Check if VALIDATORS already contains a validator matching DESIGNATOR."
+  (member (if (listp designator) (car designator) designator)
+          validators
+          :key (lambda (v) (if (listp v) (car v) v))))
+
+(defun auto-validators-for-form-field (field)
+  "Derive implicit validators from a form-field, skipping any already
+present in the field's explicit validators."
+  (let ((explicit (fields:field-validators field))
+        (validators nil))
+    (when (and (fields:field-requiredp field)
+               (not (has-validator-p 'val:not-blank explicit)))
+      (push 'val:not-blank validators))
+    (when (and (typep field 'fields:choice-field)
+               (not (has-validator-p '(val:one-of) explicit)))
+      (push (list 'val:one-of (mapcar #'car (fields:field-choices field)))
+            validators))
+    (when (and (typep field 'fields:char-field)
+               (fields:field-max-length field)
+               (not (has-validator-p '(val:max-length) explicit)))
+      (push (list 'val:max-length (fields:field-max-length field))
+            validators))
+    (nreverse validators)))
+
+(defgeneric validate-form (form)
+  (:documentation "Validate all fields, populate cleaned-data or errors.
+Returns T if the form is valid, NIL otherwise."))
+
+(defmethod validate-form ((form form))
+  (let ((cleaned (make-hash-table))
+        (errors (make-hash-table)))
+    (dolist (field (form-fields form))
+      (let* ((name (fields:field-name field))
+             (raw (cdr (assoc name (form-data form) :test #'string-equal)))
+             (value (fields:parse-field-value field raw))
+             (auto-errs (val:run-validators
+                         (auto-validators-for-form-field field)
+                         value))
+             (field-errs (val:run-validators
+                          (fields:field-validators field)
+                          value))
+             (all-errs (append auto-errs field-errs)))
+        (if all-errs
+            (setf (gethash name errors) all-errs)
+            (setf (gethash name cleaned) value))))
+    ;; Cross-field validation hook
+    (let ((cross-errors (clean form cleaned)))
+      (when cross-errors
+        (setf (gethash :__all__ errors) cross-errors)))
+    (setf (form-errors form) errors
+          (form-cleaned-data form) cleaned)
+    (zerop (hash-table-count errors))))
+
+(defgeneric clean (form cleaned-data)
+  (:documentation "Cross-field validation hook. Return nil or a list of error strings.")
+  (:method ((form form) cleaned-data)
+    (declare (ignore cleaned-data))
+    nil))
+
+(defun form-validp (form)
+  "Return T if the form has been validated and has no errors."
+  (zerop (hash-table-count (form-errors form))))

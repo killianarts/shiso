@@ -1,0 +1,107 @@
+#+title: Admin Registry
+#+property: header-args:common-lisp :tangle ../../../src/admin/registry.lisp
+#+auto_tangle: t
+
+The admin registry maps model names to =admin-config= instances that
+control how each model appears in the admin dashboard.  Zero-config
+registration uses sensible defaults; =define-admin= allows customization.
+
+* Package
+
+#+begin_src common-lisp
+(defpackage #:shiso/admin/registry
+  (:use #:cl)
+  (:local-nicknames (#:models #:shiso/models))
+  (:export
+   #:admin-config
+   #:admin-model-name
+   #:admin-list-display
+   #:admin-list-filter
+   #:admin-search-fields
+   #:admin-fieldsets
+   #:admin-fields
+   #:admin-exclude
+   #:admin-readonly
+   #:admin-per-page
+   #:admin-ordering
+   #:*admin-registry*
+   #:register-admin
+   #:get-admin
+   #:all-registered-admins
+   #:define-admin))
+
+(in-package #:shiso/admin/registry)
+#+end_src
+
+* Admin Config Class
+
+#+begin_src common-lisp
+(defclass admin-config ()
+  ((model-name   :initarg :model-name   :reader admin-model-name)
+   (list-display :initarg :list-display :reader admin-list-display :initform nil)
+   (list-filter  :initarg :list-filter  :reader admin-list-filter  :initform nil)
+   (search-fields :initarg :search-fields :reader admin-search-fields :initform nil)
+   (fieldsets    :initarg :fieldsets    :reader admin-fieldsets    :initform nil)
+   (fields       :initarg :fields       :reader admin-fields       :initform nil)
+   (exclude      :initarg :exclude      :reader admin-exclude      :initform nil)
+   (readonly     :initarg :readonly     :reader admin-readonly     :initform nil)
+   (per-page     :initarg :per-page     :reader admin-per-page     :initform 25)
+   (ordering     :initarg :ordering     :reader admin-ordering     :initform nil)))
+#+end_src
+
+* Registry
+
+#+begin_src common-lisp
+(defvar *admin-registry* (make-hash-table :test 'eq)
+  "Maps model name symbols to admin-config instances.")
+
+(defun register-admin (model-name &rest initargs)
+  "Register a model for admin CRUD with optional configuration."
+  (setf (gethash model-name *admin-registry*)
+        (apply #'make-instance 'admin-config
+               :model-name model-name initargs)))
+
+(defun get-admin (model-name)
+  "Return the admin-config for MODEL-NAME, or signal an error."
+  (or (gethash model-name *admin-registry*)
+      (error "No admin registered for model ~A" model-name)))
+
+(defun all-registered-admins ()
+  "Return a list of all registered admin model name symbols."
+  (loop for name being the hash-keys of *admin-registry* collect name))
+#+end_src
+
+* =define-admin= Macro
+
+#+begin_src common-lisp
+(defmacro define-admin (model-name &body options)
+  "Register a model for admin with customization options.
+
+OPTIONS may include:
+  (:list-display field1 field2 ...)
+  (:list-filter field1 field2 ...)
+  (:search-fields field1 field2 ...)
+  (:fieldsets (\"Group\" (field1 field2)) ...)
+  (:fields field1 field2 ...)
+  (:exclude field1 field2 ...)
+  (:readonly field1 field2 ...)
+  (:per-page n)
+  (:ordering field-or-minus-field)"
+  (let ((initargs nil))
+    (dolist (opt options)
+      (destructuring-bind (key &rest vals) opt
+        (case key
+          (:per-page
+           (push :per-page initargs)
+           (push (first vals) initargs))
+          (:ordering
+           (push :ordering initargs)
+           (push `',(first vals) initargs))
+          (:fieldsets
+           (push :fieldsets initargs)
+           (push `',vals initargs))
+          (otherwise
+           (push key initargs)
+           (push `',vals initargs)))))
+    `(register-admin ',model-name ,@(nreverse initargs))))
+#+end_src

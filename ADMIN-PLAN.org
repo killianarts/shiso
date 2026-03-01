@@ -1,0 +1,274 @@
+#+title: Admin Plan
+
+* Vendored Shiso Dependencies
+
+** Background
+In Django, the admin is actually an app like any other and is typically
+installed in settings.py in the INSTALLED_APPS variable.
+
+Here is an example from a Django project:
+#+begin_src python
+DJANGO_APPS = [
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.sites",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    "django.contrib.humanize", 
+    "django.contrib.admin", # <-- Here is the admin app
+    "django.forms",
+    "django.contrib.sitemaps",
+]
+
+THIRD_PARTY_APPS = [
+    "django_htmx",
+    "django_tailwind_cli",
+    "widget_tweaks",
+    "render_block",
+    "django_extensions",
+    "parler",
+    "whitenoise",
+    "rosetta",
+    "responsive_images",
+    "phonenumbers",
+    "django_cotton.apps.SimpleAppConfig",
+    "recurrence",
+    "django_celery_results",
+    "mptt",
+    "hordak",
+    "djmoney",
+]
+
+if DEBUG:
+    THIRD_PARTY_APPS += ["django_browser_reload", "pattern_library", "debug_toolbar"]
+
+LOCAL_APPS = [
+    "users",
+    "core",
+    "reservations",
+    "winadmin",
+    "customer",
+]
+
+
+INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
+#+end_src
+
+This is what the admin app's directory looks like:
+#+begin_src
+micah@almighty admin % tree -L 2
+.
+├── __init__.py
+├── __pycache__
+│   ├── __init__.cpython-312.pyc
+│   ├── actions.cpython-312.pyc
+│   ├── apps.cpython-312.pyc
+│   ├── checks.cpython-312.pyc
+│   ├── decorators.cpython-312.pyc
+│   ├── exceptions.cpython-312.pyc
+│   ├── filters.cpython-312.pyc
+│   ├── helpers.cpython-312.pyc
+│   ├── models.cpython-312.pyc
+│   ├── options.cpython-312.pyc
+│   ├── sites.cpython-312.pyc
+│   ├── utils.cpython-312.pyc
+│   └── widgets.cpython-312.pyc
+├── actions.py
+├── apps.py
+├── checks.py
+├── decorators.py
+├── exceptions.py
+├── filters.py
+├── forms.py
+├── helpers.py
+├── locale
+│   ├── af
+│   ├── am
+│   ├── ar
+│   ├── ar_DZ
+│   ├── ast
+│   ├── az
+│   ├── be
+│   ├── bg
+│   ├── bn
+│   ├── br
+│   ├── bs
+│   ├── ca
+│   ├── ckb
+│   ├── cs
+│   ├── cy
+│   ├── da
+│   ├── de
+│   ├── dsb
+│   ├── el
+│   ├── en
+│   ├── en_AU
+│   ├── en_GB
+│   ├── eo
+│   ├── es
+│   ├── es_AR
+│   ├── es_CO
+│   ├── es_MX
+│   ├── es_VE
+│   ├── et
+│   ├── eu
+│   ├── fa
+│   ├── fi
+│   ├── fr
+│   ├── fy
+│   ├── ga
+│   ├── gd
+│   ├── gl
+│   ├── he
+│   ├── hi
+│   ├── hr
+│   ├── hsb
+│   ├── hu
+│   ├── hy
+│   ├── ia
+│   ├── id
+│   ├── io
+│   ├── is
+│   ├── it
+│   ├── ja
+│   ├── ka
+│   ├── kab
+│   ├── kk
+│   ├── km
+│   ├── kn
+│   ├── ko
+│   ├── ky
+│   ├── lb
+│   ├── lt
+│   ├── lv
+│   ├── mk
+│   ├── ml
+│   ├── mn
+│   ├── mr
+│   ├── ms
+│   ├── my
+│   ├── nb
+│   ├── ne
+│   ├── nl
+│   ├── nn
+│   ├── os
+│   ├── pa
+│   ├── pl
+│   ├── pt
+│   ├── pt_BR
+│   ├── ro
+│   ├── ru
+│   ├── sk
+│   ├── sl
+│   ├── sq
+│   ├── sr
+│   ├── sr_Latn
+│   ├── sv
+│   ├── sw
+│   ├── ta
+│   ├── te
+│   ├── tg
+│   ├── th
+│   ├── tk
+│   ├── tr
+│   ├── tt
+│   ├── udm
+│   ├── ug
+│   ├── uk
+│   ├── ur
+│   ├── uz
+│   ├── vi
+│   ├── zh_Hans
+│   └── zh_Hant
+├── migrations
+│   ├── __init__.py
+│   ├── __pycache__
+│   ├── 0001_initial.py
+│   ├── 0002_logentry_remove_auto_add.py
+│   └── 0003_logentry_add_action_flag_choices.py
+├── models.py
+├── options.py
+├── sites.py
+├── static
+│   └── admin
+├── templates
+│   ├── admin
+│   └── registration
+├── templatetags
+│   ├── __init__.py
+│   ├── __pycache__
+│   ├── admin_list.py
+│   ├── admin_modify.py
+│   ├── admin_urls.py
+│   ├── base.py
+│   └── log.py
+├── tests.py
+├── utils.py
+├── views
+│   ├── __init__.py
+│   ├── __pycache__
+│   ├── autocomplete.py
+│   ├── decorators.py
+│   └── main.py
+└── widgets.py
+#+end_src
+
+As you can see, it's a Django app with it's own views, models, tests,
+migrations, forms, etc.
+
+** Goal
+
+What we want to do is make Shiso's admin feature a /module/ in the same way
+Django's admin is an /app/.
+
+** Critique of Django templating system
+
+In Django, the templating is set up so that templates can be overridden.
+Overriding templates is accomplished by adding an admin folder to the
+project-level templates folder and making template files with the same name as
+the template files you want to override.
+
+Overriding works for any installed Django app. If you install a third-party app
+like Markdownx, you can customize the templates by overriding them.
+
+I believe this system is necessary partially because Django is designed to allow
+users to extend or modify app behavior without touching the original code. This
+follows a philosophy of maximizing extensibility through OOP abstractions.
+
+However, the desire to extend dependencies without touching them follows from a
+general philosophical or aesthetic comfort (or even desire) to layer
+abstractions and dependencies on top of each other, thereby creating more
+feature-rich applications with little effort.
+
+A preference for /abstraction layering/ over /abstraction flattening/ is, I
+believe, a weakness of the Django philosophy and design in general.
+
+** Our Alternative
+
+Instead of implementing extra layers of abstraction to enable extensibility, my
+proposal is to /vendor/ Shiso modules, whether they are first-party Shiso
+modules or third-party modules/extensions, and thereby /flatten/ abstractions
+and remove indirection. This follows the general Almighty philosophy of
+preferring simplicity over complexity, direct over indirect approaches.
+Vendoring dependencies and thereby adopting third-party code as you own, with
+the intention of reducing dependencies over time, is the logical result of a
+preference for simplicity.
+
+I believe vendoring simplifies the process of customizing templates/forms, etc.
+because there is no indirection through the override mechanism. If you want to
+customize Shiso's admin components or forms, you simply go into the admin module
+directory and make your modifications. If you want to do large customizations of
+both templating and features, you can copy the entire admin module, rename it,
+and add it to your =define-application=. After that, you can begin the work of
+making a custom admin.
+
+** Critique of this alternative
+
+First, I would like you to provide a thoughtful critique of my own view, along
+with a defense of Django's design decisions. I agree with Django on making
+"admin" a module/app equal to any other Shiso module, but instead of
+partitioning it to some .venv directory far away from the user, I propose
+bringing all dependency code into the user's project. Is there some hidden
+complexity in this design decision I haven't considered? What are the
+trade-offs? Is it the decision actually consistent with my philosophy?

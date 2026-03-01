@@ -1,5 +1,6 @@
 #+title: Package
 #+property: header-args:common-lisp :tangle ../../src/package.lisp
+#+auto_tangle: t
 
 The umbrella =shiso= package. It re-exports the public API from each
 sub-package so that users only need to =(:use #:shiso)= or use the =shiso:=
@@ -13,22 +14,24 @@ prefix.
   (:import-from #:shiso/requests
                 #:*request*)
 
-  (:import-from #:shiso/routing
-                #:routes
-                #:routes-mapper
+  (:import-from #:shiso/modules
                 #:module
                 #:module-routes
                 #:module-prefix
+                #:module-static-root
+                #:*module-registry*
+                #:register-module
+                #:get-module)
+
+  (:import-from #:shiso/routing
+                #:routes
+                #:routes-mapper
                 #:*routes*
                 #:*global-routes-namespace*
                 #:define-route
                 #:define-routes
                 #:define-module
-                #:define-application
-                #:*module-registry*
-                #:register-module
-                #:get-module
-)
+                #:define-application)
 
   (:import-from #:shiso/scaffold
                 #:make-module)
@@ -37,11 +40,15 @@ prefix.
                 #:start
                 #:stop)
 
+  (:import-from #:shiso/static
+                #:collectstatic)
+
   (:import-from #:shiso/utils
                 #:http-response
                 #:url
                 #:current-path
-                #:static)
+                #:static
+                #:absolute-url)
 
   (:export
 
@@ -52,6 +59,7 @@ prefix.
    #:module
    #:module-routes
    #:module-prefix
+   #:module-static-root
    #:*routes*
    #:*global-routes-namespace*
    #:define-route
@@ -69,5 +77,7 @@ prefix.
    #:http-response
    #:url
    #:current-path
-   #:static))
+   #:static
+   #:absolute-url
+   #:collectstatic))
 #+end_src

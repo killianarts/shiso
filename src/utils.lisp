@@ -6,6 +6,7 @@
    #:url
    #:current-path
    #:static
+   #:absolute-url
    #:http-response))
 
 (in-package #:shiso/utils)
@@ -42,6 +43,14 @@ Searches registered module mappers by namespace for namespaced routes
   (lack/request:request-path-info requests:*request*))
 
 (defun static (path)
+  "Return the URL path for a static file. Like Django's {% static %} tag.
+   (shiso:static \"css/style.css\") → \"/static/css/style.css\""
+  (concatenate 'string "/static/" path))
+
+(defun absolute-url (path)
+  "Prepend the current request's scheme and host to PATH.
+   (shiso:absolute-url \"/static/img/preview.png\")
+   → \"https://example.com/static/img/preview.png\""
   (let ((scheme (lack.request:request-uri-scheme requests:*request*))
         (server-name (lack.request:request-server-name requests:*request*)))
-    (format nil "~a://~a/~a" scheme server-name path)))
+    (format nil "~a://~a~a" scheme server-name path)))

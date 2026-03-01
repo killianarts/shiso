@@ -1,0 +1,88 @@
+#+title: Registry Vs Mop
+
+* Design Decision: Metadata Registry vs MOP Metaclass
+
+We considered two approaches for storing the rich field metadata (verbose
+names, help text, validators, choices, widgets) that =define-model= attaches
+to each field. Both share the same user-facing =define-model= syntax and the
+same introspection API (=model-fields=, =model-field=, =field-verbose-name=,
+etc.). They differ only in how that metadata is stored internally.
+
+* Approach A: Full MOP Metaclass (rejected for v1)
+
+Extend Mito's =dao-table-class= with a custom metaclass (=model-class=) that
+overrides =direct-slot-definition-class= to return a =model-slot-definition=
+carrying extra slots for =:verbose-name=, =:help-text=, =:validators=, etc.
+The slot objects themselves carry the metadata.
+
+*Pros:*
+- Elegant and idiomatic — the slot *is* its own metadata. Introspection
+  returns real MOP slot-definition objects.
+- No parallel data structures to keep in sync.
+- Feels very "CL-native" and is the approach Mito itself uses for =:col-type=.
+
+*Cons:*
+- =model-slot-definition= must inherit from Mito's own =dao-column-class=,
+  not just =c2mop:standard-direct-slot-definition=. Without this, Mito's
+  internal =(typep slot 'dao-column-class)= check fails and silently skips
+  columns during table creation. This couples us tightly to Mito's internal
+  class hierarchy.
+- =compute-effective-slot-definition= must be overridden to propagate custom
+  options from direct to effective slots. Mito does its own propagation here,
+  so we must call =call-next-method= correctly and merge both sets of options.
+- During interactive development (=C-c C-c= to redefine a model), the MOP
+  triggers =finalize-inheritance= and slot re-computation. With a custom
+  metaclass layered on Mito's, subtle ordering bugs can appear — Mito's
+  migration logic re-introspects slots after redefinition, and unfamiliar
+  slot options can cause spurious =ALTER TABLE= statements.
+- =validate-superclass= must be defined for every metaclass combination users
+  might encounter (mixins from other libraries, =dao-table-mixin=, etc.).
+- =c2mop:class-slots= does not guarantee declaration order on all
+  implementations. For form rendering, field order matters, so we would need
+  to track it separately anyway.
+- Accessing Mito's slot metadata requires internal symbols like
+  =mito::slot-definition-col-type= (double colon), which is fragile across
+  Mito versions.
+- =closer-mop= portability gaps between SBCL, CCL, and ECL make the
+  metaclass the hardest part to port if we ever target multiple
+  implementations.
+
+* Approach B: Metadata Registry (chosen)
+
+=define-model= expands into a plain =mito:deftable= (using Mito's standard
+=dao-table-class= unmodified) plus a side-effect that populates a
+=*model-registry*= hash table mapping model names to =slot-metadata= structs.
+The introspection API reads from this hash table.
+
+*Pros:*
+- Dramatically simpler to implement and debug. No MOP edge cases at all.
+- Mito's metaclass is completely untouched — zero risk of interfering with
+  table creation, migration, or interactive redefinition.
+- Field declaration order is preserved trivially (the macro walks the slot
+  list in source order).
+- Easy to extend — adding a new metadata key means adding a struct slot,
+  not touching metaclass machinery.
+- No =closer-mop= dependency for the model layer.
+- Portable across CL implementations without concern.
+
+*Cons:*
+- Slightly less elegant — the slot object and its metadata are separate
+  things. You look up metadata by name from a hash table rather than reading
+  it directly from the slot.
+- Metadata and class definition could theoretically drift if someone defines
+  a class with =defclass= instead of =define-model=. In practice this is not
+  a concern because =define-model= is the only supported entry point.
+
+* Why Registry Wins for v1
+
+The metadata registry gives us 100% of the user-facing API with none of the
+MOP debugging surface area. The forms layer, admin layer, and validators all
+consume =slot-metadata= structs through the same =model-fields= /
+=model-field= functions regardless of how those structs were populated.
+
+If we later determine that MOP-native introspection is valuable (e.g., for
+integration with third-party CLOS tools), we can add it as a second backend
+behind the same API. The registry is not a dead end — it is a stable
+foundation.
+
+

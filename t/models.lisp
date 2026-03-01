@@ -1,0 +1,207 @@
+(defpackage #:shiso/t/models
+  (:use #:cl #:lisp-unit2))
+
+(in-package #:shiso/t/models)
+
+(defun fresh-registry ()
+  "Clear the model registry for a clean test."
+  (clrhash shiso/models:*model-registry*))
+
+(defmacro with-fresh-registry (&body body)
+  "Execute BODY with an empty model registry, restoring it afterward."
+  (let ((saved (gensym "SAVED")))
+    `(let ((,saved (alexandria:copy-hash-table shiso/models:*model-registry*)))
+       (fresh-registry)
+       (unwind-protect (progn ,@body)
+         (setf shiso/models:*model-registry* ,saved)))))
+
+(define-test define-model-expands-to-progn ()
+  (let ((expansion (macroexpand-1
+                    '(shiso/models:define-model test-article
+                       ((title :col-type (:varchar 200)))))))
+    (assert-true (eq 'progn (first expansion))
+                 "define-model should expand to a progn")))
+
+(define-test define-model-expansion-contains-deftable ()
+  (let* ((expansion (macroexpand-1
+                     '(shiso/models:define-model test-article
+                        ((title :col-type (:varchar 200))))))
+         (deftable (find-if (lambda (f)
+                              (and (listp f) (eq 'mito.dao:deftable (car f))))
+                            (cdr expansion))))
+    (assert-true deftable "Should contain a mito:deftable form")))
+
+(define-test define-model-strips-shiso-keys-from-deftable ()
+  (let* ((expansion (macroexpand-1
+                     '(shiso/models:define-model test-article
+                        ((title :col-type (:varchar 200)
+                                :verbose-name "Title"
+                                :help-text "A title"
+                                :validators (not-blank))))))
+         (deftable (find-if (lambda (f)
+                              (and (listp f) (eq 'mito.dao:deftable (car f))))
+                            (cdr expansion)))
+         ;; deftable = (MITO.DAO:DEFTABLE TEST-ARTICLE () ((TITLE :COL-TYPE (:VARCHAR 200))))
+         ;; fourth element is the slot list; first element of that is the slot def
+         (slot-def (first (fourth deftable))))
+    (assert-false (member :verbose-name slot-def)
+                  "deftable slot should not contain :verbose-name")
+    (assert-false (member :help-text slot-def)
+                  "deftable slot should not contain :help-text")
+    (assert-false (member :validators slot-def)
+                  "deftable slot should not contain :validators")
+    (assert-true (member :col-type slot-def)
+                 "deftable slot should still contain :col-type")))
+
+(define-test define-model-preserves-mito-initform ()
+  (let* ((expansion (macroexpand-1
+                     '(shiso/models:define-model test-article
+                        ((status :col-type (:varchar 20)
+                                 :initform :draft
+                                 :choices ((:draft "Draft")))))))
+         (deftable (find-if (lambda (f)
+                              (and (listp f) (eq 'mito.dao:deftable (car f))))
+                            (cdr expansion)))
+         (slot-def (first (fourth deftable))))
+    (assert-true (member :initform slot-def)
+                 "deftable slot should preserve :initform")))
+
+(define-test define-model-expansion-returns-quoted-name ()
+  (let* ((expansion (macroexpand-1
+                     '(shiso/models:define-model test-article
+                        ((title :col-type (:varchar 200))))))
+         (last-form (car (last expansion))))
+    (assert-true (and (listp last-form)
+                      (eq 'quote (first last-form))
+                      (eq 'test-article (second last-form)))
+                 "Last form should be the quoted model name")))
+
+(define-test define-model-registers-metadata ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model reg-test
+             ((title :col-type (:varchar 200)))))
+    (assert-true (shiso/models:model-fields 'reg-test)
+                 "model-fields should return non-nil after define-model")))
+
+(define-test model-fields-preserves-declaration-order ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model order-test
+             ((alpha   :col-type :text)
+              (beta    :col-type :text)
+              (gamma   :col-type :text))))
+    (let ((names (mapcar #'shiso/models:field-name
+                         (shiso/models:model-fields 'order-test))))
+      (assert-equal '(alpha beta gamma) names
+                    "Fields should be in declaration order"))))
+
+(define-test model-field-returns-single-field ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model field-test
+             ((title :col-type (:varchar 200) :verbose-name "Title"))))
+    (let ((field (shiso/models:model-field 'field-test 'title)))
+      (assert-true field "model-field should find the field")
+      (assert-eq 'title (shiso/models:field-name field)))))
+
+(define-test model-field-returns-nil-for-missing ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model tm-missing
+             ((title :col-type (:varchar 200)))))
+    (assert-false (shiso/models:model-field 'tm-missing 'nonexistent)
+                  "model-field should return nil for unknown field")))
+
+(define-test model-class-returns-class-object ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model class-test
+             ((title :col-type (:varchar 200)))))
+    (let ((cls (shiso/models:model-class 'class-test)))
+      (assert-true (typep cls 'class)
+                   "model-class should return a class object"))))
+
+(define-test all-models-lists-registered-names ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model all-test-a
+             ((x :col-type :text))))
+    (eval '(shiso/models:define-model all-test-b
+             ((y :col-type :text))))
+    (let ((models (shiso/models:all-models)))
+      (assert-true (member 'all-test-a models)
+                   "all-models should include all-test-a")
+      (assert-true (member 'all-test-b models)
+                   "all-models should include all-test-b"))))
+
+(define-test field-captures-col-type ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model coltype-test
+             ((title :col-type (:varchar 200)))))
+    (let ((field (shiso/models:model-field 'coltype-test 'title)))
+      (assert-equal '(:varchar 200) (shiso/models:field-col-type field)))))
+
+(define-test field-captures-verbose-name ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model verbose-test
+             ((title :col-type (:varchar 200) :verbose-name "Article Title"))))
+    (let ((field (shiso/models:model-field 'verbose-test 'title)))
+      (assert-string= "Article Title" (shiso/models:field-verbose-name field)))))
+
+(define-test field-auto-derives-verbose-name ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model autoname-test
+             ((created-at :col-type :text))))
+    (let ((field (shiso/models:model-field 'autoname-test 'created-at)))
+      (assert-string= "Created At" (shiso/models:field-verbose-name field)
+                      "Should auto-derive from slot name"))))
+
+(define-test field-captures-help-text ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model help-test
+             ((title :col-type :text :help-text "Enter a title"))))
+    (let ((field (shiso/models:model-field 'help-test 'title)))
+      (assert-string= "Enter a title" (shiso/models:field-help-text field)))))
+
+(define-test field-captures-validators ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model val-test
+             ((title :col-type (:varchar 200)
+                     :validators (not-blank (max-length 200))))))
+    (let* ((field (shiso/models:model-field 'val-test 'title))
+           (validators (shiso/models:field-validators field)))
+      (assert-eql 2 (length validators)
+                  "Should have two validator designators")
+      (assert-eq 'not-blank (first validators))
+      (assert-true (listp (second validators))
+                   "Second validator should be a list designator")
+      (assert-eq 'max-length (car (second validators))))))
+
+(define-test field-captures-choices ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model choice-test
+             ((status :col-type (:varchar 20)
+                      :choices ((:draft "Draft") (:published "Published"))))))
+    (let* ((field (shiso/models:model-field 'choice-test 'status))
+           (choices (shiso/models:field-choices field)))
+      (assert-eql 2 (length choices))
+      (assert-eq :draft (car (first choices)))
+      (assert-string= "Draft" (cdr (first choices))))))
+
+(define-test field-captures-widget ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model widget-test
+             ((content :col-type :text :widget :textarea))))
+    (let ((field (shiso/models:model-field 'widget-test 'content)))
+      (assert-eq :textarea (shiso/models:field-widget field)))))
+
+(define-test field-blankp-defaults-to-nil ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model blank-test
+             ((title :col-type :text))))
+    (let ((field (shiso/models:model-field 'blank-test 'title)))
+      (assert-false (shiso/models:field-blankp field)
+                    "blankp should default to nil (required)"))))
+
+(define-test field-editablep-defaults-to-t ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model edit-test
+             ((title :col-type :text))))
+    (let ((field (shiso/models:model-field 'edit-test 'title)))
+      (assert-true (shiso/models:field-editablep field)
+                   "editablep should default to t"))))

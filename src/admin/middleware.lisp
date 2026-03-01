@@ -1,0 +1,33 @@
+(defpackage #:shiso/admin/middleware
+  (:use #:cl)
+  (:local-nicknames (#:req #:lack/request)
+                    (#:res #:lack/response))
+  (:export
+   #:post-request-p
+   #:parse-body-params
+   #:redirect-response
+   #:http-response))
+
+(in-package #:shiso/admin/middleware)
+
+(defun post-request-p ()
+  "Return T if the current request is a POST."
+  (eq :POST (req:request-method shiso/requests:*request*)))
+
+(defun parse-body-params ()
+  "Parse the request body as URL-encoded form data, return an alist of (name . value)."
+  (let* ((body-params (req:request-body-parameters shiso/requests:*request*)))
+    ;; Lack returns body params as an alist of (string . string)
+    ;; Convert string keys to symbols for form consumption
+    (mapcar (lambda (pair)
+              (cons (intern (string-upcase (car pair)) :keyword)
+                    (cdr pair)))
+            body-params)))
+
+(defun redirect-response (url)
+  "Return a 302 redirect response."
+  (list 302 (list :location url) '("")))
+
+(defun http-response (body &key (status 200) (content-type "text/html; charset=utf-8"))
+  "Return an HTTP response with the given body string."
+  (list status (list :content-type content-type) (list body)))

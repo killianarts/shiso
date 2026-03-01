@@ -1,21 +1,33 @@
 (defpackage #:shiso/routing
   (:use #:cl)
+  (:import-from #:shiso/modules
+                #:module
+                #:module-routes
+                #:module-prefix
+                #:module-static-root
+                #:*module-registry*
+                #:register-module
+                #:get-module)
   (:export
    #:routes
    #:routes-mapper
+   ;; Re-exported from shiso/modules
    #:module
    #:module-routes
    #:module-prefix
+   #:module-static-root
+   #:*module-registry*
+   #:register-module
+   #:get-module
+   ;; Routing-specific
    #:*routes*
    #:*global-routes-namespace*
    #:define-route
    #:define-routes
    #:define-module
    #:define-application
-   #:*module-registry*
-   #:register-module
-   #:get-module
-))
+   #:to-symbol
+   #:to-symbol-form))
 (in-package #:shiso/routing)
 
 (defclass routes ()
@@ -23,19 +35,52 @@
 
 (defparameter *routes* (make-instance 'routes :mapper (myway:make-mapper)))
 
-(defclass module (lack/component::lack-component)
-  ((routes :initarg :routes :accessor module-routes)
-   (prefix :initarg :prefix :accessor module-prefix :initform "")))
-
 (defparameter *global-routes-namespace* :global)
 
+(defun get-function-name (fn)
+  (when (functionp fn)
+    (multiple-value-bind (expression closure-p function-name)
+        (function-lambda-expression fn)
+      (if (symbolp function-name)
+          function-name
+          fn))))
+
 (defun make-endpoint (fn param-keys)
-  (if param-keys
-      (lambda (params)
-        (apply fn (mapcar (lambda (key) (getf params key)) param-keys)))
-      (lambda (params)
-        (declare (ignore params))
-        (funcall fn))))
+  (let ((fn (if (functionp fn)
+                (let ((name (nth-value 2 (function-lambda-expression fn))))
+                  (if (symbolp name) name fn))
+                fn)))
+    (if param-keys
+        (lambda (params)
+          (apply fn (mapcar (lambda (key) (getf params key)) param-keys)))
+        (lambda (params)
+          (declare (ignore params))
+          (funcall fn)))))
+
+(defun to-symbol-form (fn-form)
+  "Function version of to-symbol for use inside macro bodies at expansion time.
+   Converts a controller designator form to a quoted symbol form.
+   #'foo, 'foo, and bare foo all become (quote foo). Lambdas pass through."
+  (cond
+    ;; #'foo  ->  (function foo)
+    ((and (consp fn-form)
+          (eq (first fn-form) 'function))
+     `',(second fn-form))
+    ;; 'foo   ->  (quote foo)
+    ((and (consp fn-form)
+          (eq (first fn-form) 'quote)
+          (symbolp (second fn-form)))
+     `',(second fn-form))
+    ;; bare symbol foo
+    ((symbolp fn-form)
+     `',fn-form)
+    ;; lambda or other compound form — pass through
+    (t fn-form)))
+
+(defmacro to-symbol (fn-form)
+  "Turn a function designator form (foo, #'foo, or 'foo) into the quoted symbol 'foo.
+   All three calls expand to the same thing: 'FOO"
+  (to-symbol-form fn-form))
 
 (defun get-name-and-namespace (name)
   (let ((pos (position #\: name)))
@@ -64,31 +109,22 @@
         (module-name (string-downcase (symbol-name module))))
     `(progn
        ,@(loop for (method path controller name) in routes
+               for controller-symbol = (to-symbol-form controller)
                for full-path = (concatenate 'string root path)
                for full-name = (concatenate 'string module-name ":" name)
                append (let ((methods (if (listp method) method (list method))))
                         (loop for m in methods
                               collect `(define-route ,m ,full-path
-                                         :controller ,controller
+                                         :controller ,controller-symbol
                                          :name ,full-name)))))))
-
-(defvar *module-registry* (make-hash-table :test 'eq)
-  "Global registry of defined modules, keyed by module name (keyword).")
-
-(defun register-module (name module)
-  (setf (gethash name *module-registry*) module))
-
-(defun get-module (name)
-  (or (gethash name *module-registry*)
-      (error "Module ~A is not registered." name)))
 
 (defmacro define-module (name &body options)
   "Define a module with routes on a per-module mapper (un-prefixed).
 
 Usage:
   (define-module articles
-    (:urls (:GET         \"/\"       #'controllers:index  \"index\")
-           ((:GET :POST) \"/create\" #'controllers:create \"create\")))
+    (:urls (:GET         \"/\"       'controllers:index  \"index\")
+           ((:GET :POST) \"/create\" 'controllers:create \"create\")))
 
 Each URL spec is (METHOD PATH CONTROLLER NAME).
 METHOD can be a keyword or a list of keywords.
@@ -98,21 +134,32 @@ The module instance is stored in the registry for url generation and mounting."
   (let* ((module-name-str (string-downcase (symbol-name name)))
          (module-keyword (intern (string-upcase (symbol-name name)) :keyword))
          (urls (cdr (assoc :urls options)))
-         (module-routes-var (gensym "MODULE-ROUTES")))
+         (module-routes-var (gensym "MODULE-ROUTES"))
+         ;; Detect static directory at compile time
+         (source-path (or *compile-file-pathname* *load-pathname*))
+         (module-dir (when source-path
+                       (uiop:pathname-directory-pathname source-path)))
+         (static-dir (when module-dir
+                       (merge-pathnames "static/" module-dir)))
+         (static-root (when (and static-dir (uiop:directory-exists-p static-dir))
+                        (namestring static-dir))))
     `(progn
        (let ((,module-routes-var (make-instance 'routes :mapper (myway:make-mapper))))
          ,@(loop for url-spec in urls
                  append
                  (destructuring-bind (method path controller route-name) url-spec
                    (let* ((full-name (concatenate 'string module-name-str ":" route-name))
+                          (controller-symbol (to-symbol-form controller))
                           (methods (if (listp method) method (list method))))
                      (loop for m in methods
                            collect `(define-route ,m ,path
-                                      :controller ,controller
+                                      :controller ,controller-symbol
                                       :name ,full-name
                                       :routes ,module-routes-var)))))
          (register-module ,module-keyword
-                          (make-instance 'module :routes ,module-routes-var)))
+                          (make-instance 'module
+                                         :routes ,module-routes-var
+                                         :static-root ,static-root)))
        ',name)))
 
 (defmacro define-application (name () &body options)
@@ -128,19 +175,41 @@ Usage:
 Each entry in :modules is (PREFIX MODULE-NAME). The prefix string is used
 directly — \"\" means mount at root, \"/books\" means mount at /books.
 Modules must be loaded (and their define-module forms evaluated) before
-this macro runs so that their routes are in the registry."
+this macro runs so that their routes are in the registry.
+Modules are late-bound: the registry is consulted at dispatch time, so
+re-evaluating define-module takes effect immediately.
+Static files are served by a global middleware under /static/ that searches
+the project's static/ directory and per-module static/ directories."
   (let* ((app-var (intern (string-upcase (symbol-name name))))
-         (modules (cdr (assoc :modules options))))
-    `(progn
-       ,@(loop for (prefix mod-name) in modules
-               for mod-kw = (intern (string-upcase (symbol-name mod-name)) :keyword)
-               collect `(setf (module-prefix (get-module ,mod-kw)) ,prefix))
-       (defparameter ,app-var
-         (lack:builder
-          ,@(loop for (prefix mod-name) in modules
-                  for mod-kw = (intern (string-upcase (symbol-name mod-name)) :keyword)
-                  collect `(:mount ,prefix
-                                   (lack:builder (get-module ,mod-kw))))
-          (lambda (env)
-            (declare (ignore env))
-            '(404 (:content-type "text/html") ("Not found"))))))))
+         (modules (cdr (assoc :modules options)))
+         ;; Detect project-wide static/ directory at compile time
+         ;; Walk up from the source file's directory to find static/
+         (source-path (or *compile-file-pathname* *load-pathname*))
+         (static-root (when source-path
+                        (loop for dir = (uiop:pathname-directory-pathname source-path)
+                                then (uiop:pathname-parent-directory-pathname dir)
+                              for static-dir = (merge-pathnames "static/" dir)
+                              when (uiop:directory-exists-p static-dir)
+                                return (namestring static-dir)
+                              until (equal dir (uiop:pathname-parent-directory-pathname dir))))))
+    `(defparameter ,app-var
+       (lack:builder
+        ;; Multi-root static middleware: project static/ + module static/ dirs
+        ,@(when static-root
+            `((lambda (app)
+                (shiso/static:make-static-middleware
+                 app
+                 :path "/static/"
+                 :project-root ,(pathname static-root)
+                 :module-roots (shiso/static:module-static-roots)))))
+        ;; Module mounts
+        ,@(loop for (prefix mod-name) in modules
+                for mod-kw = (intern (string-upcase (symbol-name mod-name)) :keyword)
+                collect `(:mount ,prefix
+                          (lambda (env)
+                            (let ((mod (get-module ,mod-kw)))
+                              (setf (module-prefix mod) ,prefix)
+                              (lack/component:call mod env)))))
+        (lambda (env)
+          (declare (ignore env))
+          '(404 (:content-type "text/html") ("Not found")))))))

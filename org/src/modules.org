@@ -1,0 +1,60 @@
+#+title: Modules
+#+property: header-args:common-lisp :tangle ../../src/modules.lisp
+#+auto_tangle: t
+
+The module infrastructure for shiso. A =module= is a Lack component that owns
+its own routes, carries a URL prefix for mounting, and optionally points to a
+=static/= directory for per-module assets.
+
+The module registry is the second level of late binding (see =routing.org=):
+=define-application= doesn't capture module objects at build time — it emits
+code that calls =get-module= at dispatch time. Re-evaluating =define-module=
+calls =register-module=, which replaces the entry in the hash table. The next
+incoming request calls =get-module= and gets the new module.
+
+* Package Definition
+
+#+begin_src common-lisp
+(defpackage #:shiso/modules
+  (:use #:cl)
+  (:export
+   #:module
+   #:module-routes
+   #:module-prefix
+   #:module-static-root
+   #:*module-registry*
+   #:register-module
+   #:get-module))
+
+(in-package #:shiso/modules)
+#+end_src
+
+* Module Class
+
+A =module= is a Lack component that owns its own =routes= object (a Myway
+mapper wrapper defined in =shiso/routing=), a URL =prefix= for mounting, and an
+optional =static-root= path pointing to the module's =static/= directory.
+
+#+begin_src common-lisp
+(defclass module (lack/component::lack-component)
+  ((routes :initarg :routes :accessor module-routes)
+   (prefix :initarg :prefix :accessor module-prefix :initform "")
+   (static-root :initarg :static-root :accessor module-static-root :initform nil)))
+#+end_src
+
+* Module Registry
+
+Modules are stored in a global hash-table so that =define-application= and URL
+generation can look them up by keyword name.
+
+#+begin_src common-lisp
+(defvar *module-registry* (make-hash-table :test 'eq)
+  "Global registry of defined modules, keyed by module name (keyword).")
+
+(defun register-module (name module)
+  (setf (gethash name *module-registry*) module))
+
+(defun get-module (name)
+  (or (gethash name *module-registry*)
+      (error "Module ~A is not registered." name)))
+#+end_src

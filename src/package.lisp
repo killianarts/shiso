@@ -4,22 +4,24 @@
   (:import-from #:shiso/requests
                 #:*request*)
 
-  (:import-from #:shiso/routing
-                #:routes
-                #:routes-mapper
+  (:import-from #:shiso/modules
                 #:module
                 #:module-routes
                 #:module-prefix
+                #:module-static-root
+                #:*module-registry*
+                #:register-module
+                #:get-module)
+
+  (:import-from #:shiso/routing
+                #:routes
+                #:routes-mapper
                 #:*routes*
                 #:*global-routes-namespace*
                 #:define-route
                 #:define-routes
                 #:define-module
-                #:define-application
-                #:*module-registry*
-                #:register-module
-                #:get-module
-)
+                #:define-application)
 
   (:import-from #:shiso/scaffold
                 #:make-module)
@@ -28,11 +30,15 @@
                 #:start
                 #:stop)
 
+  (:import-from #:shiso/static
+                #:collectstatic)
+
   (:import-from #:shiso/utils
                 #:http-response
                 #:url
                 #:current-path
-                #:static)
+                #:static
+                #:absolute-url)
 
   (:export
 
@@ -43,6 +49,7 @@
    #:module
    #:module-routes
    #:module-prefix
+   #:module-static-root
    #:*routes*
    #:*global-routes-namespace*
    #:define-route
@@ -60,4 +67,6 @@
    #:http-response
    #:url
    #:current-path
-   #:static))
+   #:static
+   #:absolute-url
+   #:collectstatic))

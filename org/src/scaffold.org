@@ -1,5 +1,6 @@
 #+title: Scaffold
 #+property: header-args:common-lisp :tangle ../../src/scaffold.lisp
+#+auto_tangle: t
 
 Scaffolding support for generating new shiso modules, similar to Django's
 =manage.py startapp=.

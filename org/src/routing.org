@@ -1,48 +1,77 @@
 #+title: Routing
 #+property: header-args:common-lisp :tangle ../../src/routing.lisp
+#+auto_tangle: t
 
-The routing layer for shiso. Provides route definition macros, a module
-abstraction (with per-module route mappers), and an application-level
-=define-application= macro that mounts modules at URL prefixes using Lack's
-=:mount= middleware.
+The routing layer for shiso. Provides route definition macros and an
+application-level =define-application= macro that mounts modules at URL prefixes
+using Lack's =:mount= middleware. The module class and registry live in
+=shiso/modules= (see =modules.org=); this package re-exports them for backward
+compatibility. Static files are handled by a separate multi-root middleware (see
+=static.org=) that serves both project-wide and per-module static assets under a
+single =/static/= URL prefix.
+
+A core design goal is *hot-reload during development*: recompiling a controller,
+re-evaluating a =define-module= form, or re-evaluating =define-application=
+should take effect on the very next HTTP request, without restarting the server.
+The routing layer achieves this through three levels of late binding:
+
+1. *Named controllers* are stored as symbols, not function objects. =funcall= /
+   =apply= on a symbol resolves through the symbol's =fdefinition= at call time,
+   so recompiling the function is immediately visible.
+2. *Modules* are looked up from =*module-registry*= at dispatch time, not
+   captured at build time. Re-evaluating =define-module= replaces the registry
+   entry; the next request finds the new module.
+3. *The application variable* is resolved through =symbol-value= at dispatch
+   time (see =server.org=). Re-evaluating =define-application= rebinds the
+   variable; the running server picks it up automatically.
 
 * Package Definition
+
 #+begin_src common-lisp
 (defpackage #:shiso/routing
   (:use #:cl)
+  (:import-from #:shiso/modules
+                #:module
+                #:module-routes
+                #:module-prefix
+                #:module-static-root
+                #:*module-registry*
+                #:register-module
+                #:get-module)
   (:export
    #:routes
    #:routes-mapper
+   ;; Re-exported from shiso/modules
    #:module
    #:module-routes
    #:module-prefix
+   #:module-static-root
+   #:*module-registry*
+   #:register-module
+   #:get-module
+   ;; Routing-specific
    #:*routes*
    #:*global-routes-namespace*
    #:define-route
    #:define-routes
    #:define-module
    #:define-application
-   #:*module-registry*
-   #:register-module
-   #:get-module
-))
+   #:to-symbol
+   #:to-symbol-form))
 (in-package #:shiso/routing)
 #+end_src
 
 * Core Classes
 
-A =routes= object wraps a Myway mapper. A =module= is a Lack component that
-owns its own routes and carries a URL prefix for mounting using the Lack =:mount= middleware.
+A =routes= object wraps a Myway mapper. The =module= class (a Lack component
+that owns routes and carries a URL prefix) is defined in =shiso/modules= (see
+=modules.org=) and re-exported here for backward compatibility.
 
 #+begin_src common-lisp
 (defclass routes ()
   ((mapper :initarg :mapper :reader routes-mapper :initform nil)))
 
 (defparameter *routes* (make-instance 'routes :mapper (myway:make-mapper)))
-
-(defclass module (lack/component::lack-component)
-  ((routes :initarg :routes :accessor module-routes)
-   (prefix :initarg :prefix :accessor module-prefix :initform "")))
 #+end_src
 
 * Route Helpers
@@ -52,26 +81,73 @@ owns its own routes and carries a URL prefix for mounting using the Lack =:mount
 (defparameter *global-routes-namespace* :global)
 #+end_src
 
+** get-function-name
+
+#+begin_src common-lisp
+(defun get-function-name (fn)
+  (when (functionp fn)
+    (multiple-value-bind (expression closure-p function-name)
+        (function-lambda-expression fn)
+      (if (symbolp function-name)
+          function-name
+          fn))))
+#+end_src
+
 ** make-endpoint
 
-Wrap a controller function so it accepts a Myway params plist and applies
-the relevant values in the correct order.
+Wrap a controller so it accepts a Myway params plist and applies the relevant
+values in the correct order. This is the heart of controller hot-reload:
+=make-endpoint= stores the controller as a *symbol* whenever possible. When the
+endpoint is later invoked, =funcall= / =apply= on that symbol goes through
+Common Lisp's =fdefinition= lookup, which always finds the /current/ definition.
+Recompiling the controller function is therefore enough to update every route
+that references it — no need to re-register routes or restart anything.
+
+If the caller somehow passes a raw function object (e.g., via =#'foo= that
+slipped past the macro layer), =make-endpoint= uses =function-lambda-expression=
+to recover the symbol name and stores that instead. Anonymous lambdas have no
+name to recover, so they remain early-bound — the tradeoff is intentional, since
+lambdas are typically defined inline in the =define-module= form and get replaced
+when that form is re-evaluated.
 
 #+begin_src common-lisp
 (defun make-endpoint (fn param-keys)
-  (if param-keys
-      (lambda (params)
-        (apply fn (mapcar (lambda (key) (getf params key)) param-keys)))
-      (lambda (params)
-        (declare (ignore params))
-        (funcall fn))))
+  (let ((fn (if (functionp fn)
+                (let ((name (nth-value 2 (function-lambda-expression fn))))
+                  (if (symbolp name) name fn))
+                fn)))
+    (if param-keys
+        (lambda (params)
+          (apply fn (mapcar (lambda (key) (getf params key)) param-keys)))
+        (lambda (params)
+          (declare (ignore params))
+          (funcall fn)))))
 #+end_src
 
-*** Implications of =apply= and =funcall=
-Making endpoints that return =apply= or =funcall= makes routes update when the
-controller itself is compiled. Without the call to =apply= or =funcall=, you
-need to also recompile the =myway:mapper= in =routes= (in other words, the call
-to =define-module=).
+*** Why =apply= / =funcall= on a symbol enables hot-reload
+
+In Common Lisp, =(funcall 'foo)= looks up =foo='s current =fdefinition= at call
+time. If the endpoint stored a function /object/ instead (i.e., the result of
+=#'foo= at route-registration time), the endpoint would be frozen to that
+specific compiled function. Recompiling =foo= creates a new function object and
+updates the symbol's =fdefinition=, but the old object — already captured inside
+the endpoint closure — wouldn't change.
+
+By keeping the symbol and calling =funcall= / =apply= on it, every request goes
+through the indirection and always gets the latest definition. This is the
+mechanism that makes "recompile a controller, refresh the page" work.
+
+When passing the name of a controller, you should pass it /quoted/, not
+/function quoted/. =to-symbol-form= normalizes all three forms (='foo=,
+=#'foo=, bare =foo=) so users don't need to remember this, but quoted is the
+canonical style:
+
+#+begin_src lisp :tangle no
+(define-route :GET "/" 'index "index")
+(define-routes module-name
+    ((:GET "/" 'index "index")
+     (:GET "/list" 'list "list")))
+#+end_src
 
 
 *** =mapcar= makes URL arguments easy to get
@@ -91,6 +167,57 @@ then your =book-view= controller definition can looks like this:
     (do-stuff-with-book book)))
 #+end_src
 
+*** Catching users when they fall
+If a user passes a function object to =make-endpoint= (e.g., calling
+=define-route= with =#'controller-name= directly), we use
+=function-lambda-expression= to try recovering the symbol name. If SBCL knows
+the name, we store the symbol and the user gets hot-reload even though they
+didn't quote correctly. If it's an anonymous lambda, there's no name to recover,
+so it stays early-bound — but that's fine, because lambdas are replaced when
+=define-module= is re-evaluated (the second level of late binding).
+
+** to-symbol-form
+
+Because it's easy to accidentally pass =#'controller-name= rather than
+='controller-name=, =to-symbol-form= normalizes controller designator forms at
+macro-expansion time. It's a regular function (not a macro) so it can be called
+inside other macro bodies — =define-routes= and =define-module= use it to
+process controller forms during their own expansion.
+
+The =to-symbol= macro wraps =to-symbol-form= for convenient use at the
+top level (e.g., in =start=). We love our users, don't we folks? We have the
+best users.
+
+=to-symbol-form= needs =eval-when= because it's called at compile time (during
+macro expansion of =define-routes= and =define-module=).
+
+#+begin_src common-lisp
+(defun to-symbol-form (fn-form)
+  "Function version of to-symbol for use inside macro bodies at expansion time.
+   Converts a controller designator form to a quoted symbol form.
+   #'foo, 'foo, and bare foo all become (quote foo). Lambdas pass through."
+  (cond
+    ;; #'foo  ->  (function foo)
+    ((and (consp fn-form)
+          (eq (first fn-form) 'function))
+     `',(second fn-form))
+    ;; 'foo   ->  (quote foo)
+    ((and (consp fn-form)
+          (eq (first fn-form) 'quote)
+          (symbolp (second fn-form)))
+     `',(second fn-form))
+    ;; bare symbol foo
+    ((symbolp fn-form)
+     `',fn-form)
+    ;; lambda or other compound form — pass through
+    (t fn-form)))
+
+(defmacro to-symbol (fn-form)
+  "Turn a function designator form (foo, #'foo, or 'foo) into the quoted symbol 'foo.
+   All three calls expand to the same thing: 'FOO"
+  (to-symbol-form fn-form))
+#+end_src
+
 ** get-name-and-namespace
 
 Split a route name string like ="admin:index"= into a name keyword and a
@@ -108,7 +235,8 @@ namespace keyword. Names without a colon default to the global namespace.
 
 ** define-route
 
-Register a single route on a mapper.
+This function defines a single route, assigning it to a =route= object's
+=mapper=.
 
 #+begin_src common-lisp
 (defun define-route (method routing-rule &key controller name (regexp nil) (routes *routes*))
@@ -137,31 +265,22 @@ automatically prepending a root path and module-name namespace.
         (module-name (string-downcase (symbol-name module))))
     `(progn
        ,@(loop for (method path controller name) in routes
+               for controller-symbol = (to-symbol-form controller)
                for full-path = (concatenate 'string root path)
                for full-name = (concatenate 'string module-name ":" name)
                append (let ((methods (if (listp method) method (list method))))
                         (loop for m in methods
                               collect `(define-route ,m ,full-path
-                                         :controller ,controller
+                                         :controller ,controller-symbol
                                          :name ,full-name)))))))
 #+end_src
 
 * Module Registry
 
-Modules are stored in a global hash-table so that =define-application= and
-URL generation can look them up by keyword name.
-
-#+begin_src common-lisp
-(defvar *module-registry* (make-hash-table :test 'eq)
-  "Global registry of defined modules, keyed by module name (keyword).")
-
-(defun register-module (name module)
-  (setf (gethash name *module-registry*) module))
-
-(defun get-module (name)
-  (or (gethash name *module-registry*)
-      (error "Module ~A is not registered." name)))
-#+end_src
+The module registry (=*module-registry*=, =register-module=, =get-module=) has
+been extracted to =shiso/modules= (see =modules.org=). This package re-exports
+these symbols for backward compatibility. See =modules.org= for the registry
+implementation and design rationale.
 
 * define-module
 
@@ -169,14 +288,28 @@ Define a module with its own private route mapper. Routes are registered
 un-prefixed on the module; the prefix is applied later when the module is
 mounted in an application.
 
+For hot-reload, re-evaluating a =define-module= form creates a brand-new module
+with a fresh mapper, registers all the routes on it, and replaces the old module
+in =*module-registry*= via =register-module=. Because =define-application=
+looks up modules at dispatch time (not build time), the new module is picked up
+on the next request. This means changes to routes — adding, removing, or
+modifying URL specs — as well as changes to inline lambda controllers take effect
+immediately.
+
+If a module's source directory contains a =static/= subdirectory at compile
+time, the path is embedded in the module's =static-root= slot. The static
+middleware (see =static.org=) uses this to serve module files in development
+without running =collectstatic=, and =collectstatic= reads it to know where
+to copy files for production.
+
 #+begin_src common-lisp
 (defmacro define-module (name &body options)
   "Define a module with routes on a per-module mapper (un-prefixed).
 
 Usage:
   (define-module articles
-    (:urls (:GET         \"/\"       #'controllers:index  \"index\")
-           ((:GET :POST) \"/create\" #'controllers:create \"create\")))
+    (:urls (:GET         \"/\"       'controllers:index  \"index\")
+           ((:GET :POST) \"/create\" 'controllers:create \"create\")))
 
 Each URL spec is (METHOD PATH CONTROLLER NAME).
 METHOD can be a keyword or a list of keywords.
@@ -186,27 +319,54 @@ The module instance is stored in the registry for url generation and mounting."
   (let* ((module-name-str (string-downcase (symbol-name name)))
          (module-keyword (intern (string-upcase (symbol-name name)) :keyword))
          (urls (cdr (assoc :urls options)))
-         (module-routes-var (gensym "MODULE-ROUTES")))
+         (module-routes-var (gensym "MODULE-ROUTES"))
+         ;; Detect static directory at compile time
+         (source-path (or *compile-file-pathname* *load-pathname*))
+         (module-dir (when source-path
+                       (uiop:pathname-directory-pathname source-path)))
+         (static-dir (when module-dir
+                       (merge-pathnames "static/" module-dir)))
+         (static-root (when (and static-dir (uiop:directory-exists-p static-dir))
+                        (namestring static-dir))))
     `(progn
        (let ((,module-routes-var (make-instance 'routes :mapper (myway:make-mapper))))
          ,@(loop for url-spec in urls
                  append
                  (destructuring-bind (method path controller route-name) url-spec
                    (let* ((full-name (concatenate 'string module-name-str ":" route-name))
+                          (controller-symbol (to-symbol-form controller))
                           (methods (if (listp method) method (list method))))
                      (loop for m in methods
                            collect `(define-route ,m ,path
-                                      :controller ,controller
+                                      :controller ,controller-symbol
                                       :name ,full-name
                                       :routes ,module-routes-var)))))
          (register-module ,module-keyword
-                          (make-instance 'module :routes ,module-routes-var)))
+                          (make-instance 'module
+                                         :routes ,module-routes-var
+                                         :static-root ,static-root)))
        ',name)))
 #+end_src
 
 * define-application
 
 Mount modules at explicit URL prefixes to form a complete Lack application.
+
+The generated Lack app uses a lambda indirection for each mounted module: instead
+of capturing the module object at build time, each mount point contains a lambda
+that calls =get-module= on every request. This is the key to module-level
+hot-reload — re-evaluating =define-module= replaces the registry entry, and the
+next request through that mount point finds the new module automatically.
+
+Static file serving is handled by a global middleware inserted before the module
+mounts (see =static.org=). It searches the project's =static/= directory first,
+then falls back to per-module =static/= directories, all under the single
+=/static/= URL prefix.
+
+The =setf module-prefix= call inside each lambda ensures the module always knows
+its current prefix, which is needed for URL generation (=shiso:url=). Because
+it's set at dispatch time rather than build time, it stays correct even if the
+module is re-registered.
 
 #+begin_src common-lisp
 (defmacro define-application (name () &body options)
@@ -222,20 +382,101 @@ Usage:
 Each entry in :modules is (PREFIX MODULE-NAME). The prefix string is used
 directly — \"\" means mount at root, \"/books\" means mount at /books.
 Modules must be loaded (and their define-module forms evaluated) before
-this macro runs so that their routes are in the registry."
+this macro runs so that their routes are in the registry.
+Modules are late-bound: the registry is consulted at dispatch time, so
+re-evaluating define-module takes effect immediately.
+Static files are served by a global middleware under /static/ that searches
+the project's static/ directory and per-module static/ directories."
   (let* ((app-var (intern (string-upcase (symbol-name name))))
-         (modules (cdr (assoc :modules options))))
-    `(progn
-       ,@(loop for (prefix mod-name) in modules
-               for mod-kw = (intern (string-upcase (symbol-name mod-name)) :keyword)
-               collect `(setf (module-prefix (get-module ,mod-kw)) ,prefix))
-       (defparameter ,app-var
-         (lack:builder
-          ,@(loop for (prefix mod-name) in modules
-                  for mod-kw = (intern (string-upcase (symbol-name mod-name)) :keyword)
-                  collect `(:mount ,prefix
-                                   (lack:builder (get-module ,mod-kw))))
-          (lambda (env)
-            (declare (ignore env))
-            '(404 (:content-type "text/html") ("Not found"))))))))
+         (modules (cdr (assoc :modules options)))
+         ;; Detect project-wide static/ directory at compile time
+         ;; Walk up from the source file's directory to find static/
+         (source-path (or *compile-file-pathname* *load-pathname*))
+         (static-root (when source-path
+                        (loop for dir = (uiop:pathname-directory-pathname source-path)
+                                then (uiop:pathname-parent-directory-pathname dir)
+                              for static-dir = (merge-pathnames "static/" dir)
+                              when (uiop:directory-exists-p static-dir)
+                                return (namestring static-dir)
+                              until (equal dir (uiop:pathname-parent-directory-pathname dir))))))
+    `(defparameter ,app-var
+       (lack:builder
+        ;; Multi-root static middleware: project static/ + module static/ dirs
+        ,@(when static-root
+            `((lambda (app)
+                (shiso/static:make-static-middleware
+                 app
+                 :path "/static/"
+                 :project-root ,(pathname static-root)
+                 :module-roots (shiso/static:module-static-roots)))))
+        ;; Module mounts
+        ,@(loop for (prefix mod-name) in modules
+                for mod-kw = (intern (string-upcase (symbol-name mod-name)) :keyword)
+                collect `(:mount ,prefix
+                          (lambda (env)
+                            (let ((mod (get-module ,mod-kw)))
+                              (setf (module-prefix mod) ,prefix)
+                              (lack/component:call mod env)))))
+        (lambda (env)
+          (declare (ignore env))
+          '(404 (:content-type "text/html") ("Not found")))))))
 #+end_src
+
+* Hot-Reload Summary
+
+The three levels of late binding work together so that, during development, you
+almost never need to restart the server. Here's what to do when you change
+something:
+
+| What changed                     | Action needed                             | Why it works                                                  |
+|----------------------------------+-------------------------------------------+---------------------------------------------------------------|
+| A named controller function      | Just recompile the function (=C-c C-c=)   | ~funcall~ / =apply= on the symbol resolves the new definition |
+| An inline lambda in a module     | Re-evaluate the =define-module= form      | Creates a new module; registry lookup finds it next request   |
+| Routes added/removed in a module | Re-evaluate the =define-module= form      | Fresh mapper with new routes replaces the registry entry      |
+| Modules added/removed from app   | Re-evaluate the =define-application= form | Rebuilds the Lack middleware chain with new mount points      |
+| A static/ directory was added    | Recompile the module's routes file, then re-evaluate =define-application= | ~define-module~ records the path; the static middleware picks it up on rebuild |
+
+If the server was started through =shiso:start= (which uses =symbol-value=
+indirection — see =server.org=), even re-evaluating =define-application= takes
+effect immediately because the server resolves the app symbol on every request.
+
+* Hot-Reload Context
+
+I tried using Utopian a year ago. I found it irritating to develop with because
+when I compiled a function, it didn't seem to update the page on the next
+request. I later did a deep-dive on how Utopian worked and started building this
+framework--first by building an intuition for how Myway and Lack worked.
+
+Neither Myway nor Lack make it clear how to enable hot-reloading of controllers.
+The Myway documentation is too sparse and only has very limited examples (no
+function definitions--just lambdas). Lack shows examples of saving an "app" to a
+=defparameter=, but an app isn't just the =lack:builder= instance. Caveman's
+=defroute= macro actually did save routes to =defparameter= instances, so this is
+probably an outdated view of how to use Lack.
+
+Reading Utopian also didn't help me understand how hot-reloading could be enabled,
+either. In hindsight, I used Utopian via the =utopian server= command as in the
+README, which compiles the project when started. I often found myself restarting
+Utopian to get controllers to update--because it was updating the function
+objects stored by =defroutes= definitions.
+
+The first thing I realized on my own was that both Myway and Lack documentation
+demonstrate how to return a saved function object, but Myway can return a
+/call/ to a function instead. That enables both the ability to inject URL
+parameters into the route/defun, and it also enabled me to simply compile a
+function and have it updated when I refreshed the page.
+
+During development of this framework with Claude Code, I built =define-module=
+and =define-application=--inspired by Django's philosophy of "apps". In fact,
+that seems to be the intended way to use Lack as well (=:mount= enables
+module-level middleware settings necessary for enabling Django-like behavior).
+However, I initially lost hot-reloading again. I knew that =make-endpoint=
+/should/ enable it, but I had lost it with the addition of some layers of
+abstraction. Claude helped me realize that =#'controller-name= in the
+=define-module= urls settings was the problem. Changing to ='controller-name=
+fixes the problem, but that is too easy an error to make for users, so we added
+machinery (=to-symbol= and =to-symbol-form=) to ensure hot-reloading always worked.
+
+We did the same for =define-application= and =shiso:start= so that entire modules can be added or
+removed by simply recompiling the =define-application= definition without
+restarting the server.
