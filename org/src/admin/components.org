@@ -100,7 +100,7 @@ table.admin-table { width: 100%; border-collapse: collapse; }
                        (substitute #\Space #\-
                                    (string-downcase
                                     (symbol-name col))))
-        :collect (ah:</> (th label))))
+        :append (ah:</> (th label))))
 
 (ah:define-component ac-admin-table-rows (&key columns items model-name admin-prefix children)
   (loop :for item :in items
@@ -112,7 +112,8 @@ table.admin-table { width: 100%; border-collapse: collapse; }
                             :collect (ah:</> (td (princ-to-string val))))
         :for edit-href := (format nil "~A/~(~A~)/~A" admin-prefix model-name id)
         :collect (ah:</>
-                  (tr cells (td (a :href edit-href :class "btn btn-primary" "Edit"))))))
+                  (tr cells (td (a :href edit-href :class "btn btn-primary" "Edit"))))
+        ))
 
 (ah:define-component ac-admin-table (&key columns items model-name admin-prefix children)
   (ah:</>

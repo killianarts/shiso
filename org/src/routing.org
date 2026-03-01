@@ -2,13 +2,12 @@
 #+property: header-args:common-lisp :tangle ../../src/routing.lisp
 #+auto_tangle: t
 
-The routing layer for shiso. Provides route definition macros and an
-application-level =define-application= macro that mounts modules at URL prefixes
-using Lack's =:mount= middleware. The module class and registry live in
-=shiso/modules= (see =modules.org=); this package re-exports them for backward
-compatibility. Static files are handled by a separate multi-root middleware (see
-=static.org=) that serves both project-wide and per-module static assets under a
-single =/static/= URL prefix.
+The routing layer for shiso. Provides route definition macros, a module
+abstraction (with per-module route mappers), and an application-level
+=define-application= macro that mounts modules at URL prefixes using Lack's
+=:mount= middleware. Static files are handled by a separate multi-root middleware
+(see =static.org=) that serves both project-wide and per-module static assets
+under a single =/static/= URL prefix.
 
 A core design goal is *hot-reload during development*: recompiling a controller,
 re-evaluating a =define-module= form, or re-evaluating =define-application=
@@ -30,48 +29,43 @@ The routing layer achieves this through three levels of late binding:
 #+begin_src common-lisp
 (defpackage #:shiso/routing
   (:use #:cl)
-  (:import-from #:shiso/modules
-                #:module
-                #:module-routes
-                #:module-prefix
-                #:module-static-root
-                #:*module-registry*
-                #:register-module
-                #:get-module)
   (:export
    #:routes
    #:routes-mapper
-   ;; Re-exported from shiso/modules
    #:module
    #:module-routes
    #:module-prefix
-   #:module-static-root
-   #:*module-registry*
-   #:register-module
-   #:get-module
-   ;; Routing-specific
    #:*routes*
    #:*global-routes-namespace*
    #:define-route
    #:define-routes
    #:define-module
    #:define-application
+   #:*module-registry*
+   #:register-module
+   #:get-module
+   #:module-static-root
    #:to-symbol
-   #:to-symbol-form))
+   #:to-symbol-form
+))
 (in-package #:shiso/routing)
 #+end_src
 
 * Core Classes
 
-A =routes= object wraps a Myway mapper. The =module= class (a Lack component
-that owns routes and carries a URL prefix) is defined in =shiso/modules= (see
-=modules.org=) and re-exported here for backward compatibility.
+A =routes= object wraps a Myway mapper. A =module= is a Lack component that
+owns its own routes and carries a URL prefix for mounting using the Lack =:mount= middleware.
 
 #+begin_src common-lisp
 (defclass routes ()
   ((mapper :initarg :mapper :reader routes-mapper :initform nil)))
 
 (defparameter *routes* (make-instance 'routes :mapper (myway:make-mapper)))
+
+(defclass module (lack/component::lack-component)
+  ((routes :initarg :routes :accessor module-routes)
+   (prefix :initarg :prefix :accessor module-prefix :initform "")
+   (static-root :initarg :static-root :accessor module-static-root :initform nil)))
 #+end_src
 
 * Route Helpers
@@ -277,10 +271,24 @@ automatically prepending a root path and module-name namespace.
 
 * Module Registry
 
-The module registry (=*module-registry*=, =register-module=, =get-module=) has
-been extracted to =shiso/modules= (see =modules.org=). This package re-exports
-these symbols for backward compatibility. See =modules.org= for the registry
-implementation and design rationale.
+Modules are stored in a global hash-table so that =define-application= and URL
+generation can look them up by keyword name. The registry is the second level of
+late binding: =define-application= doesn't capture module objects at build time
+— it emits code that calls =get-module= at dispatch time. Re-evaluating
+=define-module= calls =register-module=, which replaces the entry in the hash
+table. The next incoming request calls =get-module= and gets the new module.
+
+#+begin_src common-lisp
+(defvar *module-registry* (make-hash-table :test 'eq)
+  "Global registry of defined modules, keyed by module name (keyword).")
+
+(defun register-module (name module)
+  (setf (gethash name *module-registry*) module))
+
+(defun get-module (name)
+  (or (gethash name *module-registry*)
+      (error "Module ~A is not registered." name)))
+#+end_src
 
 * define-module
 

@@ -66,14 +66,15 @@
          (create-href (format nil "~A/~(~A~)/create" *admin-prefix* model-name))
          (title (format nil "~A List" (string-capitalize (symbol-name model-name)))))
     (render-page title
-      (ah:</>
-       (<>
-         (ah:</> (div :class "admin-actions"
-                   (ah:</> (a :href create-href :class "btn btn-primary" "Add New"))))
-         (ah:</> (ac-admin-table :columns columns
-                                 :items items
-                                 :model-name model-name
-                                 :admin-prefix *admin-prefix*)))))))
+                 (ah:</>
+                  (div
+                    (div :class "admin-actions"
+                      (a :href create-href :class "btn btn-primary" "Add New"))
+                    (ac-admin-table :columns columns
+                      :items items
+                      :model-name model-name
+                      :admin-prefix *admin-prefix*)
+                    )))))
 
 (defun create-view (model-name-str)
   "Render the create form, or handle POST to create a new instance."
@@ -82,9 +83,9 @@
          (is-post (mw:post-request-p))
          (data (when is-post (mw:parse-body-params)))
          (form (forms:make-model-form model-name
-                 :fields (reg:admin-fields config)
-                 :exclude (reg:admin-exclude config)
-                 :data data))
+                                      :fields (reg:admin-fields config)
+                                      :exclude (reg:admin-exclude config)
+                                      :data data))
          (title (format nil "Create ~A" (string-capitalize (symbol-name model-name)))))
     (if (and is-post (forms:validate-form form))
         (progn
@@ -92,8 +93,8 @@
           (mw:redirect-response
            (format nil "~A/~(~A~)" *admin-prefix* model-name)))
         (render-page title
-          (forms:render-form form
-            :action (format nil "~A/~(~A~)/create" *admin-prefix* model-name))))))
+                     (forms:render-form form
+                                        :action (format nil "~A/~(~A~)/create" *admin-prefix* model-name))))))
 
 (defun edit-view (model-name-str id-str)
   "Render the edit form, or handle POST to update an existing instance."

@@ -2,6 +2,8 @@
   (:use #:cl)
   (:local-nicknames (#:meta #:shiso/models/metadata))
   (:export
+   ;; Name normalization
+   #:normalize-name
    ;; Registry
    #:*model-registry*
    #:register-model
@@ -23,17 +25,25 @@
 
 (in-package #:shiso/models/registry)
 
+(defun normalize-name (name)
+  "Normalize a model name to a keyword symbol for registry lookup.
+Accepts keywords, symbols, or strings."
+  (etypecase name
+    (keyword name)
+    (symbol (intern (symbol-name name) :keyword))
+    (string (intern (string-upcase name) :keyword))))
+
 (defvar *model-registry* (make-hash-table :test 'eq)
-  "Maps model name symbols to model-metadata structs.")
+  "Maps model name keywords to model-metadata structs.")
 
 (defun register-model (name class fields)
   "Register a model's metadata.  Called by the define-model expansion."
-  (setf (gethash name *model-registry*)
+  (setf (gethash (normalize-name name) *model-registry*)
         (meta:make-model-metadata :class class :fields fields)))
 
 (defun model-fields (model-name)
   "Return the list of slot-metadata for MODEL-NAME, in declaration order."
-  (let ((metadata (gethash model-name *model-registry*)))
+  (let ((metadata (gethash (normalize-name model-name) *model-registry*)))
     (when metadata (meta:model-metadata-fields metadata))))
 
 (defun model-field (model-name slot-name)
@@ -43,7 +53,7 @@
 
 (defun model-class (model-name)
   "Return the CLOS class for MODEL-NAME."
-  (let ((metadata (gethash model-name *model-registry*)))
+  (let ((metadata (gethash (normalize-name model-name) *model-registry*)))
     (when metadata (meta:model-metadata-class metadata))))
 
 (defun all-models ()

@@ -93,14 +93,15 @@ via almighty-html components.
          (create-href (format nil "~A/~(~A~)/create" *admin-prefix* model-name))
          (title (format nil "~A List" (string-capitalize (symbol-name model-name)))))
     (render-page title
-      (ah:</>
-       (<>
-         (ah:</> (div :class "admin-actions"
-                   (ah:</> (a :href create-href :class "btn btn-primary" "Add New"))))
-         (ah:</> (ac-admin-table :columns columns
-                                 :items items
-                                 :model-name model-name
-                                 :admin-prefix *admin-prefix*)))))))
+                 (ah:</>
+                  (div
+                    (div :class "admin-actions"
+                      (a :href create-href :class "btn btn-primary" "Add New"))
+                    ;; (ac-admin-table :columns columns
+                    ;;   :items items
+                    ;;   :model-name model-name
+                    ;;   :admin-prefix *admin-prefix*)
+                    )))))
 #+end_src
 
 * Create View
@@ -113,9 +114,9 @@ via almighty-html components.
          (is-post (mw:post-request-p))
          (data (when is-post (mw:parse-body-params)))
          (form (forms:make-model-form model-name
-                 :fields (reg:admin-fields config)
-                 :exclude (reg:admin-exclude config)
-                 :data data))
+                                      :fields (reg:admin-fields config)
+                                      :exclude (reg:admin-exclude config)
+                                      :data data))
          (title (format nil "Create ~A" (string-capitalize (symbol-name model-name)))))
     (if (and is-post (forms:validate-form form))
         (progn
@@ -123,8 +124,8 @@ via almighty-html components.
           (mw:redirect-response
            (format nil "~A/~(~A~)" *admin-prefix* model-name)))
         (render-page title
-          (forms:render-form form
-            :action (format nil "~A/~(~A~)/create" *admin-prefix* model-name))))))
+                     (forms:render-form form
+                                        :action (format nil "~A/~(~A~)/create" *admin-prefix* model-name))))))
 #+end_src
 
 * Edit View
@@ -154,7 +155,7 @@ via almighty-html components.
         (render-page title
           (forms:render-form form
             :action (format nil "~A/~(~A~)/~A"
-                            *admin-prefix* model-name id))))))
+                            ,*admin-prefix* model-name id))))))
 #+end_src
 
 * Delete View

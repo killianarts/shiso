@@ -38,14 +38,16 @@
 
 (defun register-admin (model-name &rest initargs)
   "Register a model for admin CRUD with optional configuration."
-  (setf (gethash model-name *admin-registry*)
-        (apply #'make-instance 'admin-config
-               :model-name model-name initargs)))
+  (let ((key (models:normalize-name model-name)))
+    (setf (gethash key *admin-registry*)
+          (apply #'make-instance 'admin-config
+                 :model-name key initargs))))
 
 (defun get-admin (model-name)
   "Return the admin-config for MODEL-NAME, or signal an error."
-  (or (gethash model-name *admin-registry*)
-      (error "No admin registered for model ~A" model-name)))
+  (let ((key (models:normalize-name model-name)))
+    (or (gethash key *admin-registry*)
+        (error "No admin registered for model ~A" model-name))))
 
 (defun all-registered-admins ()
   "Return a list of all registered admin model name symbols."

@@ -1,39 +1,35 @@
 (defpackage #:shiso/routing
   (:use #:cl)
-  (:import-from #:shiso/modules
-                #:module
-                #:module-routes
-                #:module-prefix
-                #:module-static-root
-                #:*module-registry*
-                #:register-module
-                #:get-module)
   (:export
    #:routes
    #:routes-mapper
-   ;; Re-exported from shiso/modules
    #:module
    #:module-routes
    #:module-prefix
-   #:module-static-root
-   #:*module-registry*
-   #:register-module
-   #:get-module
-   ;; Routing-specific
    #:*routes*
    #:*global-routes-namespace*
    #:define-route
    #:define-routes
    #:define-module
    #:define-application
+   #:*module-registry*
+   #:register-module
+   #:get-module
+   #:module-static-root
    #:to-symbol
-   #:to-symbol-form))
+   #:to-symbol-form
+))
 (in-package #:shiso/routing)
 
 (defclass routes ()
   ((mapper :initarg :mapper :reader routes-mapper :initform nil)))
 
 (defparameter *routes* (make-instance 'routes :mapper (myway:make-mapper)))
+
+(defclass module (lack/component::lack-component)
+  ((routes :initarg :routes :accessor module-routes)
+   (prefix :initarg :prefix :accessor module-prefix :initform "")
+   (static-root :initarg :static-root :accessor module-static-root :initform nil)))
 
 (defparameter *global-routes-namespace* :global)
 
@@ -117,6 +113,16 @@
                               collect `(define-route ,m ,full-path
                                          :controller ,controller-symbol
                                          :name ,full-name)))))))
+
+(defvar *module-registry* (make-hash-table :test 'eq)
+  "Global registry of defined modules, keyed by module name (keyword).")
+
+(defun register-module (name module)
+  (setf (gethash name *module-registry*) module))
+
+(defun get-module (name)
+  (or (gethash name *module-registry*)
+      (error "Module ~A is not registered." name)))
 
 (defmacro define-module (name &body options)
   "Define a module with routes on a per-module mapper (un-prefixed).

@@ -1,6 +1,7 @@
 (defpackage #:shiso/admin/components
   (:use #:cl)
   (:local-nicknames (#:ah #:almighty-html)
+                    (#:el #:almighty-html/element)
                     (#:models #:shiso/models))
   (:export
    #:ac-admin-page
@@ -78,19 +79,20 @@ table.admin-table { width: 100%; border-collapse: collapse; }
                        (substitute #\Space #\-
                                    (string-downcase
                                     (symbol-name col))))
-        :collect (ah:</> (th label))))
+        :append (ah:</> (th label))))
 
 (ah:define-component ac-admin-table-rows (&key columns items model-name admin-prefix children)
-  (loop :for item :in items
-        :for id := (mito:object-id item)
-        :for cells := (loop :for col :in columns
-                            :for val := (if (slot-boundp item col)
-                                            (slot-value item col)
-                                            "")
-                            :collect (ah:</> (td (princ-to-string val))))
-        :for edit-href := (format nil "~A/~(~A~)/~A" admin-prefix model-name id)
-        :collect (ah:</>
-                  (tr cells (td (a :href edit-href :class "btn btn-primary" "Edit"))))))
+  (ah:</> 
+   (<>
+     (loop :for item :in items
+           :for id := (mito:object-id item)
+           :for cells := (loop :for col :in columns
+                               :for val := (if (slot-boundp item col)
+                                               (slot-value item col)
+                                               "")
+                               :collect (ah:</> (td (princ-to-string val))))
+           :for edit-href := (format nil "~A/~(~A~)/~A" admin-prefix model-name id)
+           :collect (ah:</> (tr cells (td (a :href edit-href :class "btn btn-primary" "Edit"))))))))
 
 (ah:define-component ac-admin-table (&key columns items model-name admin-prefix children)
   (ah:</>
