@@ -1,35 +1,25 @@
 (defpackage #:shiso/routing
   (:use #:cl)
+  (:local-nicknames (#:modules #:shiso/modules))
   (:export
    #:routes
    #:routes-mapper
-   #:module
-   #:module-routes
-   #:module-prefix
    #:*routes*
    #:*global-routes-namespace*
    #:define-route
    #:define-routes
    #:define-module
    #:define-application
-   #:*module-registry*
-   #:register-module
-   #:get-module
-   #:module-static-root
    #:to-symbol
    #:to-symbol-form
 ))
+
 (in-package #:shiso/routing)
 
 (defclass routes ()
   ((mapper :initarg :mapper :reader routes-mapper :initform nil)))
 
 (defparameter *routes* (make-instance 'routes :mapper (myway:make-mapper)))
-
-(defclass module (lack/component::lack-component)
-  ((routes :initarg :routes :accessor module-routes)
-   (prefix :initarg :prefix :accessor module-prefix :initform "")
-   (static-root :initarg :static-root :accessor module-static-root :initform nil)))
 
 (defparameter *global-routes-namespace* :global)
 
@@ -114,16 +104,6 @@
                                          :controller ,controller-symbol
                                          :name ,full-name)))))))
 
-(defvar *module-registry* (make-hash-table :test 'eq)
-  "Global registry of defined modules, keyed by module name (keyword).")
-
-(defun register-module (name module)
-  (setf (gethash name *module-registry*) module))
-
-(defun get-module (name)
-  (or (gethash name *module-registry*)
-      (error "Module ~A is not registered." name)))
-
 (defmacro define-module (name &body options)
   "Define a module with routes on a per-module mapper (un-prefixed).
 
@@ -162,8 +142,8 @@ The module instance is stored in the registry for url generation and mounting."
                                       :controller ,controller-symbol
                                       :name ,full-name
                                       :routes ,module-routes-var)))))
-         (register-module ,module-keyword
-                          (make-instance 'module
+         (modules:register-module ,module-keyword
+                          (make-instance 'modules:module
                                          :routes ,module-routes-var
                                          :static-root ,static-root)))
        ',name)))
@@ -213,8 +193,8 @@ the project's static/ directory and per-module static/ directories."
                 for mod-kw = (intern (string-upcase (symbol-name mod-name)) :keyword)
                 collect `(:mount ,prefix
                           (lambda (env)
-                            (let ((mod (get-module ,mod-kw)))
-                              (setf (module-prefix mod) ,prefix)
+                            (let ((mod (modules:get-module ,mod-kw)))
+                              (setf (modules:module-prefix mod) ,prefix)
                               (lack/component:call mod env)))))
         (lambda (env)
           (declare (ignore env))

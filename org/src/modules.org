@@ -2,9 +2,12 @@
 #+property: header-args:common-lisp :tangle ../../src/modules.lisp
 #+auto_tangle: t
 
-The module infrastructure for shiso. A =module= is a Lack component that owns
-its own routes, carries a URL prefix for mounting, and optionally points to a
-=static/= directory for per-module assets.
+The canonical home for shiso's module infrastructure. A =module= is a Lack
+component that owns its own routes, carries a URL prefix for mounting, and
+optionally points to a =static/= directory for per-module assets. The module
+class and registry are defined here and used by =shiso/routing= (via
+=:local-nicknames=), =shiso/static=, =shiso/requests=, =shiso/utils=, and the
+umbrella =shiso= package.
 
 The module registry is the second level of late binding (see =routing.org=):
 =define-application= doesn't capture module objects at build time — it emits

@@ -17,13 +17,6 @@
                 #:get-admin
                 #:all-registered-admins
                 #:define-admin)
-  (:import-from #:shiso/admin/views
-                #:dashboard-view
-                #:list-view
-                #:create-view
-                #:edit-view
-                #:delete-view
-                #:*admin-prefix*)
   (:import-from #:shiso/admin/routes)
   (:import-from #:shiso/admin/middleware
                 #:post-request-p
@@ -48,13 +41,6 @@
    #:get-admin
    #:all-registered-admins
    #:define-admin
-   ;; Views
-   #:dashboard-view
-   #:list-view
-   #:create-view
-   #:edit-view
-   #:delete-view
-   #:*admin-prefix*
    ;; Middleware
    #:post-request-p
    #:parse-body-params

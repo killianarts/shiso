@@ -113,7 +113,7 @@
     (ah:</>
      (div :class css-class
        (ah:</> (label :for name-str (fields:field-label field)))
-       (ah:</> (input :type "date" :name name-str :id name-str :value val))
+       (ah:</> (input :type "datetime-local" :name name-str :id name-str :value val))
        (render-help-text field)
        (render-errors errors)))))
 

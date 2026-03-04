@@ -13,13 +13,15 @@
 
 (defmacro with-fresh-routes (&body body)
   "Execute BODY with a fresh module registry and fresh global routes."
-  (let ((saved-routes (gensym "SAVED-ROUTES")))
-    `(let ((,saved-routes shiso:*routes*))
+  (let ((saved-routes (gensym "SAVED-ROUTES"))
+        (saved-modules (gensym "SAVED-MODULES")))
+    `(let ((,saved-routes shiso:*routes*)
+           (,saved-modules (alexandria:copy-hash-table shiso:*module-registry*)))
        (fresh-registry)
        (fresh-routes)
        (unwind-protect (progn ,@body)
-         (fresh-registry)
-         (setf shiso:*routes* ,saved-routes)))))
+         (setf shiso:*module-registry* ,saved-modules
+               shiso:*routes* ,saved-routes)))))
 
 (defun module-routes-list (mod)
   "Get all routes from a module's mapper as a list."

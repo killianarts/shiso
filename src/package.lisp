@@ -23,8 +23,8 @@
                 #:define-module
                 #:define-application)
 
-  (:import-from #:shiso/scaffold
-                #:make-module)
+  ;; (:import-from #:shiso/scaffold
+  ;;               #:make-module)
 
   (:import-from #:shiso/server
                 #:start

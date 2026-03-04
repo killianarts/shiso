@@ -1,0 +1,207 @@
+#+title: Admin Controllers
+#+property: header-args:common-lisp :tangle ../../../src/admin/controllers.lisp
+#+auto_tangle: t
+
+Controller functions for the admin dashboard.  Each controller looks up the model
+from the admin registry, builds the appropriate form or table, and renders
+via almighty-html components.
+
+* Package
+
+#+begin_src common-lisp
+(defpackage #:shiso/admin/controllers
+  (:use #:cl)
+  (:local-nicknames (#:ah #:almighty-html)
+                    (#:reg #:shiso/admin/registry)
+                    (#:comp #:shiso/admin/components)
+                    (#:mw #:shiso/admin/middleware)
+                    (#:models #:shiso/models)
+                    (#:forms #:shiso/forms))
+  (:import-from #:shiso/admin/components
+                #:ac-admin-page
+                #:ac-admin-table
+                #:ac-admin-nav
+                #:ac-admin-flash)
+  (:export
+   #:index
+   #:model-instance-list
+   #:model-instance-build
+   #:model-instance-persist
+   #:model-instance-rebuild
+   #:model-instance-repersist
+   #:model-instance-delete))
+
+(in-package #:shiso/admin/controllers)
+#+end_src
+
+* Shared Helpers
+
+#+begin_src common-lisp
+(defun render-page (title content)
+  "Wrap content in the admin page skeleton."
+  (let ((html (ah:render-to-string
+               (ah:</>
+                (ac-admin-page :title title
+                               :model-names (reg:all-registered-admins)
+                               content)))))
+    (mw:http-response html)))
+
+(defun model-name-from-string (str)
+  "Convert a URL model name string to a symbol, e.g. \"article\" -> ARTICLE."
+  (intern (string-upcase str)))
+
+#+nil
+(shiso/admin/registry::model-name-from-string "article")
+
+(defun display-columns (model-name config)
+  "Return the list of columns to display in the list controller."
+  (or (reg:admin-list-display config)
+      (mapcar #'models:field-name
+              (remove-if-not #'models:field-editablep
+                             (models:model-fields model-name)))))
+#+end_src
+
+* Dashboard Controller
+
+#+begin_src common-lisp
+(defun index ()
+  "Render the admin dashboard with links to all registered models."
+  (render-page
+   "Dashboard"
+   (ah:</> (ul :class "admin-model-list"
+             (loop :for name :in (reg:all-registered-admins)
+                   :for href := (shiso/utils:url "shiso-admin:model-instance-list" :model (string-downcase name))
+                   :for label := (string-capitalize name)
+                   :collect (ah:</> (li :class "admin-model-link" (a :href href label))))))))
+#+end_src
+
+* List Controller
+
+#+begin_src common-lisp
+
+#+nil
+(model-name-from-string "article")
+#+nil
+(models:model-class "article")
+
+(defun model-instance-list (model-name-str)
+  "Render a table of all instances of a model."
+  (let* ((model-name model-name-str)
+         (config (reg:get-admin model-name))
+         ;; model-class can take a string.
+         (model-class (models:model-class model-name-str))
+         (items (mito:select-dao model-class))
+         (columns (display-columns model-name config))
+         (create-href (shiso/utils:url "shiso-admin:model-instance-build" :model model-name-str))
+         (title (format nil "~A List" (string-capitalize model-name-str))))
+    (render-page title
+                 (ah:</>
+                  (div
+                    (div :class "admin-actions"
+                      (a :href create-href :class "btn btn-primary" "Add New"))
+                    (ac-admin-table :columns columns
+                      :items items
+                      :model-name model-name-str))))))
+#+end_src
+
+* Build Controller
+
+#+begin_src common-lisp
+(defun model-instance-build (model-name)
+  "Render the create form, or handle POST to create a new instance."
+  (let* ((config (reg:get-admin model-name))
+         (is-post (mw:post-request-p))
+         (data (when is-post (mw:parse-body-params)))
+         (form (forms:make-model-form model-name
+                                      :fields (reg:admin-fields config)
+                                      :exclude (reg:admin-exclude config)
+                                      :data data))
+         (title (format nil "Create ~A" (string-capitalize model-name))))
+    (render-page title
+                 (forms:render-form form
+                                    :action (shiso/utils:url "shiso-admin:model-instance-persist"
+                                                             :model model-name)))))
+
+(defun model-instance-persist (model-name)
+  "Validate and create a new instance on POST."
+  (let* ((config (reg:get-admin model-name))
+         (data (mw:parse-body-params))
+         (title (format nil "Create ~A" (string-capitalize model-name))))
+    (let ((form (forms:make-model-form model-name
+                                       :fields (reg:admin-fields config)
+                                       :exclude (reg:admin-exclude config)
+                                       :data data)))
+      (if (forms:validate-form form)
+          (progn
+            (forms:save-form form)
+            (mw:redirect-response
+             (shiso/utils:url "shiso-admin:model-instance-list" :model model-name)))
+          (render-page title (forms:render-form form :action (shiso/utils:url "shiso-admin:model-instance-persist" :model model-name)))))))
+#+end_src
+
+* Edit Controller
+
+#+begin_src common-lisp
+(defun model-instance-rebuild (model-name-str id-str)
+  "Render the edit form, or handle POST to update an existing instance."
+  (let* ((model-name (model-name-from-string model-name-str))
+         (config (reg:get-admin model-name-str))
+         (model-class (models:model-class model-name))
+         (id (parse-integer id-str))
+         (instance (mito:find-dao model-class :id id))
+         (is-post (mw:post-request-p))
+         (data (when is-post (mw:parse-body-params)))
+         (form (forms:make-model-form model-name
+                 :fields (reg:admin-fields config)
+                 :exclude (reg:admin-exclude config)
+                 :instance instance
+                 :data data))
+         (title (format nil "Edit ~A #~A"
+                        (string-capitalize (symbol-name model-name)) id)))
+    (render-page title
+                 (forms:render-form form
+                                    :action (shiso/utils:url "shiso-admin:model-instance-repersist"
+                                                             :model model-name-str
+                                                             :id id-str)))))
+
+(defun model-instance-repersist (model-name-str id-str)
+  "Validate and update the instance on PATCH."
+  (let* ((model-name (model-name-from-string model-name-str))
+         (config (reg:get-admin model-name-str))
+         (model-class (models:model-class model-name))
+         (id (parse-integer id-str))
+         (instance (mito:find-dao model-class :id id))
+         (data (mw:parse-body-params))
+         (form (forms:make-model-form model-name
+                 :fields (reg:admin-fields config)
+                 :exclude (reg:admin-exclude config)
+                 :instance instance
+                 :data data))
+         (title (format nil "Edit ~A #~A"
+                        (string-capitalize (symbol-name model-name)) id)))
+    (if (forms:validate-form form)
+        (progn
+          (forms:save-form form)
+          (mw:redirect-response
+           (shiso/utils:url "shiso-admin:model-instance-list" :model model-name-str)))
+        (render-page title
+          (forms:render-form form
+            :action (shiso/utils:url "shiso-admin:model-instance-repersist"
+                                     :model model-name-str
+                                     :id id-str))))))
+#+end_src
+
+* Delete Controller
+
+#+begin_src common-lisp
+(defun model-instance-delete (model-name-str id-str)
+  "Handle POST to delete a model instance."
+  (let* ((model-name (model-name-from-string model-name-str))
+         (model-class (models:model-class model-name))
+         (id (parse-integer id-str))
+         (instance (mito:find-dao model-class :id id)))
+    (when instance
+      (mito:delete-dao instance))
+    (mw:redirect-response
+     (shiso/utils:url "shiso-admin:model-instance-list" :model model-name-str))))
+#+end_src

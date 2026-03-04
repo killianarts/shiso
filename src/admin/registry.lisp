@@ -33,25 +33,43 @@
    (per-page     :initarg :per-page     :reader admin-per-page     :initform 25)
    (ordering     :initarg :ordering     :reader admin-ordering     :initform nil)))
 
-(defvar *admin-registry* (make-hash-table :test 'eq)
+(defparameter *admin-registry* (make-hash-table :test 'eq)
   "Maps model name symbols to admin-config instances.")
 
 (defun register-admin (model-name &rest initargs)
   "Register a model for admin CRUD with optional configuration."
-  (let ((key (models:normalize-name model-name)))
-    (setf (gethash key *admin-registry*)
-          (apply #'make-instance 'admin-config
-                 :model-name key initargs))))
+  (setf (gethash model-name *admin-registry*)
+        (apply #'make-instance 'admin-config
+               :model-name model-name initargs)))
 
 (defun get-admin (model-name)
   "Return the admin-config for MODEL-NAME, or signal an error."
-  (let ((key (models:normalize-name model-name)))
-    (or (gethash key *admin-registry*)
-        (error "No admin registered for model ~A" model-name))))
+  (let ((registered-name (find-symbol (string-upcase model-name) (symbol-package '*admin-registry))))
+    (or (gethash registered-name *admin-registry*)
+        (error "No admin registered for model ~A" registered-name))))
+
+(defun get-admin (model-name)
+  "Return the admin-config for MODEL-NAME, or signal an error."
+  (or (gethash model-name *admin-registry*)
+      (error "No admin registered for model ~A" model-name)))
+
+#+nil
+(get-admin 'book)
 
 (defun all-registered-admins ()
-  "Return a list of all registered admin model name symbols."
-  (loop for name being the hash-keys of *admin-registry* collect name))
+  "Return a list of all registered admin model names as strings."
+  (loop :for name :being :the :hash-keys :of *admin-registry* :collect name))
+
+(defun model-name-from-string (str)
+  "Convert a URL model name string to a symbol, e.g. \"article\" -> ARTICLE."
+  (intern (string-upcase str) (symbol-package '*admin-registry*)))
+
+#+nil
+(all-registered-admins)
+ ; => (ARTICLES/MODELS::ARTICLE)
+
+#+nil
+(model-name-from-string "article")
 
 (defmacro define-admin (model-name &body options)
   "Register a model for admin with customization options.
@@ -66,7 +84,9 @@ OPTIONS may include:
   (:readonly field1 field2 ...)
   (:per-page n)
   (:ordering field-or-minus-field)"
-  (let ((initargs nil))
+  (let* ((registry-package (symbol-package '*admin-registry))
+         (model-name (intern (string model-name) registry-package))
+         (initargs nil))
     (dolist (opt options)
       (destructuring-bind (key &rest vals) opt
         (case key

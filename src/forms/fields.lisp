@@ -76,6 +76,11 @@
           (intern (string-upcase raw-value) :keyword)
           raw-value))))
 
+(defmethod parse-field-value ((field date-field) raw-value)
+  ;; Convert raw HTML datetime-local value to local-time-parsable value.
+  (let ((timestamp-with-seconds-added (concatenate 'string raw-value ":00")))
+    (local-time:parse-timestring timestamp-with-seconds-added)))
+
 (defun col-type-to-field-class (col-type)
   "Map a Mito column type keyword to a form-field class symbol."
   (cond

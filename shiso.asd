@@ -14,7 +14,7 @@
                :lack-middleware-static
                :lack-app-file
                ;; Scaffolding
-               :cl-project
+               ;; :cl-project ; Trouble with vend
                ;; Almighty Components
                :almighty-html
                ;; ORM
@@ -33,7 +33,7 @@
                  (:file "requests")
                  (:file "server")
                  (:file "utils")
-                 (:file "scaffold")
+                 ;; (:file "scaffold")
                  ;; Models
                  (:module "models" :serial t
                   :components ((:file "metadata")
@@ -54,7 +54,7 @@
                   :components ((:file "registry")
                                (:file "components")
                                (:file "middleware")
-                               (:file "views")
+                               (:file "controllers")
                                (:file "routes")
                                (:file "package")))
                  (:file "package"))))

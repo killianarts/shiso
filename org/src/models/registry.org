@@ -67,7 +67,7 @@ information exclusively through the introspection functions defined here.
 
 (defun all-models ()
   "Return a list of all registered model name symbols."
-  (loop for name being the hash-keys of *model-registry* collect name))
+  (loop :for name :being :the :hash-keys :of *model-registry* :collect name))
 #+end_src
 
 * Field-Level Convenience Readers

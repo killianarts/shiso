@@ -1,7 +1,6 @@
 (defpackage #:shiso/admin/components
   (:use #:cl)
   (:local-nicknames (#:ah #:almighty-html)
-                    (#:el #:almighty-html/element)
                     (#:models #:shiso/models))
   (:export
    #:ac-admin-page
@@ -11,21 +10,21 @@
 
 (in-package #:shiso/admin/components)
 
-(ah:define-component ac-admin-nav (&key model-names admin-prefix)
+(ah:define-component ac-admin-nav (&key model-names)
   (ah:</>
    (nav :class "admin-nav"
      (div :class "admin-nav-header"
-       (a :href admin-prefix
+       (a :href (shiso/utils:url "shiso-admin:index")
          (strong "Admin")))
      (ul :class "admin-nav-list"
        (loop :for name :in model-names
-             :for href = (shiso/utils:url (format nil "~A/~(~A~)" admin-prefix name))
-             :for label = (string-capitalize (symbol-name name))
-             :collect (ah:</> (li (a :href href label ))))))))
+             :for href := (shiso/utils:url "shiso-admin:model-instance-list"
+                                           :model (string-downcase name))
+             :for label := (string-capitalize name)
+             :collect (ah:</> (li (a :href href label))))))))
 
-(ah:define-component ac-admin-page (&key title admin-prefix model-names children)
-  (let ((prefix (or admin-prefix "/admin"))
-        (names (or model-names nil)))
+(ah:define-component ac-admin-page (&key title model-names children)
+  (let ((names (or model-names nil)))
     (ah:</>
      (html :lang "en"
        (head
@@ -67,23 +66,37 @@ table.admin-table { width: 100%; border-collapse: collapse; }
 .delete-form { display: inline; }
 "))
        (body
-         (ac-admin-nav :model-names names :admin-prefix prefix)
+         (ac-admin-nav :model-names names)
          (div :class "admin-content"
            (div :class "admin-header"
              (h1 title))
            children))))))
 
 (ah:define-component ac-admin-table-column-headers (&key columns children)
-  (loop :for col :in columns
-        :for label := (string-capitalize
-                       (substitute #\Space #\-
-                                   (string-downcase
-                                    (symbol-name col))))
-        :append (ah:</> (th label))))
-
-(ah:define-component ac-admin-table-rows (&key columns items model-name admin-prefix children)
-  (ah:</> 
+  (ah:</>
+   ;; Important! We are returning multiple ths collected in a list. If we don't
+   ;; have this nesting function then we get spurious parentheses rendered in
+   ;; the HTML (surrounding the ths ,but rendered outside the table in the
+   ;; browser).
+   ;; * TODO See if we can prevent this without a nesting function.
    (<>
+     (loop :for col :in columns
+           ;; TODO Make a convenience function for making labels.
+           :for label := (string-capitalize
+                          (substitute #\Space #\-
+                                      (string-downcase
+                                       (symbol-name col))))
+           :collect (ah:</> (th label))))))
+
+(ah:define-component ac-admin-table-rows (&key columns items model-name children)
+  (ah:</>
+   ;; Important! We are returning multiple trs collected in a list. If we don't
+   ;; have this nesting function then we get spurious parentheses rendered in
+   ;; the HTML (surrounding the trs ,but rendered outside the table in the
+   ;; browser).
+   ;; * TODO See if we can prevent this without a nesting function.
+   (<>
+     ;; TODO Make helper functions for getting cells.
      (loop :for item :in items
            :for id := (mito:object-id item)
            :for cells := (loop :for col :in columns
@@ -91,14 +104,18 @@ table.admin-table { width: 100%; border-collapse: collapse; }
                                                (slot-value item col)
                                                "")
                                :collect (ah:</> (td (princ-to-string val))))
-           :for edit-href := (format nil "~A/~(~A~)/~A" admin-prefix model-name id)
-           :collect (ah:</> (tr cells (td (a :href edit-href :class "btn btn-primary" "Edit"))))))))
+           ;; TODO Consider making a convenience function for mito that returns
+           ;; the object-id of a dao as a string for easy interop with myway.
+           :for edit-href := (shiso/utils:url "shiso-admin:model-instance-rebuild" :model model-name :id (princ-to-string id)) 
+           :collect (ah:</>
+                     (tr cells (td (a :href edit-href :class "btn btn-primary" "REBUILD"))))))))
 
-(ah:define-component ac-admin-table (&key columns items model-name admin-prefix children)
+(ah:define-component ac-admin-table (&key columns items model-name children)
   (ah:</>
-   (table :class "admin-table"
-     (thead (tr (ac-admin-table-column-headers :columns columns) (th "Actions")))
-     (tbody (ac-admin-table-rows :columns columns :items items :model-name model-name :admin-prefix admin-prefix)))))
+   (<>
+     (table :class "admin-table"
+       (thead (tr (ac-admin-table-column-headers :columns columns) (th "Actions")))
+       (tbody (ac-admin-table-rows :columns columns :items items :model-name model-name))))))
 
 (ah:define-component ac-admin-flash (&key message type)
   (let ((css-class (if (eq type :error) "flash-error" "flash-success")))

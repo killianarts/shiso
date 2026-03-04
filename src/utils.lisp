@@ -1,6 +1,7 @@
 (defpackage #:shiso/utils
   (:use #:cl)
   (:local-nicknames (#:routing #:shiso/routing)
+                    (#:modules #:shiso/modules)
                     (#:requests #:shiso/requests))
   (:export
    #:url
@@ -24,12 +25,12 @@ Searches registered module mappers by namespace for namespaced routes
       (let* ((pos (position #\: name))
              (ns-str (subseq name 0 pos))
              (ns-kw (intern (string-upcase ns-str) :keyword))
-             (mod (routing:get-module ns-kw))
-             (mapper (routing:routes-mapper (routing:module-routes mod)))
+             (mod (modules:get-module ns-kw))
+             (mapper (routing:routes-mapper (modules:module-routes mod)))
              (route (myway:find-route-by-name mapper name)))
         (when route
           (let ((base-url (myway:url-for route params))
-                (prefix (routing:module-prefix mod)))
+                (prefix (modules:module-prefix mod)))
             (concatenate 'string prefix base-url))))
       ;; Non-namespaced route — fall back to global *routes*
       (let* ((name-kw (intern (string-upcase name) :keyword))
@@ -54,3 +55,9 @@ Searches registered module mappers by namespace for namespaced routes
   (let ((scheme (lack.request:request-uri-scheme requests:*request*))
         (server-name (lack.request:request-server-name requests:*request*)))
     (format nil "~a://~a~a" scheme server-name path)))
+
+(defun debug! (sym)
+  (when (symbolp sym)
+    (format *standard-output* "~%~%=== SHISO DEBUG ===~%~%~a: ~a~%~%" (symbol-name sym) sym))
+  (unless (symbolp sym)
+    (format *standard-output* "~%~%=== SHISO DEBUG ===~%~%~a~%~%" sym)))
