@@ -1,5 +1,5 @@
 #+title: Route Tests
-#+property: header-args:common-lisp :tangle ../../t/routes.lisp
+#+property: header-args:common-lisp
 
 Tests for =define-route=, =define-routes= macro expansion, and integration
 tests verifying that routes are registered correctly.

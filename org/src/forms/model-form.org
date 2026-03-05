@@ -1,6 +1,6 @@
 #+title: Model Form Generation
-#+property: header-args:common-lisp :tangle ../../../src/forms/model-form.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Auto-generates form instances from model definitions, like Django's
 =ModelForm=.  Reads field metadata from the model registry and maps each

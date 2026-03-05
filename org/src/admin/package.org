@@ -1,6 +1,6 @@
 #+title: Admin Package
-#+property: header-args:common-lisp :tangle ../../../src/admin/package.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Umbrella package for =shiso/admin= that re-exports the public API.
 

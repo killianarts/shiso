@@ -1,6 +1,6 @@
 #+title: Routing
-#+property: header-args:common-lisp :tangle ../../src/routing.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 The routing layer for shiso. Provides route definition macros, the
 =define-module= and =define-application= macros, and an application-level
@@ -127,7 +127,7 @@ When passing the name of a controller, you should pass it /quoted/, not
 =#'foo=, bare =foo=) so users don't need to remember this, but quoted is the
 canonical style:
 
-#+begin_src lisp :tangle no
+#+begin_src lisp
 (define-route :GET "/" 'index "index")
 (define-routes module-name
     ((:GET "/" 'index "index")
@@ -140,13 +140,13 @@ The use of the =mapcar= allows controller functions to simply define the
 controller with the arguments it accepts. If your route rule is =/book/:id=,
 then your =book-view= controller definition can looks like this:
 
-#+begin_src lisp :tangle no
+#+begin_src lisp
 (defun book-view (id)
   (let ((book (get-book id)))
     (do-stuff-with-book book))
 #+end_src
 ...rather than like this:
-#+begin_src lisp :tangle no
+#+begin_src lisp
 (defun book-view (params)
   (let ((book (get-book (getf :params :id))))
     (do-stuff-with-book book)))

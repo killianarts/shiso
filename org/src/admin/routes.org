@@ -1,6 +1,6 @@
 #+title: Admin Routes & Module
-#+property: header-args:common-lisp :tangle ../../../src/admin/routes.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Defines the admin module using =define-module=, which creates the routes
 mapper, registers all URL endpoints, and adds the module to the global

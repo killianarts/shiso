@@ -1,6 +1,6 @@
 #+title: Requests
-#+property: header-args:common-lisp :tangle ../../src/requests.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Request handling and module dispatch. Each incoming request is parsed into a
 Lack request object stored in =*request*=, then dispatched through the

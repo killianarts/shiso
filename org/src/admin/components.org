@@ -1,6 +1,6 @@
 #+title: Admin UI Components
-#+property: header-args:common-lisp :tangle ../../../src/admin/components.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Reusable almighty-html components for the admin dashboard.  These provide
 the page skeleton, data tables, and common UI elements.

@@ -75,9 +75,6 @@ DATA       -- submitted form data (alist of (name . string-value))."
           (maphash (lambda (k v) (setf (slot-value obj k) v)) cleaned)
           (mito:save-dao obj))
         ;; Create new
-        ;; (apply #'mito:create-dao model-class
-        ;;        (loop :for k :being :the :hash-keys :of cleaned :using (hash-value v)
-        ;;              :append (list (intern (symbol-name k) :keyword) (shiso/utils::debug! v))))
-        
-        (print (loop :for k :being :the :hash-keys :of cleaned :using (hash-value v)
-                     :append (list (intern (symbol-name k) :keyword) v))))))
+        (apply #'mito:create-dao model-class
+               (loop for k being the hash-keys of cleaned using (hash-value v)
+                     append (list (intern (symbol-name k) :keyword) v))))))

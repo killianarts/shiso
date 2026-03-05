@@ -1,6 +1,6 @@
 #+title: Modules
-#+property: header-args:common-lisp :tangle ../../src/modules.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 The canonical home for shiso's module infrastructure. A =module= is a Lack
 component that owns its own routes, carries a URL prefix for mounting, and

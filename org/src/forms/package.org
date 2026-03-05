@@ -1,6 +1,6 @@
 #+title: Forms Package
-#+property: header-args:common-lisp :tangle ../../../src/forms/package.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Umbrella package for =shiso/forms= that re-exports the public API from
 all sub-packages.

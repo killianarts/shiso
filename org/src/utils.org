@@ -1,6 +1,6 @@
 #+title: Utilities
-#+property: header-args:common-lisp :tangle ../../src/utils.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Template-facing utilities: URL generation, current-path access, static asset
 URLs, and a convenience HTTP response builder.
@@ -87,7 +87,7 @@ serving the file.
 For the rare cases that need a full URL (OpenGraph/Twitter meta tags), compose
 =absolute-url= with =static=:
 
-#+begin_src lisp :tangle no
+#+begin_src lisp
 (shiso:absolute-url (shiso:static "assets/images/preview.png"))
 ;; → "https://example.com/static/assets/images/preview.png"
 #+end_src

@@ -48,11 +48,6 @@
     (or (gethash registered-name *admin-registry*)
         (error "No admin registered for model ~A" registered-name))))
 
-(defun get-admin (model-name)
-  "Return the admin-config for MODEL-NAME, or signal an error."
-  (or (gethash model-name *admin-registry*)
-      (error "No admin registered for model ~A" model-name)))
-
 #+nil
 (get-admin 'book)
 
@@ -66,7 +61,7 @@
 
 #+nil
 (all-registered-admins)
- ; => (ARTICLES/MODELS::ARTICLE)
+                                        ; => (ARTICLES/MODELS::ARTICLE)
 
 #+nil
 (model-name-from-string "article")

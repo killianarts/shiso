@@ -1,6 +1,6 @@
 #+title: Admin Tests
-#+property: header-args:common-lisp :tangle ../../t/admin.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Tests for the admin dashboard: registry, define-admin macro, admin module
 creation, and view rendering.

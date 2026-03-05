@@ -1,5 +1,5 @@
 #+title: Validator Tests
-#+property: header-args:common-lisp :tangle ../../t/validators.lisp
+#+property: header-args:common-lisp
 
 Tests for the validator functions, resolver, runner, and auto-validator
 derivation from field metadata.

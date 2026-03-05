@@ -1,6 +1,6 @@
 #+title: Validators
-#+property: header-args:common-lisp :tangle ../../src/validators.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Composable validator functions.  A validator is a function of one argument
 that returns =nil= on success or an error message string on failure.

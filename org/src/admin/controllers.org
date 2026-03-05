@@ -1,6 +1,6 @@
 #+title: Admin Controllers
-#+property: header-args:common-lisp :tangle ../../../src/admin/controllers.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Controller functions for the admin dashboard.  Each controller looks up the model
 from the admin registry, builds the appropriate form or table, and renders

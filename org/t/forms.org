@@ -1,6 +1,6 @@
 #+title: Form Tests
-#+property: header-args:common-lisp :tangle ../../t/forms.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Tests for the forms module: field types, parsing, validation, model form
 generation, and rendering.

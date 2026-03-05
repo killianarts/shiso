@@ -1,6 +1,6 @@
 #+title: Form Class & Validation
-#+property: header-args:common-lisp :tangle ../../../src/forms/form.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 The =form= class holds a list of fields, submitted data, and validation
 results.  =validate-form= runs all validators and populates =cleaned-data=

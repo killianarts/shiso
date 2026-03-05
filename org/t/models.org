@@ -1,5 +1,5 @@
 #+title: Model Tests
-#+property: header-args:common-lisp :tangle ../../t/models.lisp
+#+property: header-args:common-lisp
 
 Tests for the model metadata registry: =define-model= macro expansion,
 key stripping, metadata registration, and the introspection API.

@@ -1,6 +1,6 @@
 #+title: Model Metadata Structs
-#+property: header-args:common-lisp :tangle ../../../src/models/metadata.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Metadata structs that hold the rich field-level and model-level information
 extracted by =define-model=.  These structs are the currency that the forms

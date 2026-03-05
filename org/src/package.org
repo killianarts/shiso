@@ -1,6 +1,6 @@
 #+title: Package
-#+property: header-args:common-lisp :tangle ../../src/package.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 The umbrella =shiso= package. It re-exports the public API from each
 sub-package so that users only need to =(:use #:shiso)= or use the =shiso:=

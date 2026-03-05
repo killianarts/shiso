@@ -1,6 +1,6 @@
 #+title: Admin Middleware
-#+property: header-args:common-lisp :tangle ../../../src/admin/middleware.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Utility functions for admin request handling: body parsing, redirects,
 flash messages, and request method detection.

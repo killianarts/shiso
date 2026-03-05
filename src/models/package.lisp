@@ -17,7 +17,6 @@
                 #:model-metadata-class
                 #:model-metadata-fields)
   (:import-from #:shiso/models/registry
-                #:normalize-name
                 #:*model-registry*
                 #:register-model
                 #:model-fields

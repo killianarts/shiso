@@ -1,6 +1,6 @@
 #+title: Models Package
-#+property: header-args:common-lisp :tangle ../../../src/models/package.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 
 Umbrella package for =shiso/models= that re-exports the public API from all

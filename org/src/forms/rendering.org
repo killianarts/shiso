@@ -1,6 +1,6 @@
 #+title: Form Rendering
-#+property: header-args:common-lisp :tangle ../../../src/forms/rendering.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Renders form fields and complete forms to almighty-html elements.  Each
 field type has a =render-field= method that produces the appropriate HTML

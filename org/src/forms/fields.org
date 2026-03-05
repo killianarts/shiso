@@ -1,6 +1,6 @@
 #+title: Form Field Classes
-#+property: header-args:common-lisp :tangle ../../../src/forms/fields.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Form field classes represent individual inputs in a form.  Each field type
 knows how to parse raw string input into a typed Lisp value.

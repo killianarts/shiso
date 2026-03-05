@@ -1,5 +1,5 @@
 #+title: Module Tests
-#+property: header-args:common-lisp :tangle ../../t/modules.lisp
+#+property: header-args:common-lisp
 
 Tests for the module system: registry, =define-module= macro expansion and
 integration, =define-application= macro expansion and integration, module

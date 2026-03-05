@@ -1,6 +1,6 @@
 #+title: Admin Registry
-#+property: header-args:common-lisp :tangle ../../../src/admin/registry.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 The admin registry maps model names to =admin-config= instances that
 control how each model appears in the admin dashboard.  Zero-config

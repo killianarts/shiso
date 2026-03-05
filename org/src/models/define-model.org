@@ -1,6 +1,6 @@
 #+title: define-model Macro
-#+property: header-args:common-lisp :tangle ../../../src/models/define-model.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 The =define-model= macro is the single entry point for declaring models.  It
 expands into a plain =mito:deftable= form (for the database-backed CLOS class)

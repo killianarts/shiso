@@ -1,6 +1,6 @@
 #+title: Server
-#+property: header-args:common-lisp :tangle ../../src/server.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Server lifecycle management -- starting and stopping the Clack/Woo HTTP server.
 
@@ -36,7 +36,7 @@ symbol name at compile time, regardless of how the user writes it — =my-app=,
 ='my-app=, or =#'my-app= all work. It then passes that symbol to =%start=,
 which gives Clack a thin wrapper lambda:
 
-#+begin_src lisp :tangle no
+#+begin_src lisp
 (lambda (env) (funcall (symbol-value app-symbol) env))
 #+end_src
 

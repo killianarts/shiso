@@ -1,6 +1,6 @@
 #+title: Model Registry & Introspection API
-#+property: header-args:common-lisp :tangle ../../../src/models/registry.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 The model registry is a hash table mapping model name symbols to
 =model-metadata= structs.  All higher layers (forms, admin) access model

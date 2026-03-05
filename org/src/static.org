@@ -1,6 +1,6 @@
 #+title: Static Files
-#+property: header-args:common-lisp :tangle ../../src/static.lisp
-#+auto_tangle: t
+#+property: header-args:common-lisp
+
 
 Shiso's static file serving layer, inspired by Django's staticfiles app.
 

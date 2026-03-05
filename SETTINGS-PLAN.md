@@ -5,7 +5,11 @@
 Configuration is scattered across the framework: server defaults in `%start`, middleware in `define-application`, env vars parsed ad-hoc in user code (`main.lisp`, `dev.lisp`), admin prefix as a mutable global, hardcoded values in components. The user wants a single place — like Django's `settings.py` — to configure middleware, DB, modules, i18n, environment, etc.
 
 ## Design: `define-settings` macro + `*settings*` special variable
+```comment
+How do we get a setting?
 
+Maybe using CLOS to be able to get easy accessor creation?
+```
 Settings are a hash table stored in `*settings*`. A `define-settings` macro provides a declarative DSL. Framework code reads from `*settings*` at runtime, so re-evaluating the form takes effect immediately (hot-reload).
 
 ### What the user's settings file looks like
