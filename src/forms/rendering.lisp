@@ -69,7 +69,7 @@
      (div :class css-class
        (ah:</> (label
                  (ah:</> (input :type "checkbox" :name name-str :id name-str
-                                :checked value))
+                           :checked value))
                  (fields:field-label field)))
        (render-help-text field)
        (render-errors errors)))))
@@ -79,9 +79,12 @@
         (css-class (if errors "form-group has-errors" "form-group"))
         (option-elements
           (mapcar (lambda (choice)
-                    (let ((val (string-downcase (symbol-name (car choice))))
-                          (display (cdr choice))
-                          (selectedp (equal (car choice) value)))
+                    (let* ((val (string-downcase (symbol-name (car choice))))
+                           (display (cdr choice))
+                           (selectedp (string-equal val
+                                                    (if (keywordp value)
+                                                        (symbol-name value)
+                                                        (princ-to-string value)))))
                       (if selectedp
                           (ah:</> (option :value val :selected t display))
                           (ah:</> (option :value val display)))))
@@ -106,10 +109,21 @@
        (render-help-text field)
        (render-errors errors)))))
 
+#+nil
+(local-time:format-timestring t (local-time:now) :format '(:year "-" :month "-" :day))
+
+(defun format-datetime-local (timestamp)
+  "Format a local-time:timestamp for HTML datetime-local input (no timezone offset)."
+  (local-time:format-timestring
+   nil timestamp
+   :format '(:year "-" (:month 2) "-" (:day 2) "T" (:hour 2) ":" (:min 2) ":" (:sec 2))))
+
 (defmethod render-field ((field fields:date-field) &key value errors)
   (let ((name-str (field-name-str field))
         (css-class (if errors "form-group has-errors" "form-group"))
-        (val (or value "")))
+        (val (if (typep value 'local-time:timestamp)
+                 (format-datetime-local value)
+                 (or value ""))))
     (ah:</>
      (div :class css-class
        (ah:</> (label :for name-str (fields:field-label field)))

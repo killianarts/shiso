@@ -34,14 +34,15 @@
                  (:file "server")
                  (:file "utils")
                  ;; (:file "scaffold")
+                 ;; Validators (no dependencies on models)
+                 (:file "validators")
                  ;; Models
                  (:module "models" :serial t
                   :components ((:file "metadata")
                                (:file "registry")
+                               (:file "field-types")
                                (:file "define-model")
                                (:file "package")))
-                 ;; Validators
-                 (:file "validators")
                  ;; Forms
                  (:module "forms" :serial t
                   :components ((:file "fields")

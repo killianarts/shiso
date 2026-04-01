@@ -1,0 +1,129 @@
+#+title: Field Types
+#+property: header-args:common-lisp
+
+
+Field types provide a Django-inspired shorthand for common slot configurations.
+Instead of manually specifying =:col-type=, =:validators=, and =:widget= for
+every slot, users write =:field-type :email= and get sensible defaults bundled
+together.  Explicit options always override field-type defaults, except
+=:validators= which append (field-type validators run first, then user
+validators).
+
+* Package
+
+#+begin_src common-lisp
+(defpackage #:shiso/models/field-types
+  (:use #:cl)
+  (:local-nicknames (#:validators #:shiso/validators))
+  (:export
+   #:*field-types*
+   #:define-field-type
+   #:expand-field-type))
+
+(in-package #:shiso/models/field-types)
+#+end_src
+
+* Registry
+
+A hash table maps keyword names to expander functions.  Each expander takes
+parameters (for parameterized types like =(:varchar 200)=) and returns a plist
+of slot-option defaults.
+
+#+begin_src common-lisp
+(defvar *field-types* (make-hash-table :test 'eq)
+  "Maps field-type keywords to expander functions.
+Each expander takes parameters and returns a plist of slot-option defaults.")
+#+end_src
+
+* Registration Macro
+
+=define-field-type= registers an expander function.  The body should return a
+plist.
+
+#+begin_src common-lisp
+(defmacro define-field-type (name (&rest params) &body defaults-body)
+  "Register a field type that expands to slot-option defaults.
+PARAMS are required parameters for parameterized types like (:text 200).
+DEFAULTS-BODY is evaluated to produce a plist of slot options."
+  `(setf (gethash ,name *field-types*)
+         (lambda ,params ,@defaults-body)))
+#+end_src
+
+* Expansion
+
+=expand-field-type= is called on each slot definition before =strip-shiso-keys=
+and =extract-metadata=.  It looks up the =:field-type= spec, runs the expander,
+and merges defaults into the plist.
+
+Merge rules:
+- User-supplied options win over defaults
+- =:validators= append: field-type validators first, then user validators
+
+#+begin_src common-lisp
+(defun expand-field-type (slot-def)
+  "If SLOT-DEF has :field-type, merge its defaults into the plist.
+User-supplied options win, except :validators which append."
+  (destructuring-bind (name &rest plist) slot-def
+    (let ((ft-spec (getf plist :field-type)))
+      (if (null ft-spec)
+          slot-def
+          (let* ((ft-name (if (listp ft-spec) (car ft-spec) ft-spec))
+                 (ft-args (if (listp ft-spec) (cdr ft-spec) nil))
+                 (expander (gethash ft-name *field-types*)))
+            (unless expander
+              (error "Unknown field type: ~A" ft-name))
+            (let ((defaults (apply expander ft-args))
+                  (merged (copy-list plist)))
+              ;; Remove :field-type from merged
+              (remf merged :field-type)
+              ;; Merge defaults: user options win, validators append
+              (loop for (key val) on defaults by #'cddr
+                    do (cond
+                         ((eq key :validators)
+                          (let ((user-vals (getf merged :validators)))
+                            (setf (getf merged :validators)
+                                  (append val user-vals))))
+                         (t
+                          (unless (getf merged key)
+                            (setf (getf merged key) val)))))
+              (cons name merged)))))))
+#+end_src
+
+* Built-in Field Types
+
+** Parameterless
+
+#+begin_src common-lisp
+(define-field-type :email ()
+  (list :col-type '(:varchar 254)
+        :validators '((validators:valid-email))
+        :widget :email))
+
+(define-field-type :slug ()
+  (list :col-type '(:varchar 200)
+        :validators '((validators:matches-pattern "^[a-z0-9-]+$"))))
+
+(define-field-type :url ()
+  (list :col-type '(:varchar 2000)
+        :validators '((validators:matches-pattern "^https?://"))
+        :widget :url))
+
+(define-field-type :boolean ()
+  (list :col-type :boolean
+        :widget :checkbox))
+#+end_src
+
+** Parameterized
+
+#+begin_src common-lisp
+(define-field-type :text (max-length)
+  (list :col-type :text
+        :validators `((validators:max-length ,max-length))))
+
+(define-field-type :varchar (max-length)
+  (list :col-type `(:varchar ,max-length)
+        :validators `((validators:max-length ,max-length))))
+
+(define-field-type :decimal (precision scale)
+  (list :col-type `(:numeric ,precision ,scale)))
+#+end_src

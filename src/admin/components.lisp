@@ -88,6 +88,12 @@ table.admin-table { width: 100%; border-collapse: collapse; }
                                        (symbol-name col))))
            :collect (ah:</> (th label))))))
 
+(defun format-datetime-local (timestamp)
+  "Format a local-time:timestamp for HTML datetime-local input (no timezone offset)."
+  (local-time:format-timestring
+   nil timestamp
+   :format '(:year "-" (:month 2) "-" (:day 2) "T" (:hour 2) ":" (:min 2) ":" (:sec 2))))
+
 (ah:define-component ac-admin-table-rows (&key columns items model-name children)
   (ah:</>
    ;; Important! We are returning multiple trs collected in a list. If we don't
@@ -101,7 +107,9 @@ table.admin-table { width: 100%; border-collapse: collapse; }
            :for id := (mito:object-id item)
            :for cells := (loop :for col :in columns
                                :for val := (if (slot-boundp item col)
-                                               (slot-value item col)
+                                               (if (typep (slot-value item col) 'local-time:timestamp)
+                                                   (format-datetime-local (slot-value item col))
+                                                   (slot-value item col))
                                                "")
                                :collect (ah:</> (td (princ-to-string val))))
            ;; TODO Consider making a convenience function for mito that returns

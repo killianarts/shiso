@@ -1,11 +1,9 @@
 (defpackage #:shiso/validators
   (:use #:cl)
-  (:local-nicknames (#:meta #:shiso/models/metadata))
   (:export
    ;; Resolver and runner
    #:resolve-validator
    #:run-validators
-   #:auto-validators-for-field
    ;; Built-in validators
    #:not-blank
    #:max-length
@@ -81,18 +79,3 @@ VALIDATORS is a list of validator designators."
   (lambda (value)
     (unless (member value choices :test #'equal)
       (format nil "Must be one of: ~{~A~^, ~}." choices))))
-
-(defun auto-validators-for-field (field-meta)
-  "Derive implicit validators from a slot-metadata struct."
-  (let ((validators nil)
-        (col-type (meta:slot-metadata-col-type field-meta)))
-    (unless (meta:slot-metadata-blankp field-meta)
-      (push 'not-blank validators))
-    (when (meta:slot-metadata-choices field-meta)
-      (push (list 'one-of (mapcar #'car (meta:slot-metadata-choices field-meta)))
-            validators))
-    (when (and (listp col-type)
-               (eq (car col-type) :varchar)
-               (numberp (second col-type)))
-      (push (list 'max-length (second col-type)) validators))
-    (nreverse validators)))

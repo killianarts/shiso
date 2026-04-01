@@ -6,7 +6,7 @@ The =define-model= macro is the single entry point for declaring models.  It
 expands into a plain =mito:deftable= form (for the database-backed CLOS class)
 plus a =register-model= call that populates the metadata registry. As is
 explained in the =registry-vs-mop.org= file, we use a registry for simplicity and
-easy interoperability with mito's =dao-table-class=. 
+easy interoperability with mito's =dao-table-class=.
 
 The key challenge is *key stripping*: Mito's =dao-table-class= rejects
 unknown slot initargs, so shiso-specific keys (=:verbose-name=, =:help-text=,
@@ -14,13 +14,17 @@ unknown slot initargs, so shiso-specific keys (=:verbose-name=, =:help-text=,
 =deftable=.  The helpers =strip-shiso-keys= and =extract-metadata= handle
 this split.
 
+Before key stripping, =expand-field-type= runs on each slot to merge
+=:field-type= defaults into the plist (see =field-types.org=).
+
 * Package
 
-#+begin_src common-lisp 
+#+begin_src common-lisp
 (defpackage #:shiso/models/define-model
   (:use #:cl)
   (:local-nicknames (#:meta #:shiso/models/metadata)
-                    (#:reg #:shiso/models/registry))
+                    (#:reg #:shiso/models/registry)
+                    (#:ft #:shiso/models/field-types))
   (:export
    #:define-model
    #:*mito-slot-keys*
@@ -43,7 +47,7 @@ reaching =deftable=.
   "Slot option keys that Mito/CLOS understand.  Everything else is shiso metadata.")
 
 (defparameter *shiso-slot-keys*
-  '(:verbose-name :help-text :validators :choices :blankp :editablep :widget)
+  '(:verbose-name :help-text :validators :choices :blankp :editablep :widget :field-type)
   "Slot option keys that shiso extracts as field metadata.")
 #+end_src
 
@@ -115,8 +119,8 @@ Extracts shiso-specific keys and also captures :col-type for introspection."
 
 * The Macro
 
-=define-model= splits each slot into its Mito portion and its metadata
-portion, then expands into:
+=define-model= first expands field types, then splits each slot into its Mito
+portion and its metadata portion, and expands into:
 
 1. A =mito:deftable= with the cleaned slots
 2. A =register-model= call with the metadata
@@ -130,17 +134,22 @@ Each slot in SLOTS is (slot-name &rest plist) where the plist may contain
 both Mito keys (:col-type, :initform, etc.) and shiso metadata keys
 (:verbose-name, :help-text, :validators, :choices, :blankp, :editablep, :widget).
 
+Slots may also use :field-type to get bundled defaults (see field-types.org).
+
 OPTIONS may include:
   (:module <module-name>) -- associate with a shiso module
   (:table-name <string>)  -- override the Mito table name"
   (declare (ignore options))
-  (let ((mito-slots (mapcar #'strip-shiso-keys slots))
-        (meta-forms (mapcar #'extract-metadata slots)))
+  (let* ((slots (mapcar #'ft:expand-field-type slots))
+         (mito-slots (mapcar #'strip-shiso-keys slots))
+         (meta-forms (mapcar #'extract-metadata slots))
+         (registry-package (symbol-package 'reg:*model-registry*))
+         (registered-name (intern (string-upcase name) registry-package)))
     `(progn
-       (mito:deftable ,name ()
+       (mito:deftable ,registered-name ()
          ,mito-slots)
-      (reg:register-model ',name
-                           (find-class ',name)
+       (reg:register-model ',registered-name
+                           (find-class ',registered-name)
                            (list ,@meta-forms))
-       ',name)))
+       ',registered-name)))
 #+end_src

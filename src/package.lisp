@@ -77,6 +77,10 @@
                 #:field-blankp
                 #:field-editablep
                 #:field-widget
+                ;; Field types
+                #:*field-types*
+                #:define-field-type
+                #:expand-field-type
                 ;; Macro
                 #:define-model)
 
@@ -149,5 +153,9 @@
    #:field-blankp
    #:field-editablep
    #:field-widget
+   ;; Field types
+   #:*field-types*
+   #:define-field-type
+   #:expand-field-type
    ;; Macro
    #:define-model))

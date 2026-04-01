@@ -1,7 +1,8 @@
 (defpackage #:shiso/models/define-model
   (:use #:cl)
   (:local-nicknames (#:meta #:shiso/models/metadata)
-                    (#:reg #:shiso/models/registry))
+                    (#:reg #:shiso/models/registry)
+                    (#:ft #:shiso/models/field-types))
   (:export
    #:define-model
    #:*mito-slot-keys*
@@ -16,7 +17,7 @@
   "Slot option keys that Mito/CLOS understand.  Everything else is shiso metadata.")
 
 (defparameter *shiso-slot-keys*
-  '(:verbose-name :help-text :validators :choices :blankp :editablep :widget)
+  '(:verbose-name :help-text :validators :choices :blankp :editablep :widget :field-type)
   "Slot option keys that shiso extracts as field metadata.")
 
 (defun strip-shiso-keys (slot-def)
@@ -50,27 +51,27 @@ Extracts shiso-specific keys and also captures :col-type for introspection."
               for val = (getf plist key sentinel)
               unless (eq val sentinel)
                 do (case key
-                   (:validators
-                    (push key args)
-                    (push `(list ,@(mapcar (lambda (v)
-                                             (if (listp v)
-                                                 `(list ',(car v) ,@(cdr v))
-                                                 `',v))
-                                           val))
-                           args))
-                   (:choices
-                    (push key args)
-                    (push `(list ,@(mapcar (lambda (c)
-                                             ;; Support both (:key "Label") and (:key . "Label")
-                                             (let ((label (if (consp (cdr c))
-                                                              (cadr c)
-                                                              (cdr c))))
-                                               `(cons ,(car c) ,label)))
-                                           val))
-                           args))
-                   (otherwise
-                    (push key args)
-                    (push val args)))))
+                     (:validators
+                      (push key args)
+                      (push `(list ,@(mapcar (lambda (v)
+                                               (if (listp v)
+                                                   `(list ',(car v) ,@(cdr v))
+                                                   `',v))
+                                             val))
+                            args))
+                     (:choices
+                      (push key args)
+                      (push `(list ,@(mapcar (lambda (c)
+                                               ;; Support both (:key "Label") and (:key . "Label")
+                                               (let ((label (if (consp (cdr c))
+                                                                (cadr c)
+                                                                (cdr c))))
+                                                 `(cons ,(car c) ,label)))
+                                             val))
+                            args))
+                     (otherwise
+                      (push key args)
+                      (push val args)))))
       `(meta:make-slot-metadata ,@(nreverse args)))))
 
 (defmacro define-model (name slots &body options)
@@ -84,12 +85,15 @@ OPTIONS may include:
   (:module <module-name>) -- associate with a shiso module
   (:table-name <string>)  -- override the Mito table name"
   (declare (ignore options))
-  (let ((mito-slots (mapcar #'strip-shiso-keys slots))
-        (meta-forms (mapcar #'extract-metadata slots)))
+  (let* ((slots (mapcar #'ft:expand-field-type slots))
+         (mito-slots (mapcar #'strip-shiso-keys slots))
+         (meta-forms (mapcar #'extract-metadata slots))
+         (registry-package (symbol-package 'reg:*model-registry*))
+         (registered-name (intern (string-upcase name) registry-package)))
     `(progn
-       (mito:deftable ,name ()
+       (mito:deftable ,registered-name ()
          ,mito-slots)
-      (reg:register-model ',name
-                           (find-class ',name)
+       (reg:register-model ',registered-name
+                           (find-class ',registered-name)
                            (list ,@meta-forms))
-       ',name)))
+       ',registered-name)))

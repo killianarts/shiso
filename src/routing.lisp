@@ -188,6 +188,17 @@ the project's static/ directory and per-module static/ directories."
                  :path "/static/"
                  :project-root ,(pathname static-root)
                  :module-roots (shiso/static:module-static-roots)))))
+        ;; Strip trailing slashes (redirect 301)
+        (lambda (app)
+          (lambda (env)
+            (let ((path (getf env :path-info)))
+              (if (and (> (length path) 1)
+                       (char= (char path (1- (length path))) #\/))
+                  (let ((clean (string-right-trim "/" path)))
+                    (list 301
+                          (list :location clean)
+                          (list "")))
+                  (funcall app env)))))
         ;; Module mounts
         ,@(loop for (prefix mod-name) in modules
                 for mod-kw = (intern (string-upcase (symbol-name mod-name)) :keyword)

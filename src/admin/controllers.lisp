@@ -27,8 +27,8 @@
   (let ((html (ah:render-to-string
                (ah:</>
                 (ac-admin-page :title title
-                               :model-names (reg:all-registered-admins)
-                               content)))))
+                  :model-names (reg:all-registered-admins)
+                  content)))))
     (mw:http-response html)))
 
 (defun model-name-from-string (str)
@@ -58,14 +58,14 @@
 #+nil
 (model-name-from-string "article")
 #+nil
-(models:model-class "article")
+(mito:select-dao "book")
 
 (defun model-instance-list (model-name-str)
   "Render a table of all instances of a model."
-  (let* ((model-name model-name-str)
+  (let* ((model-name (models:get-model-name model-name-str))
          (config (reg:get-admin model-name))
          ;; model-class can take a string.
-         (model-class (models:model-class model-name-str))
+         (model-class (models:model-class model-name))
          (items (mito:select-dao model-class))
          (columns (display-columns model-name config))
          (create-href (shiso/utils:url "shiso-admin:model-instance-build" :model model-name-str))
@@ -79,9 +79,10 @@
                       :items items
                       :model-name model-name-str))))))
 
-(defun model-instance-build (model-name)
+(defun model-instance-build (model-name-str)
   "Render the create form, or handle POST to create a new instance."
-  (let* ((config (reg:get-admin model-name))
+  (let* ((model-name (models:get-model-name model-name-str))
+         (config (reg:get-admin model-name))
          (is-post (mw:post-request-p))
          (data (when is-post (mw:parse-body-params)))
          (form (forms:make-model-form model-name
@@ -92,38 +93,41 @@
     (render-page title
                  (forms:render-form form
                                     :action (shiso/utils:url "shiso-admin:model-instance-persist"
-                                                             :model model-name)))))
+                                                             :model model-name-str)))))
 
-(defun model-instance-persist (model-name)
+(defun model-instance-persist (model-name-str)
   "Validate and create a new instance on POST."
-  (let* ((config (reg:get-admin model-name))
+  (let* ((model-name (models:get-model-name model-name-str))
+         (config (reg:get-admin model-name))
          (data (mw:parse-body-params))
-         (title (format nil "Create ~A" (string-capitalize model-name))))
+         (title (format nil "Create ~A" (string-capitalize model-name-str))))
     (let ((form (forms:make-model-form model-name
                                        :fields (reg:admin-fields config)
                                        :exclude (reg:admin-exclude config)
                                        :data data)))
+      ;; TODO implement atomic operations
       (if (forms:validate-form form)
           (progn
             (forms:save-form form)
             (mw:redirect-response
-             (shiso/utils:url "shiso-admin:model-instance-list" :model model-name)))
-          (render-page title (forms:render-form form :action (shiso/utils:url "shiso-admin:model-instance-persist" :model model-name)))))))
+             (shiso/utils:url "shiso-admin:model-instance-list" :model model-name-str)))
+          (render-page title (forms:render-form form :action (shiso/utils:url "shiso-admin:model-instance-persist" :model model-name-str)))))))
+
 
 (defun model-instance-rebuild (model-name-str id-str)
   "Render the edit form, or handle POST to update an existing instance."
-  (let* ((model-name (model-name-from-string model-name-str))
-         (config (reg:get-admin model-name-str))
+  (let* ((model-name (models:get-model-name model-name-str))
+         (config (reg:get-admin model-name))
          (model-class (models:model-class model-name))
          (id (parse-integer id-str))
          (instance (mito:find-dao model-class :id id))
          (is-post (mw:post-request-p))
          (data (when is-post (mw:parse-body-params)))
          (form (forms:make-model-form model-name
-                 :fields (reg:admin-fields config)
-                 :exclude (reg:admin-exclude config)
-                 :instance instance
-                 :data data))
+                                      :fields (reg:admin-fields config)
+                                      :exclude (reg:admin-exclude config)
+                                      :instance instance
+                                      :data data))
          (title (format nil "Edit ~A #~A"
                         (string-capitalize (symbol-name model-name)) id)))
     (render-page title
@@ -134,17 +138,17 @@
 
 (defun model-instance-repersist (model-name-str id-str)
   "Validate and update the instance on PATCH."
-  (let* ((model-name (model-name-from-string model-name-str))
+  (let* ((model-name (models:get-model-name model-name-str))
          (config (reg:get-admin model-name-str))
          (model-class (models:model-class model-name))
          (id (parse-integer id-str))
          (instance (mito:find-dao model-class :id id))
          (data (mw:parse-body-params))
          (form (forms:make-model-form model-name
-                 :fields (reg:admin-fields config)
-                 :exclude (reg:admin-exclude config)
-                 :instance instance
-                 :data data))
+                                      :fields (reg:admin-fields config)
+                                      :exclude (reg:admin-exclude config)
+                                      :instance instance
+                                      :data data))
          (title (format nil "Edit ~A #~A"
                         (string-capitalize (symbol-name model-name)) id)))
     (if (forms:validate-form form)
@@ -153,10 +157,10 @@
           (mw:redirect-response
            (shiso/utils:url "shiso-admin:model-instance-list" :model model-name-str)))
         (render-page title
-          (forms:render-form form
-            :action (shiso/utils:url "shiso-admin:model-instance-repersist"
-                                     :model model-name-str
-                                     :id id-str))))))
+                     (forms:render-form form
+                                        :action (shiso/utils:url "shiso-admin:model-instance-repersist"
+                                                                 :model model-name-str
+                                                                 :id id-str))))))
 
 (defun model-instance-delete (model-name-str id-str)
   "Handle POST to delete a model instance."

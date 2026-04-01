@@ -19,6 +19,7 @@
   (:import-from #:shiso/models/registry
                 #:*model-registry*
                 #:register-model
+                #:get-model-name
                 #:model-fields
                 #:model-field
                 #:model-class
@@ -32,6 +33,10 @@
                 #:field-blankp
                 #:field-editablep
                 #:field-widget)
+  (:import-from #:shiso/models/field-types
+                #:*field-types*
+                #:define-field-type
+                #:expand-field-type)
   (:import-from #:shiso/models/define-model
                 #:define-model)
   (:export
@@ -56,6 +61,7 @@
    ;; Registry
    #:*model-registry*
    #:register-model
+   #:get-model-name
    ;; Introspection
    #:model-fields
    #:model-field
@@ -71,5 +77,9 @@
    #:field-blankp
    #:field-editablep
    #:field-widget
+   ;; Field types
+   #:*field-types*
+   #:define-field-type
+   #:expand-field-type
    ;; Macro
    #:define-model))

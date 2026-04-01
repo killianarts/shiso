@@ -36,17 +36,25 @@
 (defparameter *admin-registry* (make-hash-table :test 'eq)
   "Maps model name symbols to admin-config instances.")
 
+(defun resolve-admin-name (name)
+  "Resolve NAME (symbol or string) to the canonical model registry symbol.
+Models are interned in the model registry package by define-model."
+  (models:get-model-name (etypecase name
+                           (string name)
+                           (symbol (symbol-name name)))))
+
 (defun register-admin (model-name &rest initargs)
   "Register a model for admin CRUD with optional configuration."
-  (setf (gethash model-name *admin-registry*)
-        (apply #'make-instance 'admin-config
-               :model-name model-name initargs)))
+  (let ((canonical (or (resolve-admin-name model-name) model-name)))
+    (setf (gethash canonical *admin-registry*)
+          (apply #'make-instance 'admin-config
+                 :model-name canonical initargs))))
 
 (defun get-admin (model-name)
   "Return the admin-config for MODEL-NAME, or signal an error."
-  (let ((registered-name (find-symbol (string-upcase model-name) (symbol-package '*admin-registry))))
-    (or (gethash registered-name *admin-registry*)
-        (error "No admin registered for model ~A" registered-name))))
+  (let ((canonical (resolve-admin-name model-name)))
+    (or (gethash canonical *admin-registry*)
+        (error "No admin registered for model ~A" model-name))))
 
 #+nil
 (get-admin 'book)
@@ -55,16 +63,9 @@
   "Return a list of all registered admin model names as strings."
   (loop :for name :being :the :hash-keys :of *admin-registry* :collect name))
 
-(defun model-name-from-string (str)
-  "Convert a URL model name string to a symbol, e.g. \"article\" -> ARTICLE."
-  (intern (string-upcase str) (symbol-package '*admin-registry*)))
-
 #+nil
 (all-registered-admins)
                                         ; => (ARTICLES/MODELS::ARTICLE)
-
-#+nil
-(model-name-from-string "article")
 
 (defmacro define-admin (model-name &body options)
   "Register a model for admin with customization options.
@@ -79,8 +80,7 @@ OPTIONS may include:
   (:readonly field1 field2 ...)
   (:per-page n)
   (:ordering field-or-minus-field)"
-  (let* ((registry-package (symbol-package '*admin-registry))
-         (model-name (intern (string model-name) registry-package))
+  (let* ((model-name (or (models:get-model-name (string model-name)) model-name))
          (initargs nil))
     (dolist (opt options)
       (destructuring-bind (key &rest vals) opt
