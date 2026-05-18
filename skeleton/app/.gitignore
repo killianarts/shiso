@@ -1,0 +1,4 @@
+/<% @var name %>
+*.fasl
+/vendored/
+.DS_Store

@@ -2,10 +2,12 @@
 
 ## Completed
 
-- **Models** — `define-model`, field-type constructors, metadata registry, introspection API
-- **Validators** — composable validators, auto-derivation from model metadata
-- **Forms** — field classes, model-form generation, validation, rendering
-- **Admin** — registry, CRUD views, components, routing, module wrapper
+- **Models** -- `define-model`, field-type constructors, metadata registry, introspection API
+- **Validators** -- composable validators, auto-derivation from model metadata
+- **Forms** -- field classes, model-form generation, validation, rendering
+- **Admin** -- registry, CRUD views, components, routing, module wrapper
+- **Simple Scaffolding** -- automates the creation of applications (the full
+  project) and modules (parts of the application).
 
 ## Near-term
 
@@ -63,6 +65,3 @@
 
 ### Internationalization
 - Translation keys for form labels and help text
-
-### Project Scaffolding
-- `make-shiso-system` generates a complete project skeleton with vendored admin

@@ -1,0 +1,32 @@
+(defpackage #:shiso/cli/main
+  (:use #:cl)
+  (:local-nicknames (#:cmd #:shiso/cli/commands))
+  (:export #:main))
+(in-package #:shiso/cli/main)
+
+(defun print-usage ()
+  (format t "Usage: shiso <command> [args...]~%~%")
+  (format t "Commands:~%")
+  (format t "  new-application <name>   Scaffold a new Shiso application in ./<name>/~%")
+  (format t "  new-module <name>        Scaffold a new module in ./src/modules/<name>/~%"))
+
+(defun main ()
+  (let ((args (uiop:command-line-arguments)))
+    (cond
+      ((null args)
+       (print-usage)
+       (uiop:quit 1))
+      ((string= (first args) "new-application")
+       (unless (second args)
+         (format *error-output* "new-application: missing <name> argument~%")
+         (uiop:quit 1))
+       (cmd:new-application (second args)))
+      ((string= (first args) "new-module")
+       (unless (second args)
+         (format *error-output* "new-module: missing <name> argument~%")
+         (uiop:quit 1))
+       (cmd:new-module (second args)))
+      (t
+       (format *error-output* "Unknown command: ~A~%~%" (first args))
+       (print-usage)
+       (uiop:quit 1)))))

@@ -19,7 +19,7 @@
 (defun url (name &rest params)
   "Return the URL for a named route, with module prefix prepended.
 Searches registered module mappers by namespace for namespaced routes
-(e.g., \"articles:index\"), falls back to global *routes* for others."
+(e.g., \"articles:index\"), falls back to global `*routes*' for others."
   (if (and (stringp name) (position #\: name))
       ;; Namespaced route — search the module's mapper
       (let* ((pos (position #\: name))
@@ -42,6 +42,9 @@ Searches registered module mappers by namespace for namespaced routes
 (defun current-path ()
   "Get the path to the current page."
   (lack/request:request-path-info requests:*request*))
+
+(defun params ()
+  ())
 
 (defun static (path)
   "Return the URL path for a static file. Like Django's {% static %} tag.

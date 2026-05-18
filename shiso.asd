@@ -4,6 +4,9 @@
   :description "An Almighty web framework for Almighty Lisp web developers."
   :license "MIT"
   :version "0.1"
+  :build-operation "program-op"
+  :build-pathname "shiso"
+  :entry-point "shiso/cli:main"
   :depends-on (:clack
                :woo
                :myway
@@ -13,8 +16,6 @@
                :lack-response
                :lack-middleware-static
                :lack-app-file
-               ;; Scaffolding
-               ;; :cl-project ; Trouble with vend
                ;; Almighty Components
                :almighty-html
                ;; ORM
@@ -33,9 +34,14 @@
                  (:file "requests")
                  (:file "server")
                  (:file "utils")
-                 ;; (:file "scaffold")
                  ;; Validators (no dependencies on models)
                  (:file "validators")
+                 ;; CLI / scaffolding
+                 (:module "cli" :serial t
+                  :components ((:file "render")
+                               (:file "commands")
+                               (:file "main")
+                               (:file "package")))
                  ;; Models
                  (:module "models" :serial t
                   :components ((:file "metadata")

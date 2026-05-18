@@ -23,9 +23,6 @@
                 #:define-module
                 #:define-application)
 
-  ;; (:import-from #:shiso/scaffold
-  ;;               #:make-module)
-
   (:import-from #:shiso/server
                 #:start
                 #:stop)
@@ -103,7 +100,6 @@
    #:*module-registry*
    #:register-module
    #:get-module
-   #:make-module
 
    #:start
    #:stop
