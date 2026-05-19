@@ -1,0 +1,107 @@
+#+TITLE: How to register a model in the admin
+#+OPTIONS: toc:2 num:nil
+
+The admin is a separate Shiso module named =shiso-admin= mounted in
+your application. Mount it once; register each model you want
+exposed.
+
+* Step 1 — Mount the admin
+
+In your =define-application= form:
+
+#+begin_src lisp
+(s:define-application application ()
+  (:modules
+   ("/admin" shiso-admin)
+   …))
+#+end_src
+
+The admin is gated by =(:require :staff)= out of the box. Any user
+with =is-staff = T= can sign in and reach it; anonymous visitors
+get redirected to =/login=. See [[file:set-up-authentication.org][set up authentication]] for the
+session/CSRF wiring (you need it before the admin works at all).
+
+* Step 2 — Minimum registration
+
+#+begin_src lisp
+(in-package #:myapp/models)
+
+(shiso:define-model article
+    ((title :field-type :char :max-length 200 :accessor article-title)
+     (body  :field-type :text :accessor article-body)))
+
+(shiso/admin:define-admin article)
+#+end_src
+
+After this, =/admin/= lists =Article=, =/admin/article/= shows every
+row, and =/admin/article/<id>= renders an edit form. Create, update,
+and delete all work without further config.
+
+* Customisation options
+
+All the options below are keyword forms inside =define-admin=:
+
+#+begin_src lisp
+(shiso/admin:define-admin article
+  (:list-display title pub-date author)        ; columns in the list view
+  (:list-filter status author)                  ; filter sidebar (planned)
+  (:search-fields title body)                   ; fields searched by ?q=…
+  (:fieldsets ("Content" (title body))           ; group fields on edit form
+              ("Metadata" (status pub-date)))
+  (:fields title body status)                    ; only show these on forms
+  (:exclude pub-date)                            ; hide these on forms
+  (:readonly id created-at)                      ; visible but not editable
+  (:per-page 50)                                 ; list pagination size
+  (:ordering -pub-date))                         ; default sort (- = desc)
+#+end_src
+
+Practical heads-up: not every option is fully wired up yet —
+=list-display= is the only one you'll lean on day-to-day. The rest
+land as the admin matures. =fields= and =exclude= already affect
+the auto-generated form. See [[file:../reference/admin.org][reference: admin]] for what each
+option ships today.
+
+* Use =:editablep nil= on the model for read-only fields
+
+The cleanest way to hide a system-managed field (like a vote count or
+=created-at=) is to mark it =:editablep nil= on the model itself:
+
+#+begin_src lisp
+(votes :field-type :integer :default 0 :editablep nil)
+#+end_src
+
+The auto-generated form skips it; the list view still shows it.
+
+* Pattern: register at the bottom of =models.lisp=
+
+Most apps put =define-model= and the matching =define-admin= side by
+side. The admin module is loaded before your modules (see
+=shiso.asd='s component ordering), so =shiso/admin:define-admin= is
+always available where you'd want to call it.
+
+#+begin_src lisp
+(shiso:define-model question (…))
+(shiso:define-model choice (…))
+
+(shiso/admin:define-admin question
+  (:list-display question-text pub-date))
+
+(shiso/admin:define-admin choice
+  (:list-display choice-text votes question-id))
+#+end_src
+
+* Listing registered admins from code
+
+#+begin_src lisp
+(shiso/admin:all-registered-admins)
+;; => (ARTICLE QUESTION CHOICE)
+
+(shiso/admin:get-admin 'article)
+;; => #<ADMIN-CONFIG …>
+#+end_src
+
+* See also
+
+- [[file:define-a-model.org][How to define a model]]
+- [[file:../reference/admin.org][Reference: admin]]
+- [[file:../explanation/admin-design.org][Explanation: how the admin is built]]

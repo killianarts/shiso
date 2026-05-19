@@ -1,0 +1,117 @@
+#+TITLE: Reference: validators
+#+OPTIONS: toc:2 num:nil
+
+Package: =shiso/validators=.
+
+A validator is a one-argument function returning =NIL= on success or
+a string on failure. Designators are also accepted in slot
+=:validators= lists and form-field =:validators= initargs.
+
+* Designator forms
+
+| =SYM=          | =(fdefinition SYM)= must be a one-arg validator              |
+| =(FACTORY ARG*)= | =(fdefinition FACTORY)= is called on =ARG…= to /produce/ the validator function |
+| =#'fn=         | The function itself                                          |
+
+The resolver lives in =resolve-validator=:
+
+#+begin_src lisp
+(shiso/validators:resolve-validator '(max-length 200))
+;; => #<FUNCTION (LAMBDA (VALUE)…)>
+#+end_src
+
+* =run-validators=  /function/
+
+#+begin_src lisp
+(shiso/validators:run-validators DESIGNATORS VALUE) => list-of-error-strings
+#+end_src
+
+Run every validator over =VALUE=, collect non-nil returns. Empty
+list means all passed.
+
+* Built-ins
+
+** =not-blank=  /function/
+
+#+begin_src lisp
+(shiso/validators:not-blank VALUE) => "This field is required." or NIL
+#+end_src
+
+Empty string or =NIL= fails. =0= passes. Used by the form layer's
+auto-required logic.
+
+** =max-length=  /factory/
+
+#+begin_src lisp
+(shiso/validators:max-length N) => validator
+#+end_src
+
+Rejects strings longer than =N=.
+
+** =min-length=  /factory/
+
+Rejects strings shorter than =N=. Empty strings pass for =N > 0=
+only if you have =not-blank= /off/.
+
+** =min-value=, =max-value=  /factories/
+
+For numeric fields.
+
+** =matches-pattern=  /factory/
+
+#+begin_src lisp
+(shiso/validators:matches-pattern REGEX) => validator
+#+end_src
+
+Uses CL-PPCRE. Non-string values pass (be combined with
+=not-blank= for "required and matches").
+
+** =valid-email=  /function/
+
+A simple regex check; not RFC 5322. Sufficient for typo-catching.
+
+** =one-of=  /factory/
+
+#+begin_src lisp
+(shiso/validators:one-of CHOICES) => validator
+#+end_src
+
+Asserts =VALUE= is =member= of =CHOICES= (under =equal=). The form
+layer auto-applies this for choice-fields.
+
+* Writing your own
+
+#+begin_src lisp
+(defun even-only (value)
+  (when (and (numberp value) (oddp value))
+    "Must be an even number."))
+
+;; in a model
+(shiso:define-model widget
+    ((count :field-type :integer :validators (even-only))))
+
+;; in a form
+(make-instance 'shiso/forms:integer-field
+               :name 'count
+               :validators (list 'even-only))
+#+end_src
+
+Factories work the same way — return a closure that closes over the
+parameter:
+
+#+begin_src lisp
+(defun starts-with (prefix)
+  (lambda (value)
+    (when (and (stringp value)
+               (not (alexandria:starts-with-subseq prefix value)))
+      (format nil "Must start with ~S." prefix))))
+
+(shiso:define-model post
+    ((slug :field-type :slug
+           :validators ((starts-with "post-")))))
+#+end_src
+
+* See also
+
+- [[file:models.org][Reference: models]] — =:validators= on slots.
+- [[file:forms.org][Reference: forms]] — =:validators= on form fields.

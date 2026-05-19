@@ -1,0 +1,186 @@
+#+TITLE: How to deploy a Shiso app
+#+OPTIONS: toc:2 num:nil
+
+There's no one canonical deployment path for Shiso yet. This page
+documents the working pattern used by the reference apps
+=almightylisp.com= and =gyokubundo= — single-binary deployment
+behind a reverse-proxy.
+
+* Build the binary
+
+#+begin_src bash
+cd /path/to/myapp
+vend get
+make
+#+end_src
+
+You get =./myapp= — a self-contained SBCL core dump linked with your
+application. It opens its DB connection, ensures tables exist, and
+starts Woo on =127.0.0.1:5000= by default.
+
+The binary is large (≈90 MB) because it bundles the entire Lisp
+image. Ship it as a single artifact; you don't need SBCL or any of
+the libraries installed on the target host.
+
+* Configure with environment variables
+
+The reference apps read three environment variables on startup:
+
+| Variable | Default     | Purpose                                         |
+|----------+-------------+-------------------------------------------------|
+| =HOST=   | =127.0.0.1= | Bind address                                    |
+| =PORT=   | =5000=      | Bind port                                       |
+| =DEBUGP= | unset       | =true= turns on Woo's debugger (don't for prod) |
+
+The scaffolded =src/main.lisp= doesn't read these — pull the helper
+functions from
+[[../../examples/mysite/src/main.lisp][=examples/mysite/src/main.lisp=]]
+or =gyokubundo='s main, or write your own.
+
+** Important: leave =DEBUGP= off in production
+
+With =:debugp t=, Woo invokes the debugger on errors and the
+worker blocks waiting for interactive input. Set =DEBUGP= to
+anything except =true=, or pass =:debugp nil= explicitly.
+
+* Static files
+
+Run =collectstatic= as part of the build:
+
+#+begin_src bash
+sbcl --non-interactive --load build.lisp \
+     --eval '(asdf:load-system :myapp)' \
+     --eval '(myapp:setup-database)' \
+     --eval '(shiso:collectstatic)' \
+     --eval '(uiop:quit)'
+#+end_src
+
+Now =./static/= contains everything — ship it alongside the binary.
+A reverse proxy can serve it directly, skipping the Lisp server
+entirely:
+
+#+begin_src caddy
+example.com {
+  handle /static/* {
+    root * /var/www/myapp
+    file_server
+  }
+  reverse_proxy 127.0.0.1:5000
+}
+#+end_src
+
+Or with nginx:
+
+#+begin_src nginx
+server {
+  listen 80;
+  server_name example.com;
+
+  location /static/ {
+    alias /var/www/myapp/static/;
+  }
+
+  location / {
+    proxy_pass http://127.0.0.1:5000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+  }
+}
+#+end_src
+
+* systemd unit
+
+The =almightylisp.com= reference has a working one at
+=almightylisp.service= — adapt it for your service name:
+
+#+begin_src ini
+[Unit]
+Description=myapp
+After=network.target
+
+[Service]
+Type=simple
+User=myapp
+WorkingDirectory=/opt/myapp
+ExecStart=/opt/myapp/myapp
+Environment="HOST=127.0.0.1"
+Environment="PORT=5000"
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+#+end_src
+
+* TLS
+
+Terminate TLS at the reverse proxy. The Lisp server itself doesn't
+do TLS — Woo could be made to with libuv, but it's simpler to let
+nginx/Caddy handle certificates and certbot.
+
+If your =shiso/auth:*post-login-redirect*= or any external link
+needs the absolute URL, make sure your reverse proxy forwards
+=X-Forwarded-Proto=. =shiso:absolute-url= reads the request's URI
+scheme to assemble the URL.
+
+* Database
+
+The default scaffold uses SQLite at =db/myapp.db=. That's fine for
+demos and small single-instance services. For anything serious,
+swap to Postgres in =setup-database=:
+
+#+begin_src lisp
+(mito:connect-toplevel :postgres
+                       :host "db.internal"
+                       :database-name "myapp"
+                       :username "myapp"
+                       :password (uiop:getenv "DB_PASSWORD"))
+#+end_src
+
+The =shiso_session= and =shiso_user= tables work on Postgres
+without changes. Application tables likewise — Mito's DDL is
+backend-aware.
+
+* Schema migrations
+
+For development, =mito:ensure-table-exists= is enough. For
+production schema changes:
+
+- Generate a migration: =(mito:generate-migrations …)=
+- Inspect the SQL it produces.
+- Apply with =mito:migrate-table= or out-of-band with =psql=.
+
+Mito's migration support handles column additions cleanly;
+destructive changes (renames, type narrowing) need manual review.
+
+* Health check
+
+Add a route that confirms DB connectivity:
+
+#+begin_src lisp
+(defun healthz ()
+  (handler-case
+      (progn (mito:retrieve-by-sql "SELECT 1")
+             (shiso:http-response "ok"))
+    (error (e)
+      (shiso:http-response (format nil "fail: ~A" e) :code 500))))
+#+end_src
+
+Mount it on a module the load balancer can reach. Most ALBs/NLBs
+will poll =/healthz= or similar.
+
+* Logging
+
+Currently Shiso doesn't ship a structured logger. The reference apps
+write to stdout/stderr and let systemd capture it; =journalctl -u
+myapp= is the operator's view. If you need structured logging,
+either install a Lisp logger (=log4cl=, =verbose=) and wrap your
+controllers with it, or filter stdout through a log shipper.
+
+* See also
+
+- [[file:serve-static-files.org][How to serve static files]]
+- [[file:../../examples/mysite/Makefile][=examples/mysite/Makefile=]] — the
+  build script you start from
+- [[file:../reference/server.org][Reference: server]] — =start=, =stop=,
+  middleware stack

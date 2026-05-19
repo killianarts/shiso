@@ -1,0 +1,169 @@
+#+TITLE: The module system
+#+OPTIONS: toc:2 num:nil
+
+What a /module/ is, what an /application/ is, and how they
+interact.
+
+* A module is a portable bundle of routes
+
+#+begin_src lisp
+(shiso:define-module polls
+  (:urls (:GET  "/"            'controllers:index   "index")
+         (:GET  "/:id"         'controllers:detail  "detail")
+         (:GET  "/:id/results" 'controllers:results "results")
+         (:POST "/:id/vote"    'controllers:vote    "vote")))
+#+end_src
+
+The =polls= module's routes are stored on a /private/ mapper, with
+no prefix. A request comes in as =/3=, =/3/results=, =/3/vote= —
+the module knows nothing about being mounted under =/polls=.
+
+That's the portability claim. The same module can be mounted at
+=/polls= in one application, =/v1/polls= in another, =/= in a
+third — its source doesn't change.
+
+The macroexpansion does three things:
+
+1. Creates a fresh mapper.
+2. Registers each URL spec on that mapper.
+3. Stores the module instance under =(:KEYWORD-NAME)= in
+   =*module-registry*=.
+
+The =(:guard …)= option, if present, is attached to the instance
+and consulted at dispatch time.
+
+* An application mounts modules at prefixes
+
+#+begin_src lisp
+(shiso:define-application application ()
+  (:modules
+    ("/admin" shiso-admin)
+    (""       shiso-auth)
+    ("/polls" polls)))
+#+end_src
+
+This expands to a Lack-builder pipeline. Each =(PREFIX MODULE)=
+pair becomes a wrapper middleware that:
+
+1. Checks if the request path starts with the prefix.
+2. If yes: temporarily sets the module's =module-prefix= slot
+   (so =shiso:url= knows the current mount), strips the prefix
+   from =:path-info=, dispatches to the module, and either returns
+   the response or falls through.
+3. If no: passes through to the next wrapper.
+
+The pipeline runs in declaration order. The first mount whose
+prefix matches /and/ whose mapper claims the route is the
+responder. Other mounts get a chance otherwise.
+
+* Why the late binding matters
+
+The macro expansion of =define-application= encodes the /list/ of
+modules to try, by /keyword name/. It does /not/ embed the module
+instances directly. Each request resolves the keyword to the
+current =*module-registry*= entry:
+
+#+begin_src lisp
+(let ((mod (modules:get-module mod-kw)) …)
+  …)
+#+end_src
+
+So this works:
+
+1. Application is defined with =("/polls" polls)=.
+2. Server is running.
+3. You re-evaluate =(shiso:define-module polls …)= with one new
+   route added.
+4. The next request hits the new route.
+
+You don't restart the server. Re-defining the module replaces its
+entry in =*module-registry*=, and the next dispatch consults the
+new entry.
+
+The corollary: re-evaluating =define-application= /does/ rebuild
+the pipeline, but the application variable holds the new
+pipeline; the running server still references the /old/ pipeline
+through =*server-connection*=. To pick up a new mount list you have
+to stop and start.
+
+* Naming and registry entries
+
+The module's name = the macro's first argument. The string-upcased
+form, interned in the =:keyword= package, becomes the registry key.
+
+#+begin_src lisp
+(shiso:define-module my-module …)         ; -> :MY-MODULE
+(shiso:get-module :my-module)              ; the instance
+(shiso:get-module :nonexistent)            ; signals an error
+#+end_src
+
+That's why the application's =:modules= entries use bare symbols
+(=polls=, not ='polls= or =:polls=): the macroexpansion uppercases
+the symbol-name and interns it as a keyword for the lookup.
+
+* Routes are namespaced under the module
+
+Inside =define-module=, the route name string =index= is stored
+under the namespace matching the module name. =shiso:url= reads
+both halves:
+
+#+begin_src lisp
+(shiso:url "polls:index")              ; reads polls module's mapper
+(shiso:url "polls:detail" :id "3")
+#+end_src
+
+The =NAMESPACE:NAME= form is parsed by =shiso/utils:url=, which:
+
+1. Strips the namespace prefix and looks up the module.
+2. Calls =myway:find-route-by-name= on the module's mapper.
+3. Builds the URL via =myway:url-for=.
+4. Prepends the module's current =module-prefix= slot.
+
+For routes not associated with a module (registered with
+=define-route= directly on =*routes*=), the same helper falls back
+to a global lookup. You rarely need that path.
+
+* Fall-through and 404
+
+Each module mount wraps its inner =call= in a fall-through check:
+
+#+begin_src lisp
+(multiple-value-bind (response handledp)
+    (lack/component:call mod env)
+  (cond
+    (handledp response)
+    (t ; fall through to next mount
+     (setf (getf env :path-info) saved-path-info)
+     (funcall app env))))
+#+end_src
+
+A module dispatching to a real controller returns =(values RESPONSE T)=
+— handled. A module whose mapper has no match for the path returns
+=(values <404> NIL)= — not-handled, fall through.
+
+That second value is the trick that lets you mount =shiso-auth=
+and your =pages= module both at =""=. The auth module claims
+=/login=, =/logout=, =/signup= and passes everything else; the
+=pages= module gets a clean shot at the rest.
+
+* When a module ISN'T relocatable
+
+The portability claim has one foot of clay: the controllers a
+module dispatches to call =shiso:url= with hardcoded namespaced
+names. If your =polls= controller calls =(shiso:url
+"polls:detail")=, it works wherever the module is mounted — because
+=url= reads the current prefix from the module instance. But it
+won't work in another application that mounts the same code under
+a /different/ module name.
+
+In practice this is fine: modules are named once and stay named.
+The portability is across /prefixes/, not across /renames/.
+
+* See also
+
+- [[file:request-lifecycle.org][The request lifecycle]] — what dispatch
+  does after a mount matches.
+- [[../reference/routing.org][Reference: routing]] — exact macro shapes
+  and the function-level API.
+- [[../how-to/mount-a-module-under-a-prefix.org][How-to: mount a module
+  under a URL prefix]] — for the cookbook view.

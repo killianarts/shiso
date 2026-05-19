@@ -1,0 +1,124 @@
+#+TITLE: Reference: admin
+#+OPTIONS: toc:2 num:nil
+
+Package: =shiso/admin= (=define-admin= re-exported from =shiso=).
+
+The admin is a routing module named =shiso-admin=. Mount it in your
+application and register models you want exposed; the auto-CRUD UI
+covers list, create, edit, and delete for every registered model.
+
+The admin's routes are gated by =(:require :staff)= — only users
+with =is-staff = T= can reach it.
+
+* =define-admin=  /macro/
+
+#+begin_src lisp
+(shiso/admin:define-admin MODEL-NAME &body OPTIONS)
+#+end_src
+
+Register =MODEL-NAME= for admin CRUD. =MODEL-NAME= is an unquoted
+symbol — same one you passed to =define-model=. Each option is a
+list =(KEY VAL*)=.
+
+** Options
+
+| Option                                | Status   | Effect                                          |
+|---------------------------------------+----------+-------------------------------------------------|
+| =(:list-display FIELD*)=              | working  | Column set in the list view                     |
+| =(:fields FIELD*)=                    | working  | Whitelist of fields on the auto-generated form  |
+| =(:exclude FIELD*)=                   | working  | Hide these from the form                        |
+| =(:per-page N)=                       | planned  | Pagination size                                 |
+| =(:ordering FIELD or -FIELD)=         | planned  | Default sort (=-= prefix = descending)          |
+| =(:list-filter FIELD*)=               | planned  | Filter sidebar                                  |
+| =(:search-fields FIELD*)=             | planned  | =?q=…= search target columns                    |
+| =(:fieldsets ("Group" (FIELD*)) …)=   | planned  | Group fields on the edit form                   |
+| =(:readonly FIELD*)=                  | planned  | Show but don't edit                             |
+
+"Planned" options are accepted by the macro — they store into the
+=admin-config= struct — but nothing reads them yet. Treat them as
+forward-compatible metadata; lean on =:list-display=, =:fields=, and
+=:exclude= for today.
+
+* Mounted routes
+
+=shiso-admin= ships these routes:
+
+| Method | Path                  | Name                       | Purpose                  |
+|--------+-----------------------+----------------------------+--------------------------|
+| GET    | =/=                   | =shiso-admin:index=        | Dashboard with model index |
+| GET    | =/:model=             | =:model-instance-list=     | List rows                |
+| GET    | =/:model/build=       | =:model-instance-build=    | Render "new" form        |
+| POST   | =/:model/persist=     | =:model-instance-persist=  | Handle "new" submission  |
+| GET    | =/:model/:id=         | =:model-instance-rebuild=  | Render edit form         |
+| POST   | =/:model/:id=         | =:model-instance-repersist= | Handle edit submission  |
+| POST   | =/:model/:id/delete=  | =:model-instance-delete=   | Handle delete            |
+
+Mount it at =/admin= (most common) and these expose as =/admin/=,
+=/admin/article=, =/admin/article/3=, etc.
+
+* =admin-config=  /class/
+
+The struct stored per registered model. Public accessors:
+
+| Accessor                | Returns               |
+|-------------------------+-----------------------|
+| =admin-model-name=      | The model name symbol |
+| =admin-list-display=    | List of slot names    |
+| =admin-list-filter=     | List of slot names    |
+| =admin-search-fields=   | List of slot names    |
+| =admin-fieldsets=       | List of fieldset specs |
+| =admin-fields=          | List of slot names    |
+| =admin-exclude=         | List of slot names    |
+| =admin-readonly=        | List of slot names    |
+| =admin-per-page=        | Integer (default 25)  |
+| =admin-ordering=        | A field symbol or list |
+
+* Registry
+
+** =register-admin=  /function/
+
+#+begin_src lisp
+(shiso/admin:register-admin MODEL-NAME &rest INITARGS)
+#+end_src
+
+Low-level — =define-admin= calls this. Use the macro unless you're
+building tooling.
+
+** =get-admin=  /function/
+
+#+begin_src lisp
+(shiso/admin:get-admin MODEL-NAME) => admin-config
+#+end_src
+
+Returns the config or signals an error.
+
+** =all-registered-admins=  /function/
+
+#+begin_src lisp
+(shiso/admin:all-registered-admins) => list-of-symbols
+#+end_src
+
+** =*admin-registry*=  /parameter/
+
+The underlying hash table. Inspectable.
+
+* The middleware re-exports
+
+For controllers /inside the admin/ (which use Lack request access
+directly), =shiso/admin= re-exports four helpers from
+=shiso/admin/middleware=:
+
+| =shiso/admin:http-response=     | Internal HTTP response builder         |
+| =shiso/admin:redirect-response= | Internal redirect builder              |
+| =shiso/admin:post-request-p=    | Internal POST-detection                |
+| =shiso/admin:parse-body-params= | Internal body-param parser             |
+
+These are functionally equivalent to the =shiso= re-exports of the
+same names. The duplication is historical and may collapse.
+
+* See also
+
+- [[../how-to/register-a-model-in-admin.org][How-to: register a model in the admin]].
+- [[../tutorial/02-polls-part-1.org][Tutorial: polls part 1]] — admin
+  setup walkthrough.
+- [[../explanation/admin-design.org][Explanation: how the admin is built]].

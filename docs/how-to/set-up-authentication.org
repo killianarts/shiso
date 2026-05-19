@@ -1,0 +1,236 @@
+#+TITLE: How to set up authentication in a shiso project
+#+OPTIONS: toc:2 num:nil
+
+A task-oriented recipe for wiring Shiso's session-based authentication
+into a new or existing project. If you want the /why/, read
+[[file:../tutorial/06-authentication.org][the authentication tutorial]];
+this file just lists the steps.
+
+* Goal
+
+End state after following this guide:
+
+- =/login=, =/logout=, =/signup= pages served from your app.
+- DB-backed sessions with CSRF protection.
+- =/admin= gated behind =:require :staff=.
+- A staff user you can sign in as.
+
+* Prerequisites
+
+- Shiso checked out and loadable in your image.
+- A reachable database (Postgres, SQLite, or MySQL — anything Mito
+  supports).
+- =cl-pass=, =lack-middleware-session=, =lack-session-store-dbi=, and
+  =lack-middleware-csrf= available. They are already in
+  =shiso.asd='s =:depends-on=; if your =vendored/= tree is missing
+  them, run =vend get=.
+
+* Step 1 — Declare your application
+
+In your app's =defsystem= file (=myapp.asd=), depend on =:shiso= and
+make sure your routes file loads before your entry point:
+
+#+begin_src lisp
+(asdf:defsystem #:myapp
+  :depends-on (:shiso)
+  :components ((:file "package")
+               (:file "models"   :depends-on ("package"))
+               (:file "routes"   :depends-on ("models"))
+               (:file "main"     :depends-on ("routes"))))
+#+end_src
+
+* Step 2 — Mount =shiso-auth= in your application
+
+In your routes file, define your application and include the
+=shiso-auth= module alongside your own modules:
+
+#+begin_src lisp
+(in-package #:myapp/routes)
+
+(shiso:define-application my-app ()
+  (:modules
+    (""       myapp-pages)
+    (""       shiso-auth)        ; /login, /logout, /signup
+    ("/admin" shiso-admin)))     ; already :staff-guarded
+#+end_src
+
+If you want the auth pages under a prefix, mount at that prefix and
+tell guards where to redirect:
+
+#+begin_src lisp
+(shiso:define-application my-app ()
+  (:modules
+    (""       myapp-pages)
+    ("/auth"  shiso-auth)
+    ("/admin" shiso-admin)))
+
+(setf shiso/auth:*login-url* "/auth/login")
+#+end_src
+
+* Step 3 — Connect Mito and create the auth tables
+
+At startup, /before/ =shiso:start=:
+
+#+begin_src lisp
+(in-package #:myapp/main)
+
+(defun start (&key (port 5000))
+  (mito:connect-toplevel :postgres
+                         :host "localhost"
+                         :database-name "myapp"
+                         :username "myapp")
+  (shiso/auth:ensure-tables)            ; creates shiso_user + shiso_session
+  (mito:ensure-table-exists 'myapp-models:article)   ; your own tables
+  (shiso:start 'my-app :port port))
+#+end_src
+
+=shiso:start= installs the session + CSRF middleware automatically
+once auth is loaded.
+
+* Step 4 — Create your first staff user
+
+From the REPL, with Mito connected:
+
+#+begin_src lisp
+(shiso/auth:make-user "admin@example.com" "a-strong-password")
+
+(let ((u (shiso/auth:find-user-by-email "admin@example.com")))
+  (setf (shiso/auth:user-is-staff u) t)
+  (mito:save-dao u))
+#+end_src
+
+You can now sign in at =/login= and reach =/admin=.
+
+* Step 5 — Gate your own modules
+
+Add =:guard= to any =define-module= you want protected:
+
+#+begin_src lisp
+(shiso:define-module dashboard
+  (:guard (:require :login))
+  (:urls
+    (:GET "/"        'dashboard-index   "index")
+    (:GET "/profile" 'dashboard-profile "profile")))
+#+end_src
+
+Accepted guard specs:
+
+| Spec                                       | Allows                              |
+|--------------------------------------------+-------------------------------------|
+| =(:require :login)=                        | Any authenticated user              |
+| =(:require :staff)=                        | =is-staff= = T                      |
+| =(:require :anonymous)=                    | Only logged-out visitors            |
+| =(:require (:predicate =FN=))=             | =FN= called on user, truthy = allow |
+
+For a single controller instead of a whole module:
+
+#+begin_src lisp
+(defun edit-profile (id-str)
+  (shiso/auth:login-required
+    (let ((u (shiso/auth:current-user)))
+      ;; ... render edit form ...
+      )))
+#+end_src
+
+* Step 6 — Customize the redirect targets (optional)
+
+#+begin_src lisp
+(setf shiso/auth:*login-url*           "/login"
+      shiso/auth:*post-login-redirect* "/dashboard")
+#+end_src
+
+Set these once, before =shiso:start=.
+
+* Step 7 — Read the current user from your controllers
+
+#+begin_src lisp
+(defun dashboard-index ()
+  (let ((u (shiso/auth:current-user)))
+    (if u
+        (shiso:http-response
+         (format nil "Hello, ~A!" (shiso/auth:user-email u)))
+        (shiso:redirect-response shiso/auth:*login-url*))))
+#+end_src
+
+=current-user= returns =NIL= when nobody is logged in.
+
+* Step 8 — Embed a CSRF token in your own forms
+
+Any POST/PUT/DELETE/PATCH form needs a =_csrf_token= hidden input:
+
+#+begin_src lisp
+(let* ((env (lack/request:request-env shiso:*request*))
+       (session (getf env :lack.session))
+       (token (lack/middleware/csrf:csrf-token session)))
+  (almighty-html:render-to-string
+    (almighty-html:</>
+     (form :method "POST" :action "/save"
+       (almighty-html:</>
+        (input :type "hidden" :name "_csrf_token" :value token))
+       ;; ... your fields ...
+       (almighty-html:</> (button :type "submit" "Save"))))))
+#+end_src
+
+GET/HEAD/OPTIONS bypass the CSRF check, so plain page rendering needs
+no token.
+
+* Verification checklist
+
+After completing the steps above:
+
+- [ ] =GET /login= renders the login form.
+- [ ] =POST /login= with valid credentials redirects to
+  =*post-login-redirect*=.
+- [ ] =POST /login= with bad credentials re-renders with an error.
+- [ ] =GET /admin= as an anonymous user redirects to
+  =/login?next=%2Fadmin=.
+- [ ] =GET /admin= as a non-staff user returns 403.
+- [ ] =GET /admin= as a staff user renders the admin index.
+- [ ] =POST /logout= clears the session and redirects.
+- [ ] =POST= to any of your forms without =_csrf_token= returns 403.
+
+* Troubleshooting
+
+** "No such table: shiso_user"
+
+You forgot Step 3. Call =(shiso/auth:ensure-tables)= after
+=mito:connect-toplevel= and before =shiso:start=.
+
+** Login succeeds but every subsequent request is anonymous
+
+The session middleware needs a store backed by the /same/ DBI
+connection Mito is using. =shiso/auth/session:make-store= reads
+=mito.connection:*connection*=, so make sure Mito is connected
+/before/ =shiso:start= runs.
+
+** Every POST returns 403
+
+Either the form is missing the =_csrf_token= hidden input, or the
+session cookie isn't being sent. Check that the browser has a
+=lack.session= cookie and that your form includes the token from
+=lack/middleware/csrf:csrf-token=.
+
+** =cl-pass= isn't found at load time
+
+Run =vend get= from the shiso checkout — the system declares it as a
+dependency but your =vendored/= tree may not have it yet.
+
+** Tests redefine the auth tables on every run
+
+=ensure-tables= is idempotent (uses =mito:ensure-table-exists=). If
+you see redefinition warnings, those come from loading the same
+library twice (quicklisp + =vendored/=), not from the auth code.
+
+* What this guide does /not/ cover
+
+- Password reset by email (no mailer yet).
+- Email verification.
+- Remember-me / persistent cookies.
+- Per-IP login rate limiting.
+- Permission objects beyond =is-staff=.
+- Linking users to Stripe customers (subclass =shiso/auth:user= and
+  add the field when you add billing).
+
+For background and rationale, see =AUTHENTICATION-TUTORIAL.org=. For
+the design decisions and out-of-scope list, see
+=AUTHENTICATION-PLAN.md=.

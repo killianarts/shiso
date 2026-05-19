@@ -1,0 +1,267 @@
+#+TITLE: Model metadata and the registry
+#+OPTIONS: toc:2 num:nil
+
+=(shiso:define-model NAME (SLOTS …))= looks like a slightly fancier
+=mito:deftable=. It's more: it parses two languages at once,
+captures one of them for the framework, and routes the rest to
+Mito. This chapter pulls the layers apart.
+
+* The two languages
+
+A slot in =define-model= can declare both Mito options /and/ Shiso
+metadata options:
+
+#+begin_src lisp
+(title :field-type :char :max-length 200      ; Shiso: field-type + arg
+       :verbose-name "Article title"           ; Shiso: form/admin label
+       :help-text "What goes in the heading."  ; Shiso: form help
+       :validators (not-blank (max-length 200)) ; Shiso: validator list
+       :col-type (:varchar 200)                 ; Mito: column type
+       :initarg :title                          ; Mito (and CLOS)
+       :accessor article-title)                 ; Mito (and CLOS)
+#+end_src
+
+Two lists of keys decide which is which:
+
+#+begin_src lisp
+(defparameter *shiso-slot-keys*
+  '(:verbose-name :help-text :validators :choices
+    :blankp :editablep :widget :field-type))
+
+(defparameter *mito-slot-keys*
+  '(:col-type :initform :initarg :accessor :reader :writer
+    :inflate :deflate :references :ghost :documentation
+    :allocation :type))
+#+end_src
+
+Anything not in either list is silently dropped. That's the safety
+valve: experimental Shiso keys can be added without breaking Mito.
+
+* Field-type expansion
+
+=:field-type :char :max-length 200= is /sugar/ for the
+=:char= field-type expander. The expander returns:
+
+#+begin_src lisp
+(list :col-type '(:varchar 200)
+      :initarg :title
+      :validators '((max-length 200)))
+#+end_src
+
+Those become /defaults/. Your explicit slot options /win/ — except
+=:validators=, which are /prepended/ (so the default =max-length=
+runs first, then any extras).
+
+That's why the model can look terse:
+
+#+begin_src lisp
+(title :field-type :char :max-length 200)
+#+end_src
+
+…and end up with =:col-type=, =:initarg=, and a =max-length=
+validator all set up without you typing any of them.
+
+The registered field types (=:char=, =:text=, =:integer=,
+=:boolean=, =:choice=, =:email=, =:slug=, =:url=, =:datetime=,
+=:date=, =:decimal=) live in =src/models/field-types.lisp=. You can
+add your own with =shiso:define-field-type=.
+
+* Macroexpansion, step by step
+
+For:
+
+#+begin_src lisp
+(in-package #:polls/models)
+
+(shiso:define-model question
+    ((question-text :field-type :char :max-length 200
+                    :verbose-name "Question text"
+                    :accessor question-text)
+     (pub-date      :field-type :datetime
+                    :default (local-time:now)
+                    :accessor pub-date)))
+#+end_src
+
+The expansion is (cleaned up):
+
+#+begin_src lisp
+(progn
+  ;; The Mito class definition. Slot options stripped of Shiso keys.
+  ;; The class symbol is interned in shiso/models/registry.
+  (mito:deftable shiso/models/registry::question ()
+    ((question-text :col-type (:varchar 200) :initarg :question-text
+                    :accessor question-text)
+     (pub-date :col-type :timestamptz :initarg :pub-date
+               :accessor pub-date :initform (local-time:now))))
+
+  ;; The metadata registration. Captures everything that fell out
+  ;; of the Shiso keys plus :col-type (kept for introspection).
+  (shiso/models/registry:register-model
+   'shiso/models/registry::question
+   (find-class 'shiso/models/registry::question)
+   (list
+    (shiso/models/metadata:make-slot-metadata
+     :name 'question-text
+     :col-type '(:varchar 200)
+     :verbose-name "Question text"
+     :validators (list (list 'max-length 200)))
+    (shiso/models/metadata:make-slot-metadata
+     :name 'pub-date
+     :col-type :timestamptz
+     :widget :datetime-local)))
+
+  'shiso/models/registry::question)
+#+end_src
+
+Two things to take away:
+
+** The class lives in =shiso/models/registry=, not your package
+
+That's a deliberate design choice. The admin needs to map a URL
+fragment like ="question"= back to a class — and the URL is just a
+string, with no package context. By interning every model class in
+a /fixed/ package, =shiso/models:model-class= can do
+=(find-symbol (string-upcase NAME) (symbol-package '*model-registry*))=
+and reliably get the right class.
+
+The price: from your =polls/models= package, the bare symbol
+=question= refers to =polls/models::question= — /not/ the class.
+This is exactly what trips users up at first. The escape hatches:
+
+- =(shiso/models:model-class 'question)= — package-blind lookup.
+- =(shiso/models:model-class "question")= — same thing, string form.
+- =shiso/models/registry::question= — the symbol the class is
+  actually named with, if you want to write it directly.
+
+** Slot symbols stay in your package
+
+In the expansion above, =question-text= and =pub-date= are
+=polls/models::question-text= and =polls/models::pub-date=. Mito's
+=deftable= sees them as slot names. The =:accessor= we declared
+became a function /interned in polls/models/, callable from any
+package that imports the symbol.
+
+This is the natural CLOS behaviour. The friction shows up only if
+you call =(slot-value x 'question-text)= from a different package
+without qualifying — you get a different symbol that the class
+doesn't have. The cleanest workaround is to declare =:accessor=
+explicitly on every slot and use accessors instead of =slot-value=
+from the outside. Both example apps (polls, todo) follow this rule.
+
+* The three readers off the registry
+
+** =(all-models)=
+
+Returns the list of registered registry-package symbols. Useful at
+startup to loop and call =ensure-table-exists=.
+
+** =(model-class NAME)=
+
+The canonical class object. =NAME= can be:
+
+- A registry-package symbol (already canonical): =shiso/models/registry::question=.
+- Any package's symbol with the same name: =polls/models::question=,
+  =cl-user::question=.
+- A string: ="question"=.
+
+Resolution does =find-symbol (string-upcase NAME)= in the registry
+package. So a typo'd name doesn't match any class — you get =NIL=
+back. Pass =NIL= to Mito and you'll get a clearer error later, but
+no =find-class= explosion.
+
+** =(model-fields NAME)= and =(model-field NAME SLOT)=
+
+The slot-metadata list, in declaration order. =model-field=
+finds one by name (string-comparing symbol names, again
+package-blind).
+
+The metadata is what powers the admin's list-display, the
+form-generator's field choice, and any custom UI you build that
+needs to render fields uniformly.
+
+* Why a separate registry at all
+
+Mito gives you the class. The class has slots and slot types. Why
+isn't that enough?
+
+A few reasons:
+
+** Mito doesn't know about humans
+
+Mito stores =col-type=, =initarg=, =initform=. It doesn't store
+"this column's label in a form is 'Question text'", or "this field
+takes its options from this alist". Those are presentation concerns
+Shiso owns.
+
+** Slot ordering matters
+
+Mito's class slots, like all CLOS slots, are unordered as far as
+=find-class= is concerned (sb-mop:class-direct-slots happens to
+return them in declaration order on SBCL, but the spec doesn't
+require it). The admin /needs/ declaration order — that's the
+order columns get rendered. Shiso's registry preserves it
+explicitly.
+
+** Validators and choices are framework-level
+
+A =validators= list of designators is meaningless to Mito; same for
+=:choices=. Either could go on a slot's =:documentation=, but
+that's an out-of-band escape hatch. Shiso lifts these into proper
+first-class attributes.
+
+** Decoupling
+
+Code that wants to render a generic form-from-model doesn't want to
+walk =sb-mop:class-direct-slots=. It wants to ask "what fields does
+this model have, in order, with labels and validators". The
+registry is that.
+
+* Reading the registry — examples
+
+#+begin_src lisp
+(shiso/models:all-models)
+;; => (shiso/auth/user::USER shiso/auth/session::SESSION
+;;     SHISO/MODELS/REGISTRY::QUESTION SHISO/MODELS/REGISTRY::CHOICE)
+
+(shiso/models:model-class 'question)
+;; => #<DAO-TABLE-CLASS SHISO/MODELS/REGISTRY::QUESTION>
+
+(shiso/models:model-class "question")
+;; => same thing
+
+(shiso/models:model-fields 'question)
+;; => (#S(SLOT-METADATA :NAME QUESTION-TEXT :COL-TYPE (:VARCHAR 200)
+;;        :VERBOSE-NAME "Question text" :VALIDATORS ((MAX-LENGTH 200))
+;;        :BLANKP NIL :EDITABLEP T) …)
+
+(shiso/models:field-verbose-name
+ (shiso/models:model-field 'question 'question-text))
+;; => "Question text"
+
+(shiso/models:field-validators
+ (shiso/models:model-field 'question 'question-text))
+;; => ((MAX-LENGTH 200))
+#+end_src
+
+* Re-running =define-model=
+
+Re-evaluating a =define-model= form:
+
+1. Re-runs =mito:deftable=, which updates the CLOS class (Mito's
+   metaobject protocol handles this).
+2. Re-runs =register-model=, which overwrites the registry entry.
+
+Existing instances continue to satisfy =typep=. Their slot values
+remain as they were. Querying brings fresh instances of the new
+class.
+
+What it /doesn't/ do is migrate the database schema. Mito won't
+notice you added a column unless you call =mito:migrate-table=
+or recreate the table. In development, drop the SQLite file and
+restart; in production, run a migration.
+
+* See also
+
+- [[../reference/models.org][Reference: models]]
+- [[../how-to/define-a-model.org][How-to: define a model]]
+- [[file:admin-design.org][How the admin is built]] — what consumes the registry.

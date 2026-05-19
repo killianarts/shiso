@@ -1,0 +1,5 @@
+/todo
+/db/
+*.fasl
+/vendored/
+.DS_Store

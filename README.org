@@ -1,13 +1,67 @@
 #+title: Shiso
 #+author: Micah Killian
 
-A web framework for Common Lisp.
+A web framework for Common Lisp. Django-shaped: modular apps,
+ORM-backed models, an auto-generated admin, session+CSRF auth, and
+a scaffolder that stamps both.
+
+* Quickstart
+
+#+begin_src bash
+# Install the framework
+git clone <shiso-repo-url>
+cd shiso
+make && make install
+
+# Scaffold + run a project
+shiso new-application hello
+cd hello
+vend get
+make
+./hello                              # listening on http://127.0.0.1:5000
+#+end_src
+
+For a full walk-through see [[file:docs/tutorial/01-getting-started.org][docs/tutorial/01-getting-started]].
+
+* Documentation
+
+Full documentation lives under [[file:docs/][docs/]] and follows the
+[[https://diataxis.fr/][Diátaxis]] model:
+
+- *Tutorials* ([[file:docs/tutorial/][docs/tutorial/]]) — step-by-step
+  lessons. Start with [[file:docs/tutorial/01-getting-started.org][getting started]];
+  the [[file:docs/tutorial/02-polls-part-1.org][polls tutorial]] and the
+  [[file:docs/tutorial/05-todo-app.org][TODO app]] are the two worked examples.
+- *How-to guides* ([[file:docs/how-to/][docs/how-to/]]) — task-oriented
+  recipes: define a model, register it in the admin, render a form
+  with CSRF, deploy, etc.
+- *Reference* ([[file:docs/reference/][docs/reference/]]) — every exported
+  symbol grouped by subsystem.
+- *Explanation* ([[file:docs/explanation/][docs/explanation/]]) — the
+  conceptual layer: how the request lifecycle works, why the
+  registries exist, design choices.
+
+[[file:docs/README.org][docs/README.org]] is the top-level index.
+
+* Working examples
+
+Two complete apps live under [[file:examples/][examples/]] and are
+referenced line-by-line from the tutorials:
+
+- [[file:examples/mysite/][examples/mysite/]] — the Django-poll-style
+  polls site (Question / Choice / vote flow / admin).
+- [[file:examples/todo/][examples/todo/]] — a minimal CRUD app with
+  CSRF-protected forms and optional auth.
+
+Build and run either with =vend get && make && ./mysite= (or
+=./todo=).
 
 * Requirements
 
 - [[http://www.sbcl.org/][SBCL]] 2.x or later, on =$PATH=.
-- [[https://github.com/fosskers/vend][vend]] for vendoring dependencies into your applications. Installed the
-  same way as Shiso: clone, =make=, =make install=.
+- [[https://github.com/fosskers/vend][vend]] for vendoring dependencies
+  into your applications. Installed the same way as Shiso: clone,
+  =make=, =make install=.
 - GNU Make.
 
 * Installing
@@ -25,13 +79,13 @@ After =make install= you'll have:
   =~/.local=, override with =make install PREFIX=/usr/local=).
 - =$(ASDF_DIR)/shiso/= — a full copy of the Shiso source tree (default
   =~/common-lisp/shiso/=). This is where the binary reads its skeleton
-  templates from at runtime, and it's also discoverable by ASDF for REPL
-  use.
+  templates from at runtime, and it's also discoverable by ASDF for
+  REPL use.
 
-The original clone is disposable after =make install= — every file the
-installed system needs has been copied to its permanent location. Re-running
-=make install= from any Shiso checkout overwrites the installed copy, which
-is how you propagate local template customizations system-wide.
+The original clone is disposable after =make install=. Re-running
+=make install= from any Shiso checkout overwrites the installed
+copy, which is how you propagate local template customizations
+system-wide.
 
 ** Uninstalling
 
@@ -53,105 +107,29 @@ Example: =make install PREFIX=/usr/local ASDF_DIR=/opt=
 
 * Using the scaffolder
 
-The =shiso= binary has two verbs.
+The =shiso= binary has two commands. Detailed coverage of both
+(plus the layout of the trees they stamp) lives in
+[[file:docs/tutorial/01-getting-started.org][docs/tutorial/01-getting-started]].
 
-** Create a new application
+** =shiso new-application <name>=
 
-#+begin_src bash
-shiso new-application my-app
-cd my-app
-vend get          # fetch dependencies (including Shiso itself) into vendored/
-make              # build the my-app binary
-./my-app          # start the server on http://127.0.0.1:5000
-#+end_src
+Scaffold a fresh project in =./<name>/= — =.asd=, =Makefile=,
+=src/main.lisp=, =src/routes.lisp=, etc.
 
-The generated tree:
+** =shiso new-module <name>=
 
-#+begin_example
-my-app/
-├── .gitignore
-├── Makefile
-├── build.lisp
-├── my-app.asd
-└── src/
-    ├── main.lisp        # entry point: starts the server
-    ├── package.lisp     # defines the my-app package
-    └── routes.lisp      # one inline "home" module returning "Hello from my-app!"
-#+end_example
+Scaffold a module under =src/modules/<name>/= in the current
+project. The scaffolder prints the manual wiring lines you need
+(adding =:<name>= to =:depends-on= and the mount to your
+application's =define-application=) but deliberately does not edit
+those files for you.
 
-The =.asd= file is also vend's dependency manifest — adding a system to
-=:depends-on= and re-running =vend get= is all that's needed to pull new
-libraries.
+* Customising the scaffolder templates
 
-** Create a new module
-
-From inside an application directory:
-
-#+begin_src bash
-shiso new-module blog
-#+end_src
-
-This stamps a module into =src/modules/blog/= with the conventional Shiso
-layout:
-
-#+begin_example
-src/modules/blog/
-├── blog.asd
-├── blog.lisp
-├── controllers.lisp
-├── forms.lisp
-├── hypermedia/
-│   └── components.lisp
-├── models.lisp
-└── routes.lisp
-#+end_example
-
-After scaffolding, the scaffolder prints the lines you need to wire the
-module into your application — it deliberately does *not* edit your =.asd=
-file itself. Add the module to =:depends-on=:
-
-#+begin_src lisp
-:depends-on (:shiso
-             :blog)
-#+end_src
-
-…and mount it in =src/routes.lisp=:
-
-#+begin_src lisp
-(s:define-application application ()
-  (:modules
-   ("/blog" blog)
-   ("" home)))
-#+end_src
-
-Then rebuild with =make=.
-
-* Customizing the templates
-
-Templates live in two places under the Shiso source tree:
-
-- =skeleton/app/= — used by =shiso new-application=
-- =skeleton/module/= — used by =shiso new-module=
-
-The scaffolder reads them from =$SHISO_HOME/skeleton/= (if set) or
-=$HOME/common-lisp/shiso/skeleton/= (the install location). Substitution
-syntax is the cl-emb =@var= directive — =<% @var name %>= — and the
-name passed on the command line is dropped into both file paths and file
-contents.
-
-To make a customization stick system-wide, edit the templates in any Shiso
-checkout (typically the one vended into an application at
-=vendored/shiso/=), then =cd= there and re-run =make install=. The install
-step copies that checkout — including its template customizations — into
-=~/common-lisp/shiso/=, replacing the previous copy.
-
-For one-off experiments without re-installing, point =SHISO_HOME= at a
-working copy:
-
-#+begin_src bash
-export SHISO_HOME=~/code/shiso-fork
-shiso new-application demo
-#+end_src
+The templates live under =$SHISO_HOME/skeleton/= (defaults to
+=~/common-lisp/shiso/skeleton/=). Substitution syntax is cl-emb's
+=@var= directive (e.g. =<%@var name%>=). Full instructions in the
+[[file:docs/how-to/customize-the-scaffolder-templates.org][how-to guide]].
 
 * License
 

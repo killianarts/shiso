@@ -1,0 +1,121 @@
+#+TITLE: How to serve static files
+#+OPTIONS: toc:2 num:nil
+
+Shiso ships a static-file middleware that handles =/static/*= without
+configuration. There are two layouts: per-module in development, a
+single tree after =collectstatic= in production.
+
+* Layouts
+
+** Development — per-module =static/= directories
+
+#+begin_example
+myapp/
+└── src/modules/
+    └── blog/
+        ├── blog.asd
+        ├── controllers.lisp
+        ├── routes.lisp
+        └── static/
+            ├── blog.css
+            └── img/cover.jpg
+#+end_example
+
+The module's =static/= directory is detected at compile time and
+registered with the module instance. A request to
+=/static/blog/blog.css= is served from there.
+
+** Production — one =static/= dir at the project root
+
+#+begin_example
+myapp/
+├── static/
+│   ├── blog/
+│   │   ├── blog.css
+│   │   └── img/cover.jpg
+│   └── pages/
+│       └── home.css
+└── src/modules/
+    └── blog/
+        └── static/blog.css        ; still present in the source tree
+#+end_example
+
+The runtime checks the project-wide =static/= directory first, then
+falls back to module directories. After =collectstatic=, the project
+directory contains everything; you can ship a tarball with just it
+and =static/= will satisfy every request.
+
+* Build URLs with =shiso:static=
+
+#+begin_src lisp
+(shiso:static "blog/cover.jpg")
+;; => "/static/blog/cover.jpg"
+#+end_src
+
+This is the analog of Django's =\{% static %\}= tag. Use it in your
+controllers/components instead of hard-coding =/static/=, so a
+future deployment that mounts assets under a CDN domain only needs
+one change.
+
+For an absolute URL (full =https://host/static/…=) use:
+
+#+begin_src lisp
+(shiso:absolute-url (shiso:static "blog/cover.jpg"))
+;; => "https://blog.example.com/static/blog/cover.jpg"
+#+end_src
+
+* Running =collectstatic=
+
+From a REPL with your app loaded:
+
+#+begin_src lisp
+(shiso:collectstatic)
+;; static files are copied to ./static/
+#+end_src
+
+The default target is =./static/= under the current working
+directory. Override:
+
+#+begin_src lisp
+(shiso:collectstatic :target #P"/var/www/myapp/static/")
+#+end_src
+
+The function walks every registered module, copies the contents of
+each module's =static/= directory into =<target>/<module-name>/=,
+and prints one line per module copied.
+
+Run =collectstatic= as part of your deploy script — after building
+the binary and before booting it.
+
+* MIME types and caching
+
+The handler uses Lack's =lack-app-file= internally, which picks
+content types from filename extensions. Cache headers come from
+Lack's defaults; if you need long-cache headers for fingerprinted
+assets you'll currently have to front the app with a CDN or
+reverse-proxy and set headers there. There's no built-in
+fingerprinting yet — open an issue if you need it.
+
+* Sample structure for a project static dir
+
+#+begin_example
+static/
+├── pages/
+│   └── home.css
+├── blog/
+│   ├── blog.css
+│   └── img/cover.jpg
+└── shared/
+    ├── reset.css
+    └── fonts/Inter.woff2
+#+end_example
+
+The =shared/= directory there is a /project-wide/ folder (not
+associated with any module). The static handler serves
+=/static/shared/reset.css= directly because the file exists in the
+project-wide tree.
+
+* See also
+
+- [[file:mount-a-module-under-a-prefix.org][How to mount a module under a URL prefix]]
+- [[file:../reference/utils.org][Reference: utils — =static=, =absolute-url=]]

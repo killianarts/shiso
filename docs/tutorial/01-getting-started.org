@@ -1,0 +1,228 @@
+#+TITLE: 1. Getting started with Shiso
+#+OPTIONS: toc:2 num:nil
+
+This tutorial gets a fresh Shiso application running on
+=http://127.0.0.1:5000= in about ten minutes. By the end you'll have:
+
+- The =shiso= scaffolder installed system-wide.
+- A new project tree on disk.
+- A running web server.
+- A "Hello, world" page in your browser.
+
+If something doesn't behave the way this page describes, that's a
+documentation bug — please open an issue.
+
+* Prerequisites
+
+You need three things on your =PATH=:
+
+- [[http://www.sbcl.org/][SBCL]] 2.x or later.
+- [[https://github.com/fosskers/vend][vend]] — the vendoring tool Shiso projects use to manage their
+  dependency tree.
+- GNU =make=.
+
+You don't need Quicklisp. You don't need ASDF preconfigured. Shiso
+ships every dependency it uses, and =vend= pulls them into each
+project's =vendored/= directory.
+
+* Step 1 — Install Shiso
+
+Clone the framework and install it:
+
+#+begin_src bash
+git clone <shiso-repo-url> shiso
+cd shiso
+make
+make install
+#+end_src
+
+=make install= copies two things into place:
+
+- =~/.local/bin/shiso= — the scaffolder binary.
+- =~/common-lisp/shiso/= — the source tree (also where the binary
+  reads its skeleton templates from).
+
+Make sure =~/.local/bin= is on your =PATH=, then verify:
+
+#+begin_src bash
+shiso
+#+end_src
+
+You should see a usage message listing =new-application= and
+=new-module=.
+
+* Step 2 — Scaffold a new application
+
+Pick a name. The tutorial uses =hello=, but any kebab-case identifier
+works.
+
+#+begin_src bash
+cd ~/projects        # wherever you keep code
+shiso new-application hello
+cd hello
+#+end_src
+
+The scaffolder leaves you with a tree like:
+
+#+begin_example
+hello/
+├── .gitignore
+├── Makefile
+├── build.lisp
+├── hello.asd
+└── src/
+    ├── main.lisp
+    ├── package.lisp
+    └── routes.lisp
+#+end_example
+
+* Step 3 — Pull dependencies and build
+
+#+begin_src bash
+vend get
+make
+#+end_src
+
+=vend get= reads =hello.asd= to discover the dependency closure
+(including Shiso itself) and clones each one into =vendored/=. =make=
+then compiles the project into a single =./hello= binary using SBCL's
+=asdf:make= and the =build.lisp= bootstrap.
+
+The first build takes a minute or two — Shiso is statically linking
+the whole web stack. Subsequent rebuilds (after editing source) are
+much faster.
+
+* Step 4 — Run it
+
+#+begin_src bash
+./hello
+#+end_src
+
+You won't see startup output (the entry-point starts the server and
+sleeps), but the server is listening. Open a second terminal and:
+
+#+begin_src bash
+curl http://127.0.0.1:5000/
+#+end_src
+
+You should get:
+
+#+begin_example
+Hello from hello!
+#+end_example
+
+Stop the server with =Ctrl-C= in the first terminal.
+
+* Step 5 — Read what just happened
+
+Open =src/routes.lisp=:
+
+#+begin_src lisp
+(defpackage #:hello/routes
+  (:use #:cl)
+  (:local-nicknames (#:s #:shiso))
+  (:export #:application))
+(in-package #:hello/routes)
+
+(defun home ()
+  (s:http-response "Hello from hello!"))
+
+(s:define-module home
+  (:urls (:GET "/" #'home "index")))
+
+(s:define-application application ()
+  (:modules
+   ("" home)))
+#+end_src
+
+Three things to notice:
+
+** A controller is just a function
+
+=home= takes no arguments and returns a value built by
+=shiso:http-response=. That return value is a Lack response — a list
+of =(status headers body)=. Controllers that take URL parameters
+declare them as positional arguments: =(defun show (id) …)= matches a
+route like =(:GET "/:id" 'show "show")=.
+
+** A module groups routes
+
+=define-module= registers a named bundle of routes
+(=METHOD PATH CONTROLLER NAME=). Each route gets a /namespaced/
+identifier: the =index= route above can be referenced anywhere as
+=hello:index= via [[file:../reference/routing.org][=shiso:url=]].
+
+The module here is /unmounted/ — paths are stored as-is on the
+module's own mapper, with no prefix. The prefix gets attached at
+mount time.
+
+** An application mounts modules
+
+=define-application= produces a Lack-builder pipeline. Each entry in
+=:modules= is =("PREFIX" MODULE-NAME)=. =""= means mount at the root;
+="/blog"= would mount under =/blog/=.
+
+There's a global 404 fallback at the end of the pipeline, so a path
+that doesn't match any mounted module just returns =Not found=.
+
+* Step 6 — Make a change
+
+Edit =src/routes.lisp= and change the response:
+
+#+begin_src lisp
+(defun home ()
+  (s:http-response "Hello, Lisp!"))
+#+end_src
+
+There are two ways to see your change:
+
+- *Compiled mode*: rebuild and restart — =make && ./hello=. Slow but
+  matches production.
+- *REPL mode*: load Shiso and the project from SLY/SLIME, evaluate
+  =(hello:start)=, edit-eval-test, =(hello:stop)= when done. See
+  [[file:../how-to/run-from-a-repl.org][how-to: run from a REPL]] for the dev setup.
+
+* Where to go next
+
+You now have a running app. From here you'd typically:
+
+- [[file:02-polls-part-1.org][Build the polls tutorial app]] to learn modules, models, the admin,
+  and the request lifecycle.
+- [[file:05-todo-app.org][Walk through the TODO example]] for a smaller, single-resource
+  CRUD pattern.
+- [[file:06-authentication.org][Add authentication]] to gate parts of your app.
+
+If you'd rather skim the API surface, the [[file:../reference/][reference section]] indexes
+every exported symbol.
+
+* Troubleshooting
+
+** =shiso: command not found= after =make install=
+
+=~/.local/bin= is not on your =PATH=. Add =export
+PATH="$HOME/.local/bin:$PATH"= to your shell's rc file, or install to
+=/usr/local/bin= with =make install PREFIX=/usr/local=.
+
+** =Cannot find application template at …=
+
+The =shiso= binary couldn't find the skeleton templates. They live
+under =~/common-lisp/shiso/skeleton/= after =make install=. Run
+=make install= again from the framework checkout, or point
+=SHISO_HOME= at a working tree:
+
+#+begin_src bash
+export SHISO_HOME=~/code/shiso
+#+end_src
+
+** =vend get= fails for a specific dependency
+
+Re-run it — =vend= is mostly idempotent and will retry the offending
+clone. Persistent failures usually mean network or auth; the
+dependency closure is small (≈20 systems) so the failing entry is
+visible in the output.
+
+** =./hello= prints nothing and exits
+
+The =main= entry-point uses =(loop (sleep 60))= to stay alive. If
+your shell exits immediately, an earlier startup error probably ran
+=(uiop:quit 1)=. Run with stderr visible: =./hello 2>&1=.

@@ -1,0 +1,102 @@
+#+TITLE: How to run a Shiso app from a REPL
+#+OPTIONS: toc:2 num:nil
+
+The "edit-rebuild-restart" loop with =make && ./myapp= is fine for
+production smoke tests but slow for development. A persistent REPL
+turns it into edit-eval-test.
+
+* From SLIME or SLY
+
+In Emacs:
+
+#+begin_src lisp
+;; Open M-x slime  (or sly)
+(asdf:load-system :myapp)
+(myapp:start)              ; boots database + server
+;; Edit src/modules/myapp/controllers.lisp
+;; C-c C-c on the changed defun re-installs it
+;; Reload the page in your browser — the new code is live
+(myapp:stop)
+#+end_src
+
+=myapp:start= /must/ set up the database (Mito connection + table
+ensures) before calling =shiso:start=. The scaffolded =main.lisp=
+puts that wiring in =start=, so just calling =start= is enough.
+
+* From the cl-mcp REPL or any other bare REPL
+
+Same idea, but without an editor integration:
+
+#+begin_src lisp
+(asdf:load-system :myapp)
+(myapp:start)
+;; Edit a file on disk
+(load "src/modules/myapp/controllers.lisp")    ; or asdf:load-system :myapp/module :force t
+;; Reload the page
+(myapp:stop)
+#+end_src
+
+For an entire module's worth of edits, force a recompile of the
+module system rather than =load=-ing files one at a time:
+
+#+begin_src lisp
+(asdf:load-system :polls/module :force t)
+#+end_src
+
+The =:force t= flag tells ASDF to recompile and reload even if its
+timestamp tracking says nothing changed (which it sometimes doesn't,
+especially across editor saves and ASDF cache).
+
+* Pitfalls
+
+** Class redefinition
+
+Editing a =define-model= form and reloading does /not/ migrate the
+database schema. Old rows have the old schema; new rows have the
+new one. For a true rebuild, restart the server, delete the SQLite
+file (or use =:memory:=), and re-run =setup-database=.
+
+** Stale FASLs
+
+If you've installed Shiso system-wide and then edit it in a
+working tree, ASDF will still resolve to the installed version
+unless you explicitly point its source registry at the working
+copy:
+
+#+begin_src lisp
+(asdf:initialize-source-registry
+  '(:source-registry
+    (:directory "/Users/you/code/shiso/")
+    :inherit-configuration))
+(asdf:load-system :shiso :force t)
+#+end_src
+
+After that, =asdf:system-source-file= reflects the working tree:
+
+#+begin_src lisp
+(asdf:system-source-file (asdf:find-system :shiso))
+;; => #P"/Users/you/code/shiso/shiso.asd"
+#+end_src
+
+** The Lack/Woo debugger hangs the worker
+
+When you call =(shiso:start app :debugp t)= and a request errors,
+Woo invokes the debugger on the worker thread. With SLIME attached
+this is great — you get a stack-walking debugger. Without SLIME,
+the worker blocks waiting for input and the server stops
+responding. Pass =:debugp nil= in headless REPLs.
+
+** Re-evaluating =define-application=
+
+=define-application= produces a Lack-builder pipeline at expansion
+time. Re-evaluating the form replaces the application value but does
+/not/ kill the running server. To pick up a new mount list you have
+to =(myapp:stop)= and =(myapp:start)= around the edit.
+
+Re-evaluating =define-module=, on the other hand, takes effect
+immediately — the registry is consulted at dispatch time.
+
+* See also
+
+- [[file:../tutorial/01-getting-started.org][Tutorial: getting started]]
+- [[file:deploy.org][How to deploy]] — the opposite end of the workflow

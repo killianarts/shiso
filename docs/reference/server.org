@@ -1,0 +1,120 @@
+#+TITLE: Reference: server
+#+OPTIONS: toc:2 num:nil
+
+Package: =shiso/server= (=start= and =stop= re-exported from
+=shiso=).
+
+* =start=  /macro/
+
+#+begin_src lisp
+(shiso:start APP &key (host "127.0.0.1") (port 5000) (debugp t))
+#+end_src
+
+Start a Woo server listening for =APP=. =APP= is the symbol naming
+the application parameter (the thing =define-application= produced).
+
+** Parameters
+
+| Key       | Default       | Purpose                                             |
+|-----------+---------------+-----------------------------------------------------|
+| =host=    | ="127.0.0.1"= | Bind address                                        |
+| =port=    | =5000=        | Bind port                                           |
+| =debugp=  | =T=           | Forwarded to Woo as =:debug=. /Leave nil for prod./ |
+
+** Side effects
+
+- Installs the session + CSRF middleware stack (see =wrap-app=).
+- Calls =clack:clackup= with =:server :woo=.
+- Stores the connection handle in =*server-connection*=.
+
+** Errors
+
+If a server is already running, =start= signals an error with a
+=restart-server= restart that stops the running server and starts
+again. Useful at the REPL.
+
+** =debugp= trap
+
+With =debugp=T= (the default), Woo invokes the SBCL debugger on
+unhandled controller errors. With SLIME/SLY attached this is fine.
+Without an attached debugger the worker thread blocks waiting for
+input and the server appears to hang. Always pass =:debugp nil= in
+headless contexts.
+
+* =stop=  /function/
+
+#+begin_src lisp
+(shiso:stop) => Woo-shutdown-result
+#+end_src
+
+Stop the running server (referenced via =*server-connection*=) and
+nil out the connection. Returns whatever =clack:stop= returns.
+
+Calling =stop= when no server is running is fine — =*server-connection*=
+is =NIL=, =clack:stop= no-ops.
+
+* =*server-connection*=  /parameter/
+
+The current Clack server handle, or =NIL=. Set by =start=, cleared
+by =stop=. Reading this directly is fine; mutating it from outside
+=start=/=stop= is asking for trouble.
+
+* =wrap-app=  /function/
+
+#+begin_src lisp
+(shiso/server:wrap-app INNER-APP) => wrapped-app
+#+end_src
+
+Wrap =INNER-APP= with Shiso's standard middleware stack:
+
+#+begin_example
+session middleware (DBI-backed via Mito's connection)
+  └─ CSRF middleware
+       └─ INNER-APP
+#+end_example
+
+The session middleware must precede CSRF so the CSRF layer can
+read the session from the env. Both are invoked through
+=lack/middleware/session:*lack-middleware-session*= and
+=lack/middleware/csrf:*lack-middleware-csrf*= — the standard Lack
+parameters, exposed for monkey-patching.
+
+The session store is built by =shiso/auth/session:make-store= and
+shares Mito's current DBI connection. That means =mito:connect-toplevel=
+must run before =wrap-app= — which it does, because =start= calls
+=wrap-app= but you have already called =mito:connect-toplevel= in
+your =setup-database=.
+
+* The middleware stack — what each layer does
+
+** Static-files middleware (installed by =define-application=)
+
+Serves =/static/*= from the project-wide =static/= directory plus
+every registered module's =static/= directory. See
+[[../how-to/serve-static-files.org][how-to: serve static files]].
+
+** Trailing-slash normaliser (installed by =define-application=)
+
+Issues a 301 redirect from =/foo/= to =/foo= for any path longer
+than =/= ending in =/=.
+
+** Module mounts (installed by =define-application=)
+
+One wrapper per mounted module. See [[file:routing.org][reference: routing]].
+
+** Session middleware (installed by =wrap-app=)
+
+Lack's =lack/middleware/session/store/dbi= store. Sessions are
+written to the =shiso_session= table; the cookie name is
+=lack.session= by default.
+
+** CSRF middleware (installed by =wrap-app=)
+
+Lack's =lack/middleware/csrf=. Rejects POST/PUT/DELETE/PATCH
+requests that don't include a valid =_csrf_token= (in body or
+=X-CSRF-Token= header). Safe methods (GET/HEAD/OPTIONS) bypass.
+
+* See also
+
+- [[file:auth.org][Reference: auth]] — session store factory, CSRF token API.
+- [[../explanation/request-lifecycle.org][Explanation: the request lifecycle]]

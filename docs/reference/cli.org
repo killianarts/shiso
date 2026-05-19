@@ -1,0 +1,84 @@
+#+TITLE: Reference: cli
+#+OPTIONS: toc:2 num:nil
+
+The =shiso= binary is built from the =shiso= system itself
+(=:build-pathname "shiso"=, =:entry-point "shiso/cli:main"=). After
+=make install= it lives at =$(PREFIX)/bin/shiso= (default
+=~/.local/bin/shiso=).
+
+* Commands
+
+#+begin_src bash
+shiso new-application <name>
+shiso new-module <name>
+#+end_src
+
+** =new-application <name>=
+
+Stamps =skeleton/app/= into =./<name>/=. Refuses to overwrite an
+existing directory. Substitutes =<%@var name%>= with =<name>=. Prints
+next-step instructions.
+
+#+begin_example
+shiso new-application hello
+# Creates ./hello/, then prints:
+#   cd hello
+#   vend get
+#   make
+#   ./hello
+#+end_example
+
+** =new-module <name>=
+
+Stamps =skeleton/module/= into =./src/modules/<name>/=. Refuses to
+overwrite. Prints the manual wiring lines you need to add to your
+app's =.asd= and =src/routes.lisp= (the scaffolder deliberately
+doesn't edit those for you).
+
+* =SHISO_HOME= environment variable
+
+Tells the binary where to find the skeleton templates. Defaults to
+=~/common-lisp/shiso/= — the install location. Set it to a working
+checkout when iterating on the templates:
+
+#+begin_src bash
+export SHISO_HOME=~/code/shiso
+shiso new-application demo
+#+end_src
+
+See [[../how-to/customize-the-scaffolder-templates.org][how-to: customize the scaffolder templates]].
+
+* Template substitution
+
+The renderer is in =src/cli/render.lisp=. The substitution syntax is
+cl-emb's =@var= directive:
+
+#+begin_example
+<% @var name %>
+<%@var name%>
+<%@var KEY%>
+#+end_example
+
+…all match. Both file paths and file contents go through the same
+substitution.
+
+The bindings alist is built in =src/cli/commands.lisp= and currently
+contains only =("name" . "<the-cli-arg>")=. Add more by editing
+=commands.lisp= and =main.lisp= to parse extra positional/flag
+arguments.
+
+* Exit codes
+
+| Code | Meaning                                                  |
+|------+----------------------------------------------------------|
+| 0    | Success                                                  |
+| 1    | Missing argument, unknown command, or target already exists |
+
+The binary doesn't log to a file; everything goes to stdout/stderr.
+
+* See also
+
+- [[../how-to/customize-the-scaffolder-templates.org][How-to: customize the scaffolder templates]]
+- =src/cli/main.lisp= — argv parsing
+- =src/cli/commands.lisp= — bindings + driver
+- =src/cli/render.lisp= — the cl-emb-style substituter

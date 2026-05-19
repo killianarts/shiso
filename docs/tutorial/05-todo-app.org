@@ -1,0 +1,388 @@
+#+TITLE: 5. Build a TODO app from scratch
+#+OPTIONS: toc:2 num:nil
+
+This is a shorter, lower-ceremony tutorial than the polls walkthrough.
+You'll build a single-resource CRUD app — Todo items with =title= and
+=done=, an /add/ form, toggle-by-checkbox, and delete buttons. About
+half the time of the polls tutorial.
+
+The finished app lives at =examples/todo/= in the repo:
+
+#+begin_src bash
+cd examples/todo
+vend get
+make
+./todo
+#+end_src
+
+* Step 1 — Scaffold
+
+#+begin_src bash
+shiso new-application todo
+cd todo
+shiso new-module todos
+#+end_src
+
+Two names: the application is =todo= (singular, matches the
+binary), the module is =todos= (plural, matches the resource).
+Different ASDF system names, no clash.
+
+* Step 2 — Wire the module in
+
+Edit =todo.asd= and add =:todos= to =:depends-on=:
+
+#+begin_src lisp
+(defsystem "todo"
+  :description "todo — a minimal Shiso example app"
+  :version "0.1"
+  :depends-on (:shiso
+               :todos)
+  :build-operation "program-op"
+  :build-pathname "todo"
+  :entry-point "todo:main"
+  :components ((:module "src"
+                :serial t
+                :components ((:file "package")
+                             (:file "routes")
+                             (:file "main")))))
+#+end_src
+
+Mount it in =src/routes.lisp=:
+
+#+begin_src lisp
+(defpackage #:todo/routes
+  (:use #:cl)
+  (:local-nicknames (#:s #:shiso))
+  (:export #:application))
+
+(in-package #:todo/routes)
+
+(s:define-application application ()
+  (:modules
+   ("/admin" shiso-admin)
+   (""       shiso-auth)
+   (""       todos)))
+#+end_src
+
+The =todos= module is mounted at the root — its =/= route handles
+the home page, and the rest of its routes (=/:id/toggle=,
+=/:id/delete=) hang off paths the auth module doesn't claim.
+
+* Step 3 — The model
+
+=src/modules/todos/models.lisp=:
+
+#+begin_src lisp
+(defpackage #:todos/models
+  (:use #:cl)
+  (:export
+   #:title #:done
+   #:all-todos #:find-todo #:create-todo
+   #:toggle-todo #:delete-todo))
+
+(in-package #:todos/models)
+
+(shiso:define-model todo
+    ((title :field-type :char
+            :max-length 200
+            :verbose-name "Title"
+            :help-text "What needs doing."
+            :accessor title)
+     (done :field-type :boolean
+           :default nil
+           :verbose-name "Done?"
+           :accessor done)))
+
+(shiso/admin:define-admin todo
+  (:list-display title done))
+
+(defun all-todos ()
+  "All todos, newest first."
+  (mito:select-dao (shiso/models:model-class 'todo)
+    (sxql:order-by (:desc :id))))
+
+(defun find-todo (id)
+  (when id
+    (mito:find-dao (shiso/models:model-class 'todo) :id id)))
+
+(defun create-todo (title-string)
+  (mito:create-dao (shiso/models:model-class 'todo)
+                   :title title-string
+                   :done nil))
+
+(defun toggle-todo (todo)
+  (setf (done todo) (not (done todo)))
+  (mito:save-dao todo))
+
+(defun delete-todo (todo)
+  (mito:delete-dao todo))
+#+end_src
+
+One model, two slots, accessor-style. The =shiso/admin:define-admin=
+call hooks the model into the bundled admin (the auto-CRUD UI at
+=/admin/todo/=).
+
+* Step 4 — The page renderer
+
+=src/modules/todos/hypermedia/components.lisp=:
+
+#+begin_src lisp
+(defpackage #:todos/hypermedia
+  (:use #:cl)
+  (:local-nicknames (#:ah #:almighty-html))
+  (:export #:page))
+
+(in-package #:todos/hypermedia)
+
+(defparameter *style* "
+body { font-family: system-ui, sans-serif; max-width: 560px;
+       margin: 2rem auto; padding: 0 1rem; }
+h1 { margin-bottom: 1rem; }
+form.add { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+form.add input[type=text] { flex: 1; padding: 0.5rem; }
+ul.todos { list-style: none; padding: 0; }
+ul.todos li { display: flex; align-items: center; gap: 0.5rem;
+              padding: 0.4rem 0; border-bottom: 1px solid #eee; }
+ul.todos li.done .title { text-decoration: line-through; color: #888; }
+ul.todos form { display: inline; }
+ul.todos button.delete { margin-left: auto; }
+.session { margin-top: 2rem; color: #555; font-size: 0.9rem; }
+.session a, .session form { display: inline; }
+")
+
+(defun page (page-title body)
+  (ah:render-to-string
+   (ah:</>
+    (html :lang "en"
+      (head
+        (meta :charset "utf-8")
+        (meta :name "viewport" :content "width=device-width, initial-scale=1")
+        (title page-title)
+        (style *style*))
+      (body body)))))
+#+end_src
+
+* Step 5 — The controllers
+
+=src/modules/todos/controllers.lisp=:
+
+#+begin_src lisp
+(defpackage #:todos/controllers
+  (:use #:cl)
+  (:local-nicknames (#:s #:shiso)
+                    (#:ah #:almighty-html)
+                    (#:models #:todos/models)
+                    (#:hy #:todos/hypermedia))
+  (:export #:index #:create #:toggle #:destroy))
+
+(in-package #:todos/controllers)
+
+(defun render (title body)
+  (s:http-response (hy:page title body)))
+
+(defun csrf-token-input ()
+  (let* ((env (lack/request:request-env s:*request*))
+         (session (getf env :lack.session))
+         (token (and session (lack/middleware/csrf:csrf-token session))))
+    (when token
+      (ah:</> (input :type "hidden" :name "_csrf_token" :value token)))))
+#+end_src
+
+** A note on the controller name =destroy=
+
+The "delete a thing" controller is named =destroy=, not =delete=,
+because =cl:delete= exists and SBCL would refuse to let you shadow
+it. The /route/ is still =/:id/delete= — only the function name
+changes.
+
+Now the page-rendering helpers:
+
+#+begin_src lisp
+(defun todo-row (todo)
+  (let* ((id-str (princ-to-string (mito:object-id todo)))
+         (donep (models:done todo))
+         (todo-title (models:title todo))
+         (li-class (if donep "done" "")))
+    (ah:</>
+     (li :class li-class
+       (form :method "POST" :action (s:url "todos:toggle" :id id-str)
+         (csrf-token-input)
+         (input :type "checkbox" :name "_"
+                :|onChange| "this.form.submit()" :checked donep))
+       (span :class "title" todo-title)
+       (form :class "delete-form" :method "POST"
+             :action (s:url "todos:delete" :id id-str)
+         (csrf-token-input)
+         (button :type "submit" :class "delete" "Delete"))))))
+
+(defun empty-state ()
+  (ah:</> (p "Nothing to do. Add a task above to get started.")))
+
+(defun todo-list (todos)
+  (ah:</>
+   (ul :class "todos"
+     (loop for todo in todos
+           collect (todo-row todo)))))
+
+(defun session-controls ()
+  (let ((u (shiso/auth:current-user)))
+    (cond
+      (u
+       (ah:</>
+        (div :class "session"
+          (span (format nil "Signed in as ~A. " (shiso/auth:user-email u)))
+          (form :method "POST" :action "/logout"
+            (csrf-token-input)
+            (button :type "submit" "Sign out")))))
+      (t
+       (ah:</>
+        (div :class "session"
+          (a :href "/login" "Sign in")
+          " or "
+          (a :href "/signup" "create an account")
+          " to keep tasks across visits."))))))
+#+end_src
+
+Note again the two =</>= rules from part 2:
+
+- =todo-title= and =donep= are bound to locals /before/ being
+  passed into =</>=. If you wrote =(span :class "title"
+  (models:title todo))= directly, the DSL would parse
+  =models:title= as the HTML =<title>= element (it matches by
+  symbol name, ignoring the package) and render the wrong markup.
+- =li-class= is computed by a plain =if= /outside/ =</>=. Branching
+  inside =</>= crashes the macro walker.
+
+Finally the route handlers:
+
+#+begin_src lisp
+(defun index ()
+  (let* ((todos (models:all-todos))
+         (list-content (cond ((null todos) (empty-state))
+                             (t (todo-list todos)))))
+    (render
+     "Todos"
+     (ah:</>
+      (div
+        (h1 "Todos")
+        (form :class "add" :method "POST" :action (s:url "todos:create")
+          (csrf-token-input)
+          (input :type "text" :name "title" :placeholder "Add a task..."
+            :required t :autofocus t)
+          (button :type "submit" "Add"))
+        list-content
+        (session-controls))))))
+
+(defun create ()
+  (let* ((body (s:parse-body-params))
+         (title (cdr (assoc :title body))))
+    (when (and title (plusp (length (string-trim '(#\Space #\Tab) title))))
+      (models:create-todo (string-trim '(#\Space #\Tab) title)))
+    (s:redirect-response (s:url "todos:index"))))
+
+(defun toggle (id-str)
+  (let* ((id (parse-integer id-str :junk-allowed t))
+         (todo (models:find-todo id)))
+    (when todo (models:toggle-todo todo))
+    (s:redirect-response (s:url "todos:index"))))
+
+(defun destroy (id-str)
+  (let* ((id (parse-integer id-str :junk-allowed t))
+         (todo (models:find-todo id)))
+    (when todo (models:delete-todo todo))
+    (s:redirect-response (s:url "todos:index"))))
+#+end_src
+
+Every state-changing handler ends with =redirect-response= back to
+the index — post-redirect-get prevents the "resubmit form?" prompt
+on refresh.
+
+* Step 6 — The routes
+
+=src/modules/todos/routes.lisp=:
+
+#+begin_src lisp
+(defpackage #:todos/routes
+  (:use #:cl)
+  (:local-nicknames (#:s #:shiso)
+                    (#:controllers #:todos/controllers)))
+
+(in-package #:todos/routes)
+
+(s:define-module todos
+  (:urls (:GET  "/"            'controllers:index  "index")
+         (:POST "/"            'controllers:create "create")
+         (:POST "/:id/toggle"  'controllers:toggle "toggle")
+         (:POST "/:id/delete"  'controllers:destroy "delete")))
+#+end_src
+
+The route /name/ for delete is ="delete"= (so =shiso:url= still
+returns =/<id>/delete=), but the controller bound to it is
+=controllers:destroy=. Decoupling the route name from the function
+name is fine — Shiso looks up the controller by symbol designator at
+request time.
+
+* Step 7 — Database wiring
+
+Same shape as the polls tutorial. =src/main.lisp=:
+
+#+begin_src lisp
+(in-package #:todo)
+
+(defun setup-database ()
+  (ensure-directories-exist #P"db/")
+  (mito:connect-toplevel :sqlite3 :database-name "db/todo.db")
+  (shiso/auth:ensure-tables)
+  (dolist (name (shiso/models:all-models))
+    (mito:ensure-table-exists (shiso/models:model-class name))))
+
+(defun start (&key (host "127.0.0.1") (port 5000))
+  (setup-database)
+  (shiso:start todo/routes:application :host host :port port))
+
+(defun stop ()
+  (shiso:stop))
+
+(defun main ()
+  (start)
+  (loop (sleep 60)))
+#+end_src
+
+And export =start=/=stop= from =src/package.lisp=.
+
+* Step 8 — Run it
+
+#+begin_src bash
+make
+./todo
+#+end_src
+
+Visit =http://127.0.0.1:5000/=:
+
+- Empty state: an /add/ form and a "Nothing to do" message.
+- Type a title, hit Enter — the redirect lands you back at the list
+  with one item.
+- Click the checkbox — the JavaScript =onChange= auto-submits the
+  toggle form, which redirects back, and the row gets the =done=
+  class (line-through).
+- Click Delete — gone.
+
+Each form carries a hidden =_csrf_token= input. Without it the
+middleware would 400 every POST.
+
+* What you built
+
+Every state-changing route is CSRF-protected. The model is
+auto-registered with the admin, so =GET /admin/todo/= gives you the
+generic list/edit/delete UI for the same table. Total Lisp written:
+~80 lines.
+
+* Where to next
+
+- *Gate it.* Add =(:guard (:require :login))= to the module
+  definition to require sign-in.
+- *Filter by user.* Add an =owner-id= column and scope
+  =all-todos= to the current user. See [[file:../how-to/define-a-model.org][how-to: define a model]]
+  for relationship patterns.
+- *Read the polls tutorial.* It covers admin customisation, named
+  URL helpers, and testing in more depth.

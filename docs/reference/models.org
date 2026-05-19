@@ -1,0 +1,219 @@
+#+TITLE: Reference: models
+#+OPTIONS: toc:2 num:nil
+
+Package: =shiso/models= (re-exported from =shiso= for =define-model=).
+
+* =define-model=  /macro/
+
+#+begin_src lisp
+(shiso:define-model NAME SLOTS &body OPTIONS)
+#+end_src
+
+Define a Mito-backed model class and register it in
+=*model-registry*=.
+
+** Slot definitions
+
+Each entry in =SLOTS= is =(SLOT-NAME &rest OPTIONS)=. Options are
+split into two groups when the macro expands:
+
+- *Shiso keys* (extracted into the registry, stripped from
+  =mito:deftable=): =:verbose-name=, =:help-text=, =:validators=,
+  =:choices=, =:blankp=, =:editablep=, =:widget=, =:field-type=.
+- *Mito/CLOS keys* (passed through to =deftable=): =:col-type=,
+  =:initform=, =:initarg=, =:accessor=, =:reader=, =:writer=,
+  =:inflate=, =:deflate=, =:references=, =:ghost=, =:documentation=,
+  =:allocation=, =:type=.
+
+=:default= is an alias for =:initform=.
+
+** Options
+
+=OPTIONS= follows the slot list:
+
+| Option                  | Meaning                                          |
+|-------------------------+--------------------------------------------------|
+| =(:module MODULE-NAME)= | Associate the model with a routing module (planned) |
+| =(:table-name STRING)=  | Override the Mito table name                     |
+
+Both options are currently inert pass-through — declared but
+unused by the framework. =(:table-name …)= specifically is a no-op
+in the current expansion; use Mito's =:table-name= class option
+directly if you need it.
+
+** Class registration
+
+The expansion produces:
+
+#+begin_src lisp
+(progn
+  (mito:deftable REGISTRY-PACKAGE::NAME () (mito-slots))
+  (shiso/models/registry:register-model
+     'REGISTRY-PACKAGE::NAME (find-class 'REGISTRY-PACKAGE::NAME)
+     (list slot-metadata …))
+  'REGISTRY-PACKAGE::NAME)
+#+end_src
+
+where =REGISTRY-PACKAGE= is =shiso/models/registry=.
+
+Two important consequences:
+
+- The class name lives in =shiso/models/registry=, not in your
+  package. From your package, =shiso/models/registry::NAME= is the
+  class symbol; the bare =NAME= you wrote is a /different/ symbol.
+- Slot symbols stay in your package. Accessors you declare are
+  interned in your package too. Other packages reaching for slots
+  via =slot-value= must use the qualified slot symbol or rely on
+  accessors.
+
+See [[../explanation/model-metadata.org][explanation: model metadata]] for the full path.
+
+* Field types
+
+Registered via =define-field-type=. The built-ins:
+
+| Keyword     | Mito col-type    | Defaults                                              |
+|-------------+------------------+-------------------------------------------------------|
+| =:char=     | =(:varchar N)=   | =:initarg :NAME=, =max-length= validator              |
+| =:text=     | =:text=          | =:initarg :NAME=, =:widget :textarea=                 |
+| =:integer=  | =:integer=       | =:initarg :NAME=                                      |
+| =:boolean=  | =:boolean=       | =:initarg :NAME=, =:widget :checkbox=                 |
+| =:choice=   | =(:varchar 50)=  | =:initarg :NAME=                                      |
+| =:email=    | =(:varchar 254)= | =:initarg :NAME=, =valid-email= validator, =:widget :email= |
+| =:slug=     | =(:varchar 200)= | =:initarg :NAME=, =matches-pattern "^[a-z0-9-]+$"=    |
+| =:url=      | =(:varchar 2000)= | =:initarg :NAME=, =matches-pattern "^https?://"=, =:widget :url= |
+| =:datetime= | =:timestamptz=   | =:initarg :NAME=, =:widget :datetime-local=           |
+| =:date=     | =:date=          | =:initarg :NAME=, =:widget :date=                     |
+| =:decimal=  | =(:numeric P S)= | =:initarg :NAME= (requires =:precision=, =:scale=)    |
+
+User-provided slot options /win/ over the field-type defaults
+(except =:validators=, where the defaults are /prepended/ to your
+list so both run).
+
+* =define-field-type=  /macro/
+
+#+begin_src lisp
+(shiso/models:define-field-type NAME (SLOT-NAME &key …PARAMS) &body BODY)
+#+end_src
+
+Register a field-type expander. =BODY= must return a plist of
+default slot options.
+
+#+begin_src lisp
+(shiso/models:define-field-type :phone (name &key region)
+  (list :col-type '(:varchar 32)
+        :initarg (intern (symbol-name name) :keyword)
+        :validators `((my-validators:phone ,region))))
+#+end_src
+
+Then in a model: =(mobile :field-type :phone :region :us)=.
+
+* =expand-field-type=  /function/
+
+#+begin_src lisp
+(shiso/models:expand-field-type SLOT-DEF) => expanded-slot-def
+#+end_src
+
+Apply the field-type expansion to a single slot definition. Used by
+=define-model= internally; available for tooling.
+
+* =*field-types*=  /parameter/
+
+Hash table from field-type keyword to =(EXPANDER . CONSUMED-KEYS)=.
+Inspectable for debugging.
+
+* Model registry
+
+** =*model-registry*=  /parameter/
+
+Hash table from registry symbol → =model-metadata=. Inspectable:
+
+#+begin_src lisp
+(hash-table-count shiso/models:*model-registry*)
+;; => 2
+#+end_src
+
+** =register-model=  /function/
+
+#+begin_src lisp
+(shiso/models:register-model NAME CLASS FIELDS)
+#+end_src
+
+Mostly internal — called by =define-model='s expansion.
+
+** =get-model-name=  /function/
+
+#+begin_src lisp
+(shiso/models:get-model-name NAME-STRING-OR-SYMBOL) => registry-symbol-or-nil
+#+end_src
+
+Resolve a name to its canonical registry symbol. Used by the admin
+for URL-to-class lookups.
+
+* Introspection
+
+All five accept a symbol from any package or a string.
+
+** =all-models=
+
+#+begin_src lisp
+(shiso/models:all-models) => (registry-symbol …)
+#+end_src
+
+** =model-class=
+
+#+begin_src lisp
+(shiso/models:model-class NAME) => class-object-or-nil
+#+end_src
+
+The CLOS/Mito class. Pass this to =mito:select-dao=,
+=mito:find-dao=, =mito:ensure-table-exists=, etc.
+
+** =model-fields=
+
+#+begin_src lisp
+(shiso/models:model-fields NAME) => list-of-slot-metadata
+#+end_src
+
+In declaration order. Each element is a =slot-metadata= struct.
+
+** =model-field=
+
+#+begin_src lisp
+(shiso/models:model-field NAME SLOT-NAME) => slot-metadata-or-nil
+#+end_src
+
+Lookup by slot name (string-compare on symbol name, so package-agnostic).
+
+** Field readers
+
+For a =slot-metadata=:
+
+| Reader                | Returns                                          |
+|-----------------------+--------------------------------------------------|
+| =field-name=          | The slot-name symbol                             |
+| =field-col-type=      | The =:col-type= as written                       |
+| =field-verbose-name=  | The label (auto-derived from name if not given)  |
+| =field-help-text=     | The help string or =NIL=                         |
+| =field-validators=    | List of validator designators                    |
+| =field-choices=       | The choices alist or =NIL=                       |
+| =field-blankp=        | =T= = blank allowed; =NIL= = required (default)  |
+| =field-editablep=     | =NIL= = excluded from forms                      |
+| =field-widget=        | Widget keyword override or =NIL=                 |
+
+=field-verbose-name= is the one that auto-derives. Other readers
+return =NIL= when nothing was provided.
+
+* =slot-metadata= and =model-metadata=  /structs/
+
+Both are =defstruct=. Constructors =make-slot-metadata= and
+=make-model-metadata= take keyword args matching the slot names.
+You won't typically build these by hand — =define-model= does.
+
+* See also
+
+- [[../how-to/define-a-model.org][How-to: define a model]] — the practical patterns.
+- [[../explanation/model-metadata.org][Explanation: model metadata and the registry]] — the why.
+- [[file:forms.org][Reference: forms]] — model forms consume the registry.
+- [[file:admin.org][Reference: admin]] — likewise.
+- [[file:validators.org][Reference: validators]] — what =:validators= points to.

@@ -1,0 +1,99 @@
+#+TITLE: How to render a form with a CSRF token
+#+OPTIONS: toc:2 num:nil
+
+Every POST/PUT/DELETE/PATCH request goes through Lack's CSRF
+middleware. Forms without a valid =_csrf_token= input get rejected
+with =400 Bad Request=.
+
+GET/HEAD/OPTIONS bypass the check, so plain page rendering needs no
+token.
+
+* The pattern
+
+Add this helper to your controllers package:
+
+#+begin_src lisp
+(defun csrf-token-input ()
+  "Render a hidden CSRF token input for the current request's session."
+  (let* ((env (lack/request:request-env shiso:*request*))
+         (session (getf env :lack.session))
+         (token (and session (lack/middleware/csrf:csrf-token session))))
+    (when token
+      (almighty-html:</>
+       (input :type "hidden" :name "_csrf_token" :value token)))))
+#+end_src
+
+Then inject it into every state-changing form:
+
+#+begin_src lisp
+(defun edit-form (article)
+  (almighty-html:render-to-string
+   (almighty-html:</>
+    (form :method "POST" :action "/articles/save"
+      (csrf-token-input)
+      (input :type "text" :name "title" :value (article-title article))
+      (textarea :name "body" (article-body article))
+      (button :type "submit" "Save")))))
+#+end_src
+
+* Why it works
+
+- =shiso:*request*= is bound for the duration of every controller
+  invocation. It carries the env plist as =(lack/request:request-env …)=.
+- The session middleware stores the session as a hash table under
+  =:lack.session=.
+- =lack/middleware/csrf:csrf-token= lazily mints a token on first read
+  and stores it on the session. Subsequent calls return the same
+  token.
+- The middleware's incoming check compares the form's =_csrf_token=
+  against the session's. They match by construction.
+
+* Test it
+
+The polls and TODO example apps both include working CSRF flows. To
+exercise one from curl:
+
+#+begin_src bash
+# 1) GET the form to establish a session + receive a CSRF token
+TOKEN=$(curl -s -c cookies.txt http://127.0.0.1:5000/polls/1 \
+        | grep -oE 'name="_csrf_token" value="[^"]+"' \
+        | sed -E 's/.*value="([^"]+)".*/\1/')
+
+# 2) POST with the cookie and the same token
+curl -b cookies.txt -X POST \
+     --data-urlencode "_csrf_token=$TOKEN" \
+     --data-urlencode "choice=1" \
+     http://127.0.0.1:5000/polls/1/vote
+#+end_src
+
+* AJAX submissions
+
+When you submit a form with =fetch= or =XMLHttpRequest=, include the
+token in the body or as an =X-CSRF-Token= header. The middleware
+accepts both:
+
+#+begin_src js
+fetch('/save', {
+  method: 'POST',
+  headers: {
+    'X-CSRF-Token': document.querySelector('input[name=_csrf_token]').value,
+    'Content-Type': 'application/x-www-form-urlencoded',
+  },
+  body: 'foo=bar',
+})
+#+end_src
+
+* When you don't need a token
+
+- Safe methods: =GET=, =HEAD=, =OPTIONS=. The middleware skips them.
+- API endpoints intended for non-browser clients. If you're building
+  a JSON API authenticated by bearer token, you may want to bypass
+  CSRF for that subtree. There's no one-flag-flips-it config yet;
+  the workaround is to mount the API behind its own =define-module=
+  and wrap the surrounding app with a different middleware stack.
+
+* See also
+
+- [[file:set-up-authentication.org][How to set up authentication]] — the same
+  middleware stack also handles sessions.
+- [[file:../reference/auth.org][Reference: auth]] — CSRF wiring details.

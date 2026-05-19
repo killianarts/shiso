@@ -1,0 +1,233 @@
+#+TITLE: Reference: forms
+#+OPTIONS: toc:2 num:nil
+
+Package: =shiso/forms=. Form objects bind a set of fields to a
+chunk of submitted data, validate it, and (for model forms) persist
+it.
+
+* Field classes
+
+All inherit from =form-field=.
+
+| Class             | Used for                                |
+|-------------------+-----------------------------------------|
+| =form-field=      | Base; you rarely instantiate it directly |
+| =char-field=      | =<input type=text>= with optional =max-length= |
+| =text-field=      | =<textarea>=                            |
+| =integer-field=   | =<input type=number>=                   |
+| =boolean-field=   | =<input type=checkbox>=                 |
+| =choice-field=    | =<select>= with options from =:choices= |
+| =email-field=     | =<input type=email>=                    |
+| =date-field=      | =<input type=datetime-local>=           |
+
+** Common initargs
+
+| =:name=       | symbol — used as the form field name             |
+| =:label=      | string                                           |
+| =:help-text=  | string or =NIL=                                  |
+| =:requiredp=  | =T= (default) — empty values are rejected        |
+| =:validators= | list of validator designators                    |
+| =:initial=    | initial value, shown when no submitted data      |
+| =:widget=     | optional widget keyword override                 |
+
+** Field-specific initargs
+
+| =char-field=   | =:max-length= integer or =NIL=  |
+| =choice-field= | =:choices= alist of =(KEY . LABEL)= |
+
+** Accessors
+
+For each initarg there's a same-named reader: =field-name=,
+=field-label=, =field-help-text=, =field-requiredp=,
+=field-validators=, =field-initial=, =field-widget=,
+=field-max-length=, =field-choices=.
+
+* =parse-field-value=  /generic function/
+
+#+begin_src lisp
+(parse-field-value FIELD RAW-VALUE) => parsed-value
+#+end_src
+
+Convert a raw string from the request body into the right Lisp
+type. Specialised methods:
+
+| Field            | Conversion                                          |
+|------------------+-----------------------------------------------------|
+| =form-field=     | Identity                                            |
+| =integer-field=  | =parse-integer= with =:junk-allowed t=              |
+| =boolean-field=  | =T= if present and non-empty, =NIL= otherwise (HTML checkboxes) |
+| =choice-field=   | Interns to keyword if =:choices= are keyword-keyed  |
+| =date-field=     | =local-time:parse-timestring= (with seconds appended) |
+
+* =form=  /class/
+
+The base form. Slots:
+
+| Slot           | Reader/Accessor       | Initarg         |
+|----------------+-----------------------+-----------------|
+| =fields=       | =form-fields=         | =:fields=       |
+| =data=         | =form-data=           | =:data=         |
+| =instance=     | =form-instance=       | =:instance=     |
+| =errors=       | =form-errors=         | (populated by =validate-form=) |
+| =cleaned-data= | =form-cleaned-data=   | (populated by =validate-form=) |
+
+- =fields= — a list of field instances.
+- =data= — alist of =(STRING-NAME . STRING-VALUE)= as submitted.
+- =instance= — the underlying Mito instance, for edit forms.
+- =errors= — hash table keyed by field name symbol (or =:__all__=
+  for cross-field errors) → list of error strings.
+- =cleaned-data= — hash table keyed by field name symbol → parsed
+  value.
+
+* =validate-form=  /generic function/
+
+#+begin_src lisp
+(validate-form FORM) => t-or-nil
+#+end_src
+
+Run all per-field validators (auto-derived ones plus those declared
+on the field), populate =cleaned-data= and =errors=, then call
+=clean= for cross-field validation.
+
+Returns =T= if no errors landed.
+
+** Auto-validators
+
+For each field, =validate-form= runs these /in addition to/
+explicit field validators:
+
+- =not-blank= if =requiredp= and =not-blank= isn't already listed.
+- =one-of= for =choice-field=, restricted to its declared keys.
+- =max-length= for =char-field= with a non-nil =max-length=.
+
+The auto-validators don't duplicate explicit ones — the form's
+=has-validator-p= helper de-dups by car-symbol.
+
+* =clean=  /generic function/
+
+#+begin_src lisp
+(clean FORM CLEANED-DATA) => list-of-error-strings-or-nil
+#+end_src
+
+Cross-field validation hook. Override with a defmethod on your
+form subclass. =CLEANED-DATA= is the hash table from successful
+per-field parses.
+
+The shipped =:before= behaviour is no-op. The auth signup form's
+=clean= is a working reference — see =src/auth/forms.lisp=.
+
+* =form-validp=  /function/
+
+#+begin_src lisp
+(form-validp FORM) => boolean
+#+end_src
+
+True iff =errors= is empty. Call after =validate-form=.
+
+* Model forms
+
+** =model-form=  /class/
+
+A =form= subclass with one extra slot:
+
+| Slot         | Reader/Accessor          | Initarg     |
+|--------------+--------------------------+-------------|
+| =model-name= | =model-form-model-name=  | =:model-name= |
+
+** =make-model-form=  /function/
+
+#+begin_src lisp
+(shiso/forms:make-model-form MODEL-NAME &key fields exclude instance data)
+  => model-form
+#+end_src
+
+Build a form whose fields are derived from a model's registered
+slot metadata.
+
+| Key         | Effect                                              |
+|-------------+-----------------------------------------------------|
+| =:fields=   | If non-nil, include only these slot names           |
+| =:exclude=  | Slot names to exclude                               |
+| =:instance= | Edit form: initial values come from the instance    |
+| =:data=     | Submitted data alist                                |
+
+The conversion from slot metadata to form fields:
+
+- =:varchar= columns → =char-field= with =max-length=.
+- =:text= → =text-field=.
+- =:integer= → =integer-field=.
+- =:boolean= → =boolean-field=.
+- =:timestamp= / =:timestamptz= / =:date= → =date-field=.
+- Slots with =:choices= → =choice-field= regardless of col-type.
+
+Slots with =:editablep nil= are dropped.
+
+** =save-form=  /function/
+
+#+begin_src lisp
+(shiso/forms:save-form MODEL-FORM) => persisted-dao
+#+end_src
+
+Persist a validated model form. If =form-instance= is non-nil, the
+function updates its slots from =cleaned-data= and calls
+=mito:save-dao=. Otherwise it calls =mito:create-dao= with the
+cleaned data turned into a keyword-arg plist.
+
+Don't call =save-form= on a form whose =validate-form= returned
+=NIL= — the cleaned data is incomplete.
+
+* Rendering
+
+** =render-field=  /generic function/
+
+#+begin_src lisp
+(render-field FIELD &key value errors) => almighty-html-element
+#+end_src
+
+Methods exist for =char-field=, =text-field=, =integer-field=,
+=boolean-field=, =choice-field=, =email-field=, =date-field=, plus a
+fallback method on =form-field=.
+
+The default rendering produces:
+
+#+begin_example
+<div class="form-group">
+  <label for="…">…</label>
+  <input … />
+  <p class="help-text">…</p>
+  <ul class="field-errors"><li>…</li>…</ul>
+</div>
+#+end_example
+
+The div gets =has-errors= appended to its class when there are
+errors. No external CSS is included — the admin module ships
+inline styles for these classes; your own pages need to either
+re-use those or write your own.
+
+** =render-form=  /function/
+
+#+begin_src lisp
+(render-form FORM &key (action "") (method "POST") (submit-label "Submit"))
+  => almighty-html-element
+#+end_src
+
+Render the whole form: each field via =render-field=, then a
+submit button.
+
+** CSRF is /not/ auto-included
+
+=render-form= does not emit a CSRF token. You need to either:
+
+- Wrap the rendered form with one extra hidden input — see
+  [[../how-to/render-a-form-with-csrf.org][how-to: render a form with CSRF]].
+- Render the form by hand and insert the token where you want it.
+
+The admin module's =model-instance-persist= controller demonstrates
+this in =src/admin/controllers.lisp= — it's worth reading if you
+plan to build your own form pipelines.
+
+* See also
+
+- [[file:validators.org][Reference: validators]] — what =:validators= designates.
+- [[file:models.org][Reference: models]] — where model-form metadata comes from.
+- [[../how-to/render-a-form-with-csrf.org][How-to: render a form with CSRF]].

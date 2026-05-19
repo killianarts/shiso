@@ -1,0 +1,355 @@
+#+TITLE: 6. Adding authentication
+#+OPTIONS: toc:2 num:nil
+
+This tutorial walks through using Shiso's session-based authentication
+in an app you build on top of the framework. If you just want the
+checklist, see the [[file:../how-to/set-up-authentication.org][how-to]]
+companion to this page.
+
+* What you get
+
+A unified user model (like Django's =auth.User=) backed by Mito, with:
+
+- Email + password credentials (hashed with =cl-pass= / PBKDF2-SHA256).
+- DB-backed sessions via Lack's session middleware + DBI store.
+- CSRF protection on state-changing requests (POST/PUT/DELETE/PATCH).
+- Module-level guards (gate an entire =define-module= behind login or
+  staff) and per-controller guards.
+- Built-in =/login=, =/logout=, =/signup= pages on a =shiso-auth=
+  routing module you can mount wherever you like.
+- The bundled =/admin= is gated behind =:require :staff= out of the box.
+
+* Prerequisites
+
+- Mito connected to your database before the server starts.
+- The =shiso_user= and =shiso_session= tables created (one call to
+  =shiso/auth:ensure-tables= takes care of both).
+
+* Setting up an app
+
+** Wire the auth module into your application
+
+The auth routing module is named =shiso-auth=. Mount it like any
+other module:
+
+#+begin_src lisp
+;; src/myapp/routes.lisp -- or wherever you call define-application
+
+(shiso:define-application my-app ()
+  (:modules
+    (""        my-app-pages)
+    (""        shiso-auth)        ; /login, /logout, /signup at root
+    ("/admin"  shiso-admin)))
+#+end_src
+
+The auth module's routes are =/login=, =/logout=, and =/signup=. Mount
+them at the root (most common) or under a prefix like =/auth= --
+shiso will adjust =shiso/auth:*login-url*= for you only if you set it
+explicitly, so:
+
+#+begin_src lisp
+(setf shiso/auth:*login-url* "/auth/login")        ; if you mounted at /auth
+(setf shiso/auth:*post-login-redirect* "/dashboard")
+#+end_src
+
+** Connect Mito and ensure the tables exist
+
+Do this once at application startup, /before/ =shiso:start=:
+
+#+begin_src lisp
+(mito:connect-toplevel :postgres
+                       :host "localhost"
+                       :database-name "myapp"
+                       :username "myapp")
+
+;; Creates shiso_user and shiso_session if missing.
+(shiso/auth:ensure-tables)
+
+;; Plus your own models:
+(mito:ensure-table-exists 'my-app-models:article)
+
+(shiso:start my-app :port 5000)
+#+end_src
+
+=shiso:start= now installs the session + CSRF middleware stack
+automatically; you don't need to do anything else.
+
+* Creating users
+
+** From the REPL
+
+#+begin_src lisp
+(shiso/auth:make-user "alice@example.com" "correct horse battery staple")
+
+;; Promote someone to staff so they can access /admin:
+(let ((u (shiso/auth:find-user-by-email "alice@example.com")))
+  (setf (shiso/auth:user-is-staff u) t)
+  (mito:save-dao u))
+#+end_src
+
+** Via the built-in signup page
+
+Send users to =/signup= (it's served by the auth module). The form
+validates:
+
+- Email format
+- Password length (>= 8 chars)
+- Password confirmation match
+- Email uniqueness (cross-field check at the =clean= stage)
+
+A successful signup hashes the password, creates the user, logs them
+in, and redirects to =shiso/auth:*post-login-redirect*=.
+
+* The login / logout flow
+
+** /login
+
+A =GET /login= renders the form. =POST /login= validates against the
+DB:
+
+- On success: writes =:user-id= into the session, rotates the session
+  ID to prevent fixation, stamps =last-login-at=, and redirects to
+  =?next=<url>= if present (only local paths are honoured -- absolute
+  URLs are rejected to prevent open-redirect).
+- On failure: re-renders with "Invalid email or password." against
+  =:__all__=.
+
+A CSRF token is automatically injected as a hidden =_csrf_token=
+input, so the POST passes the CSRF middleware.
+
+** /logout
+
+=POST /logout= calls =shiso/auth:logout-user= and redirects to
+=*post-login-redirect*=. GET is a no-op redirect (an attacker can't
+log a user out via a stray link).
+
+* Using the current user in your controllers
+
+#+begin_src lisp
+(defun dashboard ()
+  (let ((u (shiso/auth:current-user)))
+    (if u
+        (shiso:http-response
+         (format nil "Hello, ~A!" (shiso/auth:user-email u)))
+        (shiso:redirect-response "/login"))))
+#+end_src
+
+=shiso/auth:current-user= reads the session from the request and
+returns the user (or =NIL=). =shiso/auth:authenticatedp= is the
+boolean form.
+
+* Guarding routes -- three layers
+
+You can gate access at three levels, in increasing granularity.
+
+** Layer A: gate an entire module
+
+Add a =:guard= option to =define-module=. The guard runs /before/ any
+route in the module dispatches:
+
+#+begin_src lisp
+(shiso:define-module dashboard
+  (:guard (:require :login))
+  (:urls
+    (:GET "/"        'dashboard-index   "index")
+    (:GET "/profile" 'dashboard-profile "profile")))
+#+end_src
+
+Spec forms accepted by =:guard=:
+
+| Form                                 | Meaning                                      |
+|--------------------------------------+----------------------------------------------|
+| =(:require :login)=                  | Any authenticated user                       |
+| =(:require :staff)=                  | Authenticated + =is-staff= = T               |
+| =(:require :anonymous)=              | Only NON-authenticated users (login pages)   |
+| =(:require (:predicate FN-SYMBOL))=  | =FN= is called on the user (or NIL); truthy = allow |
+
+Failure responses:
+
+- Anonymous + needs login/staff: 302 to =*login-url*?next=<current url>=.
+- Authenticated but lacks permission: 403.
+- Authenticated user hitting =:anonymous=: 302 to
+  =*post-login-redirect*=.
+
+This is how =/admin= is wired:
+
+#+begin_src lisp
+(shiso/routing:define-module shiso-admin
+  (:guard (:require :staff))
+  (:urls ...))
+#+end_src
+
+** Layer B: per-controller decorators
+
+For a single controller, use the =login-required= or =staff-required=
+macros as the controller's tail expression:
+
+#+begin_src lisp
+(defun edit-profile (id-str)
+  (shiso/auth:login-required
+    (let ((u (shiso/auth:current-user)))
+      ;; ... render edit form for u ...
+      )))
+#+end_src
+
+The body runs only if the guard passes; otherwise the redirect/403
+flows out as the controller's return value.
+
+For wrapping already-defined controllers:
+
+#+begin_src lisp
+;; Register a guarded version of an existing function:
+(shiso:define-routes my-mod
+  (:GET "/secret" (shiso/auth:require-login #'my-secret-handler) "secret"))
+#+end_src
+
+=require-login= and =require-staff= are higher-order functions that
+return a guarded wrapper.
+
+** Layer C: custom predicate
+
+When =:login=/=:staff= isn't enough -- say, "only the owner of this
+post":
+
+#+begin_src lisp
+(defun owner-of-post-3-p (user)
+  (and user (eql (shiso/auth:user-email user) "alice@example.com")))
+
+(shiso:define-module post-edit
+  (:guard (:require (:predicate owner-of-post-3-p)))
+  (:urls ...))
+#+end_src
+
+A returned truthy value allows the request; anything else returns
+403. For request-aware predicates, call =shiso/auth:check-guard=
+inside the controller and inspect the result yourself.
+
+* Forms with CSRF
+
+If you render a form in your own controller, embed the CSRF token so
+the POST passes the middleware:
+
+#+begin_src lisp
+(let* ((env (lack/request:request-env shiso:*request*))
+       (session (getf env :lack.session))
+       (token (lack/middleware/csrf:csrf-token session)))
+  (almighty-html:render-to-string
+    (almighty-html:</>
+     (form :method "POST" :action "/save"
+       (almighty-html:</>
+        (input :type "hidden" :name "_csrf_token" :value token))
+       ;; ... your fields ...
+       (almighty-html:</> (button :type "submit" "Save"))))))
+#+end_src
+
+Safe methods (GET, HEAD, OPTIONS) bypass the CSRF check, so plain
+page rendering needs no token.
+
+* Customizing the auth flow
+
+| Variable                              | Default     | Use                                          |
+|---------------------------------------+-------------+----------------------------------------------|
+| =shiso/auth:*login-url*=              | ="/login"=  | Where guards redirect anonymous visitors     |
+| =shiso/auth:*post-login-redirect*=    | ="/"=       | Where successful login/logout lands users    |
+
+Override them at startup:
+
+#+begin_src lisp
+(setf shiso/auth:*login-url* "/auth/sign-in"
+      shiso/auth:*post-login-redirect* "/dashboard")
+#+end_src
+
+* Cookbook
+
+** Show "Sign in" or the user's email in your layout
+
+#+begin_src lisp
+(defun nav-auth-block ()
+  (let ((u (shiso/auth:current-user)))
+    (if u
+        (almighty-html:</>
+         (span (shiso/auth:user-email u))
+         (form :method "POST" :action "/logout" :style "display:inline"
+           (almighty-html:</> (button :type "submit" "Sign out"))))
+        (almighty-html:</> (a :href "/login" "Sign in")))))
+#+end_src
+
+(Add a CSRF token to the logout form -- see the CSRF section.)
+
+** Programmatically log a user in (e.g., after onboarding)
+
+#+begin_src lisp
+(defun onboard-and-launch ()
+  (let ((u (shiso/auth:make-user "new@example.com" "first-password")))
+    (shiso/auth:login-user u)
+    (shiso:redirect-response "/welcome")))
+#+end_src
+
+=login-user= writes to the session, rotates the SID, and stamps
+=last-login-at=. =logout-user= is the inverse.
+
+** Verify a password without logging in (e.g., a "confirm to delete account" flow)
+
+#+begin_src lisp
+(let ((u (shiso/auth:current-user)))
+  (if (shiso/auth:check-password u submitted-password)
+      (delete-account u)
+      (re-render-with-error)))
+#+end_src
+
+** Change a user's password
+
+#+begin_src lisp
+(shiso/auth:set-password user "new-password")
+#+end_src
+
+Hashes and persists in one call.
+
+** Read the request from a controller
+
+=shiso:*request*= is bound for the duration of a controller. From
+there:
+
+#+begin_src lisp
+(lack/request:request-method shiso:*request*)            ; :GET, :POST, ...
+(lack/request:request-path-info shiso:*request*)         ; "/admin/foo"
+(lack/request:request-query-parameters shiso:*request*)  ; alist
+(shiso:parse-body-params)                                ; alist of body params
+(shiso:post-request-p)                                   ; T if POST
+#+end_src
+
+* What's not (yet) included
+
+- *Password reset by email* -- there's no mailer in shiso yet. When you
+  add one, the pattern is: generate a single-use token, store it on the
+  user (or in a side table), email a =/reset?token=...= link, validate
+  on submit, call =set-password=.
+- *Email verification* -- same shape, separate token field.
+- *Remember-me / persistent cookies* -- Lack's session state is
+  cookie-based but session-scoped. Persistent login wants a separate
+  long-lived token.
+- *Rate limiting on login* -- not built in. Front with a
+  reverse-proxy rule for now, or add a per-IP counter in a follow-up.
+- *Permission objects / groups* -- only =is-staff= is provided. If you
+  need finer permissions, model them yourself or wait for a future
+  =shiso/auth/permissions= module.
+
+* Stripe-compatibility note
+
+Stripe doesn't authenticate end users -- you do. The framework's
+=shiso_user= record is what Stripe later needs you to link to a
+=stripe_customer_id=. When you add billing:
+
+1. Subclass =shiso/auth:user= (or add a side table) with the Stripe
+   fields you need.
+2. Create the Stripe Customer on signup or first purchase; store its
+   ID on your user.
+3. Verify webhook signatures with =Stripe-Signature= + endpoint
+   secret; look up the user by =stripe_customer_id=.
+4. Always authenticate the user /before/ minting a Checkout or
+   Customer Portal session -- those URLs assume the bearer is the
+   right customer.
+
+None of those changes affect the auth layer described in this
+tutorial. The =email= field on =shiso/auth:user= is what Stripe will
+use for receipts and Customer Portal access.

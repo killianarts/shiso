@@ -1,0 +1,188 @@
+#+TITLE: Reference: routing
+#+OPTIONS: toc:2 num:nil
+
+Package: =shiso/routing= (re-exported from =shiso=).
+
+* =define-module=  /macro/
+
+#+begin_src lisp
+(shiso:define-module NAME OPTION*)
+#+end_src
+
+Define a named routing module. =NAME= is an unquoted symbol; its
+string-upcased name becomes the module's keyword identifier in the
+registry.
+
+** Options
+
+| Option              | Meaning                                                                   |
+|---------------------+---------------------------------------------------------------------------|
+| =(:urls URL-SPEC*)= | The module's routes (see below)                                           |
+| =(:guard SPEC)=     | Authentication/authorisation guard — see [[file:auth.org][reference: auth]] |
+
+** URL specs
+
+Each =URL-SPEC= is =(METHOD PATH CONTROLLER NAME)=:
+
+#+begin_src lisp
+(:GET            "/"            'controllers:index   "index")
+((:GET :POST)    "/articles"    'controllers:create  "create")
+(:POST           "/:id/delete"  'controllers:destroy "delete")
+#+end_src
+
+- *METHOD* — a keyword (=:GET=, =:POST=, =:PUT=, =:DELETE=, =:PATCH=,
+  =:HEAD=, =:OPTIONS=) or a list of keywords. Multi-method entries
+  expand to one route per method internally.
+- *PATH* — a path pattern; =:NAME= segments are captured and passed
+  positionally to the controller. =/articles/:id/comments/:cid=
+  produces a 2-arg controller call.
+- *CONTROLLER* — a designator: =#'foo=, ='foo=, or bare =foo=. All
+  three reduce to the symbol =foo= at expansion time. The function is
+  looked up at /request time/, so it doesn't have to exist when the
+  module is defined.
+- *NAME* — a route name string. Stored in the mapper under the
+  module's namespace, so it's referenced from elsewhere as
+  ="MODULE-NAME:NAME"= (e.g. ="polls:detail"=).
+
+** Effect
+
+A side-effect macro: it builds a per-module =myway:mapper=, registers
+each URL spec on it, and stores the module instance in
+=*module-registry*= under the keyword form of =NAME=. Re-evaluating a
+=define-module= form replaces the previous module wholesale; the
+=define-application= mount points are late-bound, so the change is
+visible on the next request.
+
+** Static directory detection
+
+At compile/load time, =define-module= checks for a =static/=
+sub-directory next to its source file. If one exists, the module
+records its absolute path as =module-static-root=, and the static
+middleware serves =/static/<module-name>/*= from there.
+
+* =define-application=  /macro/
+
+#+begin_src lisp
+(shiso:define-application NAME () OPTION*)
+#+end_src
+
+Build the Lack-builder pipeline for an application. =NAME= is bound
+to a =defparameter= holding the resulting Lack app.
+
+** Options
+
+| Option                                  | Meaning                                            |
+|-----------------------------------------+----------------------------------------------------|
+| =(:modules (PREFIX MOD-NAME)*)=         | Module mount table — see [[file:../how-to/mount-a-module-under-a-prefix.org][mount how-to]] |
+
+** Generated pipeline
+
+The pipeline assembled in order:
+
+1. *Multi-root static middleware* — serves =/static/*= from the
+   project's =static/= directory plus every registered module's
+   =static/= directory.
+2. *Trailing-slash normaliser* — 301-redirects any =/foo/= to =/foo=.
+3. *Module mounts* — one wrapper per =(PREFIX MODULE)= pair. Each
+   checks the prefix, strips it, dispatches to the module, and falls
+   through to the next wrapper if the module returns 404.
+4. *404 fallback* — returns =(404 (:content-type "text/html") ("Not
+   found"))= for any path no module claims.
+
+The 404 fallback /from the application/ is separate from a 404
+returned by an individual module — modules return 404 to signal "I
+don't handle this", which triggers fall-through.
+
+* =define-route=  /function/
+
+#+begin_src lisp
+(shiso:define-route METHOD PATH
+  :controller CONTROLLER
+  :name NAME
+  &key (regexp nil) (routes *routes*))
+#+end_src
+
+Register a single route on the global *routes* parameter (or on
+=ROUTES=). Mostly an internal helper — prefer =define-module= unless
+you specifically need to register a one-off global route.
+
+* =define-routes=  /macro/
+
+#+begin_src lisp
+(shiso:define-routes MODULE :root ROOT ROUTE*)
+#+end_src
+
+Older API kept for compatibility. Each =ROUTE= is the same shape as
+a =define-module= =:urls= entry; =:root= prepends to every path.
+Routes get registered on the global *routes* parameter.
+
+For new code, use =define-module=.
+
+* =url=  /function/
+
+#+begin_src lisp
+(shiso:url NAME &rest PARAMS) => string
+#+end_src
+
+Resolve a named route to a URL. =NAME= is a string of either
+=NAMESPACE:NAME= (looked up in that module's mapper, prefixed with
+the module's current mount prefix) or a bare =NAME= (looked up in
+the global *routes*).
+
+#+begin_src lisp
+(shiso:url "polls:detail" :id "3")          ; => "/polls/3"
+(shiso:url "polls:index")                   ; => "/polls/"
+(shiso:url "about")                         ; global *routes*
+#+end_src
+
+Returns the URL string if found, =NIL= otherwise. There is no error
+on a missing route — be defensive in templates if you generate them
+from user input.
+
+* =module=, =module-routes=, =module-prefix=, =module-static-root=  /class + accessors/
+
+The =module= class is the per-module Lack component:
+
+#+begin_src lisp
+(defclass shiso:module (lack/component::lack-component)
+  ((routes      :initarg :routes      :accessor shiso:module-routes)
+   (prefix      :initarg :prefix      :accessor shiso:module-prefix     :initform "")
+   (static-root :initarg :static-root :accessor shiso:module-static-root :initform nil)
+   (guard       :initarg :guard       :accessor shiso:module-guard      :initform nil)))
+#+end_src
+
+You won't typically instantiate this yourself; =define-module= does.
+
+* =routes=, =routes-mapper=  /class + accessor/
+
+The =routes= class wraps a =myway:mapper=. =shiso:routes-mapper=
+returns the wrapped mapper for the rare case you want to inspect it
+directly (e.g. in tests).
+
+* =*routes*=  /parameter/
+
+The global routes object. Populated by =define-route= and
+=define-routes=. Test code that re-binds this often does so via a
+=with-fresh-routes= macro — see =t/modules.lisp= for the pattern.
+
+* =*module-registry*=  /parameter/
+
+A hash table from module-name keyword to =module= instance.
+
+#+begin_src lisp
+(shiso:get-module :polls)       ; => #<MODULE …>
+(shiso:register-module :polls m) ; (mostly internal — define-module does it)
+#+end_src
+
+=get-module= signals an error for unknown modules.
+
+* =*global-routes-namespace*=  /parameter/
+
+The namespace used for route names without an explicit
+=NAMESPACE:= prefix. Defaults to =:global=. Rarely needs to change.
+
+* See also
+
+- [[../how-to/mount-a-module-under-a-prefix.org][How-to: mount a module under a URL prefix]]
+- [[../explanation/module-system.org][Explanation: the module system]]
+- [[../explanation/request-lifecycle.org][Explanation: the request lifecycle]]

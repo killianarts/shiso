@@ -1,0 +1,222 @@
+#+TITLE: 4. The polls tutorial — part 3
+#+OPTIONS: toc:2 num:nil
+
+You have a working polls site. This part adds a small but realistic
+test suite: model helpers, URL surface, and the vote flow. The
+goal isn't 100% coverage; it's to show you the pattern Shiso uses
+internally so you can extend it.
+
+Shiso's own tests live under =t/= and use [[https://github.com/AccelerationNet/lisp-unit2][lisp-unit2]]. The same
+pattern works for your apps.
+
+* Step 1 — Add a test system
+
+Open =mysite.asd= and add a second =defsystem= form below the main
+one:
+
+#+begin_src lisp
+(defsystem "mysite/tests"
+  :depends-on (:mysite :lisp-unit2 :alexandria)
+  :components ((:module "t"
+                :serial t
+                :components ((:file "polls-models")
+                             (:file "polls-routes"))))
+  :perform (test-op (o s)
+                    (uiop:symbol-call :lisp-unit2 :run-tests
+                                      :package :mysite/t/polls-models)
+                    (uiop:symbol-call :lisp-unit2 :run-tests
+                                      :package :mysite/t/polls-routes)))
+#+end_src
+
+The =:perform (test-op …)= form runs every test package under one
+ASDF invocation: =(asdf:test-system :mysite)=.
+
+* Step 2 — Test fixture
+
+Create =t/polls-models.lisp=:
+
+#+begin_src lisp
+(defpackage #:mysite/t/polls-models
+  (:use #:cl #:lisp-unit2))
+
+(in-package #:mysite/t/polls-models)
+
+(defmacro with-fresh-db (&body body)
+  "Spin up an in-memory SQLite, ensure tables, run BODY, then tear down."
+  `(let ((mito.connection:*connection* nil))
+     (mito:connect-toplevel :sqlite3 :database-name ":memory:")
+     (unwind-protect
+          (progn
+            (dolist (name (shiso/models:all-models))
+              (mito:ensure-table-exists (shiso/models:model-class name)))
+            ,@body)
+       (mito:disconnect-toplevel))))
+
+(define-test all-questions-orders-newest-first ()
+  (with-fresh-db
+    (let* ((cls (shiso/models:model-class 'polls/models::question))
+           (q1 (mito:create-dao cls :question-text "Older"
+                                :pub-date (local-time:timestamp- (local-time:now) 1 :day)))
+           (q2 (mito:create-dao cls :question-text "Newer"
+                                :pub-date (local-time:now))))
+      (declare (ignore q1 q2))
+      (let ((ranked (polls/models:all-questions)))
+        (assert-eql 2 (length ranked))
+        (assert-string= "Newer" (polls/models:question-text (first ranked)))))))
+
+(define-test choices-for-question-filters-by-fk ()
+  (with-fresh-db
+    (let* ((q1 (mito:create-dao (shiso/models:model-class 'polls/models::question)
+                                :question-text "A"))
+           (q2 (mito:create-dao (shiso/models:model-class 'polls/models::question)
+                                :question-text "B")))
+      (polls/models:create-choice q1 "a1")
+      (polls/models:create-choice q1 "a2")
+      (polls/models:create-choice q2 "b1")
+      (assert-eql 2 (length (polls/models:choices-for-question q1)))
+      (assert-eql 1 (length (polls/models:choices-for-question q2))))))
+
+(define-test question-published-recently-p-respects-24h-window ()
+  (with-fresh-db
+    (let* ((cls (shiso/models:model-class 'polls/models::question))
+           (now (mito:create-dao cls :question-text "fresh"
+                                 :pub-date (local-time:now)))
+           (old (mito:create-dao cls :question-text "stale"
+                                 :pub-date (local-time:timestamp- (local-time:now) 2 :day))))
+      (assert-true (polls/models:question-published-recently-p now))
+      (assert-false (polls/models:question-published-recently-p old)))))
+#+end_src
+
+The =with-fresh-db= macro is the workhorse: each test gets a
+private in-memory SQLite, the model tables get rebuilt fresh, and
+the connection is torn down on the way out. No test state leaks
+between cases.
+
+** Why the qualified =polls/models::question= symbol?
+
+When you wrote =(shiso:define-model question …)= inside the
+=polls/models= package, the resulting Mito class was registered as
+=shiso/models/registry::question= but the slot symbols stayed in
+=polls/models=. From the test package, =polls/models::question= is
+the slot owner. =(shiso/models:model-class 'polls/models::question)=
+walks the registry to the canonical class object — which is the
+same one whether you ask via =polls/models::question= or via
+=shiso/models/registry::question=. See [[file:../explanation/model-metadata.org][explanation: model metadata]]
+for the full path.
+
+* Step 3 — Route-level tests
+
+Create =t/polls-routes.lisp=:
+
+#+begin_src lisp
+(defpackage #:mysite/t/polls-routes
+  (:use #:cl #:lisp-unit2))
+
+(in-package #:mysite/t/polls-routes)
+
+(defun make-env (path &key (method :GET) (query ""))
+  (list :request-method method
+        :request-uri path
+        :path-info path
+        :query-string query
+        :server-name "localhost"
+        :server-port 5000
+        :server-protocol :http/1.1
+        :url-scheme "http"
+        :remote-addr "127.0.0.1"
+        :remote-port 12345
+        :content-type nil
+        :content-length nil
+        :headers (make-hash-table :test 'equal)
+        :input (make-string-input-stream "")))
+
+(defmacro with-fresh-db (&body body)
+  `(let ((mito.connection:*connection* nil))
+     (mito:connect-toplevel :sqlite3 :database-name ":memory:")
+     (unwind-protect
+          (progn
+            (dolist (name (shiso/models:all-models))
+              (mito:ensure-table-exists (shiso/models:model-class name)))
+            ,@body)
+       (mito:disconnect-toplevel))))
+
+(define-test index-renders-200-when-empty ()
+  (with-fresh-db
+    (let* ((mod (shiso:get-module :polls))
+           (response (lack/component:call mod (make-env "/"))))
+      (assert-eql 200 (first response))
+      (assert-true (search "No polls are available."
+                           (first (third response)))))))
+
+(define-test index-lists-questions ()
+  (with-fresh-db
+    (mito:create-dao (shiso/models:model-class 'polls/models::question)
+                     :question-text "What is your name?")
+    (let* ((mod (shiso:get-module :polls))
+           (response (lack/component:call mod (make-env "/")))
+           (body (first (third response))))
+      (assert-eql 200 (first response))
+      (assert-true (search "What is your name?" body)))))
+
+(define-test detail-404s-for-missing-id ()
+  (with-fresh-db
+    (let* ((mod (shiso:get-module :polls))
+           (response (lack/component:call mod (make-env "/9999"))))
+      (assert-eql 404 (first response)))))
+#+end_src
+
+These tests call the module directly with a hand-rolled Clack env,
+bypassing the network and the middleware stack. The dispatcher
+binds =shiso:*request*= for the duration of the controller, so any
+code that reads request state still works.
+
+For things you want to test /through/ the middleware (CSRF
+rejection, session handling), boot the full app in-process and use
+=drakma= or similar against =127.0.0.1=. That's how Shiso's own
+auth tests work — see =t/auth.lisp= for the pattern.
+
+* Step 4 — Run the tests
+
+From your shell:
+
+#+begin_src bash
+sbcl --non-interactive \
+     --load build.lisp \
+     --eval '(asdf:test-system :mysite)' \
+     --eval '(uiop:quit)'
+#+end_src
+
+Or from a REPL with Shiso already loaded:
+
+#+begin_src lisp
+(asdf:test-system :mysite)
+#+end_src
+
+You should see a passing summary like:
+
+#+begin_example
+mysite/t/polls-models: 3 tests, 0 failures
+mysite/t/polls-routes: 3 tests, 0 failures
+#+end_example
+
+If a test fails, lisp-unit2 prints the assertion that failed plus
+the expected/actual values.
+
+* What's next
+
+You now have a complete small Shiso app: scaffolded structure,
+ORM-backed models, an admin, a request flow, and a test suite.
+Three natural next steps:
+
+- *Add authentication.* [[file:06-authentication.org][Adding authentication]] walks through
+  gating modules behind =:require :login= and customising the login
+  flow.
+- *Read the explanation chapters.* The [[file:../explanation/request-lifecycle.org][request lifecycle]] and
+  [[file:../explanation/module-system.org][module system]] essays cover the parts that the tutorial
+  glossed over.
+- *Read the reference.* Every macro and function used in this
+  tutorial is in [[file:../reference/][docs/reference/]] with its full signature and
+  options.
+
+If you want a different scaffold to work from, [[file:05-todo-app.org][the TODO app]] is a
+smaller worked example covering a single CRUD resource end-to-end.

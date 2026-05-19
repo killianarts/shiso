@@ -1,0 +1,224 @@
+#+TITLE: How to define a model
+#+OPTIONS: toc:2 num:nil
+
+* Minimal model
+
+#+begin_src lisp
+(in-package #:myapp/models)
+
+(shiso:define-model article
+    ((title :field-type :char :max-length 200 :accessor article-title)
+     (body  :field-type :text :accessor article-body)))
+#+end_src
+
+Three things happen:
+
+1. A Mito table class =shiso/models/registry::article= is created.
+2. Slot metadata (verbose name, validators, widget choices, …) is
+   captured in =shiso/models:*model-registry*= for the admin and form
+   layers.
+3. The accessor =article-title= is interned in =myapp/models= and
+   should be exported if external callers will use it.
+
+To create the SQL table, ensure =mito:connect-toplevel= has run, then:
+
+#+begin_src lisp
+(mito:ensure-table-exists (shiso/models:model-class 'article))
+#+end_src
+
+The startup pattern in =main.lisp= loops over =(shiso/models:all-models)=
+and calls =ensure-table-exists= on each — see [[file:../tutorial/02-polls-part-1.org][the polls tutorial]]
+for the full =setup-database= function.
+
+* Field types
+
+| Keyword     | Mito col-type         | Auto-applied validators / widgets                   |
+|-------------+-----------------------+-----------------------------------------------------|
+| =:char=     | =(:varchar N)=        | =max-length= validator                              |
+| =:text=     | =:text=               | =widget :textarea=                                  |
+| =:integer=  | =:integer=            | —                                                   |
+| =:boolean=  | =:boolean=            | =widget :checkbox=                                  |
+| =:choice=   | =(:varchar 50)=       | =one-of= validator from =:choices=                  |
+| =:email=    | =(:varchar 254)=      | =valid-email= validator, =widget :email=            |
+| =:slug=     | =(:varchar 200)=      | =matches-pattern "^[a-z0-9-]+$"=                    |
+| =:url=      | =(:varchar 2000)=     | =matches-pattern "^https?://"=, =widget :url=       |
+| =:datetime= | =:timestamptz=        | =widget :datetime-local=                            |
+| =:date=     | =:date=               | =widget :date=                                      |
+| =:decimal=  | =(:numeric P S)=      | requires =:precision=/=:scale=                      |
+
+Define your own with =shiso:define-field-type=. See [[file:../reference/models.org][reference: models]].
+
+* Slot options Shiso understands
+
+These can appear on any slot in =define-model=:
+
+| Option          | Purpose                                                |
+|-----------------+--------------------------------------------------------|
+| =:field-type=   | Sugar for col-type + defaults (table above)            |
+| =:verbose-name= | Label shown in forms and admin lists                   |
+| =:help-text=    | Help string rendered next to form inputs               |
+| =:validators=   | List of validator designators                          |
+| =:choices=      | =((:key "Label") …)= for select inputs                 |
+| =:blankp=       | =T= = optional, =NIL= = required (default)             |
+| =:editablep=    | =NIL= excludes the field from admin forms              |
+| =:widget=       | Override the rendered widget (=:textarea=, =:hidden=…) |
+| =:default=      | Initial value at create time (alias for =:initform=)   |
+
+Plus everything Mito understands: =:col-type=, =:initform=,
+=:initarg=, =:accessor=, =:reader=, =:writer=, =:references=,
+=:ghost=, etc. Shiso strips its own keys before handing the slot to
+Mito.
+
+* Required vs optional fields
+
+By default a field is required (=:blankp nil=). To make one optional:
+
+#+begin_src lisp
+(subtitle :field-type :char :max-length 200 :blankp t :accessor article-subtitle)
+#+end_src
+
+The blank check happens at form-validation time, not at the database
+layer. If you also want the DB column nullable, declare it
+explicitly:
+
+#+begin_src lisp
+(subtitle :col-type (or (:varchar 200) :null) :initarg :subtitle
+          :blankp t :accessor article-subtitle)
+#+end_src
+
+* Default values
+
+=:default= maps to Mito's =:initform=:
+
+#+begin_src lisp
+(status :field-type :choice
+        :choices ((:draft "Draft") (:published "Published"))
+        :default :draft)
+
+(pub-date :field-type :datetime
+          :default (local-time:now))
+#+end_src
+
+* Custom validators
+
+A validator is either:
+
+- A symbol naming a one-arg function: =not-blank=.
+- A list naming a factory and its args: =(max-length 200)=.
+
+Built-ins are in =shiso/validators=. Roll your own:
+
+#+begin_src lisp
+(defun even-only (value)
+  (when (and (numberp value) (oddp value))
+    "Must be an even number."))
+
+(shiso:define-model widget
+    ((count :field-type :integer :validators (even-only))))
+#+end_src
+
+The validator function returns =NIL= on success or an error string
+on failure.
+
+* Choices
+
+#+begin_src lisp
+(status :field-type :choice
+        :choices ((:draft     "Draft")
+                  (:published "Published")
+                  (:archived  "Archived"))
+        :default :draft)
+#+end_src
+
+The =:choices= alist is keyed by the canonical value (a keyword) and
+mapped to a human-readable label. The form layer renders a
+=<select>= with these as options, and the =one-of= validator (auto-
+applied) restricts submissions to one of the keys.
+
+* Relationships — the integer-FK pattern
+
+For one-to-many relationships, the easiest pattern is a plain
+integer column:
+
+#+begin_src lisp
+(shiso:define-model comment
+    ((article-id :field-type :integer :accessor comment-article-id)
+     (body       :field-type :text    :accessor comment-body)))
+
+(defun comments-for-article (article)
+  (mito:select-dao (shiso/models:model-class 'comment)
+    (sxql:where (:= :article-id (mito:object-id article)))
+    (sxql:order-by :id)))
+#+end_src
+
+The polls tutorial uses this exact shape. Pros: dead-simple, no
+package juggling, the SQL maps to what you'd write by hand.
+
+* Relationships — Mito's typed FK
+
+Mito supports a real FK declaration that gives you a slot holding
+the related instance plus an automatic =<name>-id= column behind it:
+
+#+begin_src lisp
+(shiso:define-model comment
+    ((article :col-type shiso/models/registry::article
+              :initarg :article
+              :accessor comment-article)
+     (body :field-type :text :accessor comment-body)))
+#+end_src
+
+You have to write =shiso/models/registry::article= explicitly:
+=define-model= interns model classes in =shiso/models/registry=, not
+in your package. The bare =article= symbol in your package isn't a
+class.
+
+Creating an instance:
+
+#+begin_src lisp
+(mito:create-dao (shiso/models:model-class 'comment)
+                 :article some-article
+                 :body "first!")
+#+end_src
+
+Mito stores the FK in =article-id= behind the scenes; reading the
+=article= slot triggers a lookup.
+
+If you want the bare symbol to work from your own package, import it
+after the =define-model= form runs:
+
+#+begin_src lisp
+(in-package #:myapp/models)
+(shiso:define-model article (…))
+(import 'shiso/models/registry::article)   ; now `article` here = registry symbol
+#+end_src
+
+This works at load time but plays badly with compile-time
+=defpackage= forms in other files — they can't import a symbol that
+hasn't been created yet. Stick with the integer-FK pattern unless
+you specifically want Mito's auto-join behaviour.
+
+* Read the registry from code
+
+#+begin_src lisp
+(shiso/models:all-models)
+;; => (ARTICLE COMMENT QUESTION CHOICE …)
+
+(shiso/models:model-class 'article)
+;; => #<DAO-TABLE-CLASS SHISO/MODELS/REGISTRY::ARTICLE>
+
+(shiso/models:model-fields 'article)
+;; => (#S(SLOT-METADATA :NAME TITLE :COL-TYPE (:VARCHAR 200) …) …)
+
+(shiso/models:field-validators
+ (shiso/models:model-field 'article 'title))
+;; => ((max-length 200))
+#+end_src
+
+Both =model-class= and =model-fields= accept a symbol from any
+package (they resolve by string name) or a string.
+
+* See also
+
+- [[file:register-a-model-in-admin.org][How to register a model in the admin]]
+- [[file:../reference/models.org][Reference: models]] — full API
+- [[file:../explanation/model-metadata.org][Explanation: model metadata and the registry]]

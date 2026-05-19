@@ -1,0 +1,229 @@
+#+TITLE: Reference: auth
+#+OPTIONS: toc:2 num:nil
+
+Package: =shiso/auth= (re-exported from =shiso=).
+
+The auth subsystem ships:
+
+- A =user= Mito model.
+- A DB-backed session store (Lack's DBI store, pointed at Mito's
+  connection).
+- A CSRF middleware (Lack's CSRF, installed alongside sessions).
+- A =shiso-auth= routing module with =/login=, =/logout=, =/signup=.
+- Three layers of route guards.
+
+* Password helpers
+
+#+begin_src lisp
+(shiso/auth:hash-password PLAINTEXT) => hash-string
+(shiso/auth:verify-password PLAINTEXT HASH) => boolean
+#+end_src
+
+Thin wrappers around =cl-pass:hash= / =cl-pass:check-password=.
+PBKDF2-SHA256 with a random salt; the salt+parameters are encoded
+into the hash string. =verify-password= uses constant-time
+comparison internally.
+
+* User model
+
+#+begin_src lisp
+(mito:deftable shiso/auth/user:user ()
+  ((email         :col-type (:varchar 254)        :accessor user-email)
+   (password-hash :col-type :text                 :accessor user-password-hash)
+   (is-active     :col-type :boolean :initform t  :accessor user-is-active)
+   (is-staff      :col-type :boolean :initform nil :accessor user-is-staff)
+   (last-login-at :col-type (or :timestamp :null) :accessor user-last-login-at))
+  (:table-name "shiso_user")
+  (:unique-keys email))
+#+end_src
+
+** Constructors and lookups
+
+| =(make-user EMAIL PLAINTEXT-PASSWORD &key (is-active t) (is-staff nil))= | create + persist a user, hashing the password |
+| =(find-user-by-email EMAIL)= | first user with =EMAIL= or =NIL= |
+| =(find-user-by-id ID)=       | by primary key or =NIL=          |
+
+** Mutators
+
+| =(set-password USER PLAINTEXT)= | hash + persist                |
+| =(check-password USER PLAINTEXT)= | constant-time comparison    |
+| =(touch-last-login USER)=     | stamp =last-login-at= = now    |
+
+The last-login stamp is updated automatically by =login-user= — call
+it yourself only if you're rolling a non-form login (impersonation,
+SSO).
+
+* Sessions
+
+** =ensure-tables=  /function/
+
+#+begin_src lisp
+(shiso/auth:ensure-tables)
+#+end_src
+
+Create =shiso_user= and =shiso_session= if missing. Idempotent.
+Call after =mito:connect-toplevel= and before =shiso:start=.
+
+** =make-store=  /function/
+
+#+begin_src lisp
+(shiso/auth:make-store) => lack-dbi-store
+#+end_src
+
+Build a Lack DBI session store backed by =mito.connection:*connection*=.
+Internal — =wrap-app= calls it. Reuses Mito's connection so you
+don't have a second pool.
+
+** =current-user=  /function/
+
+#+begin_src lisp
+(shiso/auth:current-user) => user-or-nil
+#+end_src
+
+The authenticated, active user for the current request. Reads
+=:lack.session= from =shiso:*request*='s env, looks up =:user-id=,
+and verifies =user-is-active=. Returns =NIL= if any step fails.
+
+** =authenticatedp=  /function/
+
+Boolean form of =current-user=.
+
+** =login-user=  /function/
+
+#+begin_src lisp
+(shiso/auth:login-user USER) => USER
+#+end_src
+
+Mark =USER= as authenticated:
+
+1. Write =:user-id= into the session hash table.
+2. Set =:change-id= on session options — Lack rotates the session ID
+   on response finalize, preventing session-fixation attacks.
+3. =touch-last-login= on =USER=.
+
+Signals an error if called outside a request that has a session
+(i.e. middleware not installed).
+
+** =logout-user=  /function/
+
+Clear the session contents and set =:expire= on session options.
+The session row is deleted on response finalize and the cookie is
+unset.
+
+** =authenticate=  /function/
+
+#+begin_src lisp
+(shiso/auth:authenticate EMAIL PLAINTEXT-PASSWORD) => user-or-nil
+#+end_src
+
+Look up by email, verify password, check =is-active=. Returns the
+user or =NIL=. /Does not log in/ — caller decides whether to call
+=login-user=.
+
+* Guards
+
+A guard is a spec attached to a module or wrapped around a
+controller. The accepted specs:
+
+| =NIL=                              | Always allow                        |
+| =(:require :login)=                | Any authenticated user              |
+| =(:require :staff)=                | Authenticated + =is-staff= = T      |
+| =(:require :anonymous)=            | Only NON-authenticated users        |
+| =(:require (:predicate FN-SYM))=   | =FN= called on user; truthy = allow |
+
+** Failure responses
+
+| Anonymous + needs login/staff    | 302 to =*login-url*?next=<current-url>= |
+| Authenticated but not staff      | 403                                     |
+| Authenticated + =:anonymous=     | 302 to =*post-login-redirect*=          |
+| Predicate returns falsy          | 403                                     |
+
+** Module-level guards
+
+Attach via =define-module=:
+
+#+begin_src lisp
+(shiso:define-module dashboard
+  (:guard (:require :login))
+  (:urls
+    (:GET "/" 'dashboard-index "index")
+    …))
+#+end_src
+
+Implemented as an =:around= method on
+=lack/component:call (module env)= that calls =check-guard-from-env=
+on the module's =guard= slot. Rejections become 302/403; allows
+=:call-next-method=.
+
+** Per-controller decorators
+
+| =(login-required &body BODY)=  | macro — runs body if logged in, else returns 302/403 |
+| =(staff-required &body BODY)=  | macro — runs body if staff, else returns 302/403     |
+| =(require-login CONTROLLER)=   | function — returns a guarded wrapper                 |
+| =(require-staff CONTROLLER)=   | function — returns a guarded wrapper                 |
+
+The functional forms are useful when registering a guarded version
+of an existing controller:
+
+#+begin_src lisp
+(s:define-routes secret-area
+  (:GET "/secret" (shiso/auth:require-login #'my-handler) "secret"))
+#+end_src
+
+** =check-guard=  /function/
+
+#+begin_src lisp
+(shiso/auth:check-guard SPEC) => :ALLOW or clack-response
+#+end_src
+
+Evaluate =SPEC= against the current request's user. Use from
+controllers for ad-hoc gating beyond the spec language.
+
+* Tunables
+
+** =*login-url*=  /parameter/
+
+#+begin_src lisp
+(setf shiso/auth:*login-url* "/login")  ; default
+#+end_src
+
+Where guards redirect anonymous visitors. Set this once at startup
+if you mount =shiso-auth= under a non-root prefix.
+
+** =*post-login-redirect*=  /parameter/
+
+#+begin_src lisp
+(setf shiso/auth:*post-login-redirect* "/")  ; default
+#+end_src
+
+Where successful login/logout/signup lands users. Login also honours
+=?next=<local-path>= if present (absolute URLs are rejected to
+prevent open-redirect).
+
+* Mounted routes — =shiso-auth=
+
+| Method | Path     | Name            | Notes                                  |
+|--------+----------+-----------------+----------------------------------------|
+| GET    | =/login=  | =login=         | Renders form                           |
+| POST   | =/login=  | =login=         | Validates; on success, rotates session ID, redirects |
+| POST   | =/logout= | =logout=        | Clears session, redirects              |
+| GET    | =/signup= | =signup=        | Renders form                           |
+| POST   | =/signup= | =signup=        | Creates user, logs in, redirects        |
+
+GET =/logout= is a no-op redirect — a stray link can't sign you out.
+
+* Form classes — =shiso/auth/forms=
+
+| =login-form=  | =email=, =password=. On =clean=, calls =authenticate= and stashes the user. =login-form-user= reads it. |
+| =signup-form= | =email=, =password=, =password-confirm=. On =clean=, checks password match and email uniqueness.       |
+
+These are =shiso/forms:form= subclasses; the auth controllers
+hand-render them (the default form renderer doesn't have a
+password-input renderer yet).
+
+* See also
+
+- [[../tutorial/06-authentication.org][Tutorial: adding authentication]]
+- [[../how-to/set-up-authentication.org][How-to: set up authentication]]
+- [[../how-to/render-a-form-with-csrf.org][How-to: render a form with CSRF]]
+- [[../explanation/auth-architecture.org][Explanation: the auth architecture]]

@@ -1,0 +1,154 @@
+#+TITLE: Architecture at a glance
+#+OPTIONS: toc:2 num:nil
+
+Shiso is a thin opinionated layer over an existing Common Lisp web
+stack. Almost every "Shiso feature" is the framework taking an
+off-the-shelf piece and naming it, wiring it up, and exposing it
+through a consistent API.
+
+This chapter is the bird's-eye map. Subsequent chapters zoom into
+individual subsystems.
+
+* The dependency stack
+
+#+begin_example
+┌──────────────────────────────────────────────────────┐
+│  Your application                                    │
+│   ├── module: home, blog, polls, …                   │
+│   └── application: (define-application …)            │
+├──────────────────────────────────────────────────────┤
+│  Shiso                                               │
+│   ├── routing       — modules + apps + URL helper    │
+│   ├── server        — wrap-app + Woo startup         │
+│   ├── models        — define-model + registry        │
+│   ├── forms         — fields + model-form + render   │
+│   ├── admin         — auto-CRUD on registered models │
+│   ├── auth          — user, session, guards          │
+│   ├── validators    — pure validation functions      │
+│   └── cli           — `shiso new-…` scaffolder       │
+├──────────────────────────────────────────────────────┤
+│  Stack libraries (vendored)                          │
+│   ├── clack/woo     — HTTP server                    │
+│   ├── lack          — middleware framework           │
+│   ├── myway         — URL routing                    │
+│   ├── mito + sxql   — ORM                            │
+│   ├── almighty-html — HTML DSL                       │
+│   ├── cl-pass       — password hashing               │
+│   ├── lack-middleware-session, -csrf — security      │
+│   └── lack-session-store-dbi — DB-backed session     │
+├──────────────────────────────────────────────────────┤
+│  SBCL                                                │
+└──────────────────────────────────────────────────────┘
+#+end_example
+
+Every library above the SBCL line is /vendored/ into each project's
+=vendored/= directory. There is no Quicklisp dependency — the
+manifest is the project's =.asd= file, =vend get= pulls the
+closure.
+
+* The big three concepts
+
+** A /module/ is a routing+code unit
+
+=(define-module NAME (:urls …))= registers a =myway= mapper plus a
+module instance under =*module-registry*=. Modules know their
+routes, their on-disk static directory (auto-detected), and an
+optional guard.
+
+A module's routes have no prefix on the module's own mapper — the
+prefix gets applied by the application that mounts it. That's what
+makes modules portable across apps and across URL layouts.
+
+** An /application/ is a Lack-builder pipeline
+
+=(define-application NAME () (:modules …))= produces a Clack-shaped
+function that dispatches incoming requests:
+
+1. Static-file middleware first.
+2. Trailing-slash normaliser.
+3. Each mounted module, in order, with prefix-strip + fall-through.
+4. 404 fallback.
+
+The pipeline is built at macro-expansion time but the module
+registry is consulted at request time. Re-defining a module
+re-registers it; the next request sees the new definition without
+restarting the server.
+
+** A /registry/ is a hash table from name to runtime object
+
+Shiso runs three registries that you'll see again and again:
+
+| Registry                | Owns                                |
+|-------------------------+-------------------------------------|
+| =*module-registry*=     | =shiso/modules:module= instances    |
+| =*model-registry*=      | =shiso/models:model-metadata= structs |
+| =*admin-registry*=      | =shiso/admin:admin-config= instances |
+
+All three are flat keyword/symbol → instance hash tables. They're
+populated by side-effecting macros (=define-module=, =define-model=,
+=define-admin=) at load time and consulted at request time.
+
+The pattern matters because it's how subsystems stay decoupled. The
+admin doesn't reach into your =models.lisp= — it reads
+=*model-registry*=. The URL helper doesn't follow imports — it reads
+=*module-registry*=.
+
+* The request path, in one paragraph
+
+A request hits Woo, gets parsed into a Clack env plist, walks the
+Lack-builder pipeline. The session middleware reads the cookie and
+loads/creates the session hash table; the CSRF middleware checks
+the token for unsafe methods. The application's module-mount
+wrappers find the matching mount, strip its prefix, and call the
+module. The module's =lack/component:call= method binds
+=shiso:*request*=, runs any guard, and dispatches via =myway= to the
+controller. The controller returns a Lack response =(STATUS HEADERS
+BODY)= which the middlewares finalize (CSRF rotates session-id if
+flagged, session middleware writes the row back) and Woo serializes
+to the wire.
+
+Full pictures: [[file:request-lifecycle.org][the request lifecycle]].
+
+* The model path, in one paragraph
+
+=(define-model NAME (slots) …)= expands into a =mito:deftable= for
+the SQL/CLOS class plus a =register-model= call that records slot
+metadata in =*model-registry*=. The class is interned in
+=shiso/models/registry= (a fixed package) so the admin can resolve
+URL-shaped model names to classes; slot symbols stay in your
+package, so accessors and =slot-value= calls in your own code feel
+local. The admin and the form/model-form layers both read the same
+metadata to render lists, build forms, and validate input.
+
+Full picture: [[file:model-metadata.org][model metadata and the registry]].
+
+* Why like this?
+
+Shiso is shaped like Django, intentionally. The vocabulary
+overlaps: /modules/ = /apps/, /admin/ = /admin/, =define-model= =
+=class Foo(models.Model)=, the field-type expansion = Django's
+=models.CharField= ↔ database type mapping. The four areas Shiso
+diverges:
+
+- *Lisp's macros.* Routing, models, and admin are all macros that
+  expand into a couple of registry writes plus a CLOS class. You can
+  inspect the expansion, profile it, redefine on the fly.
+- *No template language.* The HTML DSL is =almighty-html='s =</>=
+  macro. It has quirks (see the [[../README.org][docs index]] for the three rules to
+  internalise) but the trade is that templates are real code that
+  the compiler analyses.
+- *No magic settings file.* Configuration is either env-var-driven
+  (host/port) or a parameter set in =main.lisp= (DB connection,
+  redirect URLs). There's no =settings.py= equivalent.
+- *Vendored deps, not Quicklisp.* The manifest is the project's
+  =.asd= file. =vend get= pulls the closure. Reproducible builds
+  fall out of this naturally — the binary you ship contains every
+  byte of every library.
+
+* Where to read next
+
+- *Routing details* — [[file:module-system.org][the module system]] /
+  [[file:request-lifecycle.org][the request lifecycle]].
+- *ORM/metadata* — [[file:model-metadata.org][model metadata and the registry]].
+- *Admin design* — [[file:admin-design.org][how the admin is built]].
+- *Auth choices* — [[file:auth-architecture.org][the authentication architecture]].

@@ -1,0 +1,209 @@
+#+TITLE: The request lifecycle
+#+OPTIONS: toc:2 num:nil
+
+What happens between =GET /polls/3= arriving on the socket and the
+HTML response leaving it.
+
+* The middleware stack
+
+Reading bottom-up (closest to your code last):
+
+#+begin_example
+Woo (HTTP I/O)
+  │
+  └─ session middleware                (installed by shiso/server:wrap-app)
+       │
+       └─ CSRF middleware              (installed by shiso/server:wrap-app)
+            │
+            └─ static-files mw         (installed by shiso/define-application)
+                 │
+                 └─ trailing-slash mw  (installed by shiso/define-application)
+                      │
+                      └─ mount #1: /admin → shiso-admin
+                      └─ mount #2:   ""   → shiso-auth
+                      └─ mount #3:   ""   → pages
+                      └─ final 404 fallback
+#+end_example
+
+The two halves (=wrap-app= vs =define-application=) compose at
+=start= time: =start= passes the application's Lack value through
+=wrap-app=, which installs the security middlewares on top.
+
+That layering matters. The session middleware runs first because
+the CSRF middleware needs to find the session in env. The static-
+file middleware runs before the module mounts because static
+assets are higher-traffic than routes and shouldn't pay the cost of
+walking the module list.
+
+* A request, step by step
+
+Imagine =GET /polls/3=:
+
+1. *Woo* parses the HTTP request, builds a Clack env plist:
+   #+begin_example
+   (:request-method :GET
+    :request-uri "/polls/3"
+    :path-info "/polls/3"
+    :query-string ""
+    :server-name "127.0.0.1"
+    …
+    :headers <hash-table>
+    :input <stream>)
+   #+end_example
+
+2. *Session middleware* reads the =lack.session= cookie (if present),
+   loads the matching row from =shiso_session=, and installs:
+   - =:lack.session= → a hash table (the session state).
+   - =:lack.session.options= → a plist for change-id / expire flags.
+
+3. *CSRF middleware*: =GET= is a safe method; it just lets the
+   request pass.
+
+4. *Static-files middleware*: the path doesn't start with =/static/=;
+   pass.
+
+5. *Trailing-slash middleware*: =/polls/3= doesn't end with =/=;
+   pass.
+
+6. *Module mount #1* (=/admin/=): prefix doesn't match; pass.
+
+7. *Module mount #2* (=""=): prefix matches (it always does). Sets
+   the =shiso-auth= module's =module-prefix= to =""= and dispatches:
+
+   #+begin_src lisp
+   (lack/component:call (get-module :shiso-auth) env)
+   #+end_src
+
+8. The =shiso-auth= module's mapper has only =/login=, =/logout=,
+   =/signup=. =/polls/3= doesn't match. The module returns a 404
+   /with =handledp= = =NIL=/. The mount sees =handledp= = =NIL=,
+   restores the original =path-info=, and falls through.
+
+9. *Module mount #3* (=/polls=): prefix matches. The middleware
+   strips =/polls= from =path-info= (it's now =/3=) and dispatches
+   to the =polls= module.
+
+10. The polls module's =lack/component:call=:
+    - Binds =shiso:*request*= to =(lack/request:make-request env)=.
+    - Runs the guard (none here, so =:allow=).
+    - Calls =myway:dispatch= on its mapper with path =/3=. The
+      =/:id= route matches; the endpoint function is invoked with
+      =:id="3"= as the param.
+    - The endpoint's closure calls =(funcall controller params)=
+      which becomes =(controllers:detail "3")=.
+
+11. The controller runs, builds an =almighty-html= tree, renders it
+    to a string via =render-to-string=, and returns
+    =(200 (:content-type "text/html; charset=utf-8") ("<!DOCTYPE …"))=.
+
+12. The dispatcher passes the response back up. =res:finalize-response=
+    is called on the inner =(STATUS HEADERS BODY)= shape (turning it
+    into a proper Lack response object).
+
+13. *On the way out*, CSRF middleware finalizes its work (mints a
+    token if the response sets a session). Session middleware
+    writes the (possibly modified) session back to
+    =shiso_session=, sets the cookie, applies =:change-id= /
+    =:expire= flags.
+
+14. *Woo* serialises the response and sends it.
+
+* The =shiso:*request*= binding
+
+Every controller invocation runs inside a =let ((*request* …))= form
+in =shiso/requests:lack/component:call=. That means:
+
+- Reading =shiso:*request*= from anywhere in the call tree works.
+- Helpers like =shiso:current-path=, =shiso:parse-body-params=, and
+  =shiso/auth:current-user= use this implicit binding.
+- Threading the request through your call tree is unnecessary —
+  Lisp's special variables do it for you.
+
+If you call a controller manually (in a test, say) without going
+through =call=, =*request*= is =NIL=. Helpers will silently return
+=NIL= rather than error. Bind =*request*= yourself if your test
+needs request state.
+
+* Module fall-through, in detail
+
+A core trick Shiso plays: a module that doesn't match a request
+returns a 404 along with a /second value/ =NIL=. The mount-wrapper
+in =define-application= inspects that second value and only treats
+the 404 as the response if no later module would have matched
+either.
+
+#+begin_src lisp
+(multiple-value-bind (response handledp)
+    (lack/component:call mod env)
+  (cond
+    (handledp response)
+    (t
+     (setf (getf env :path-info) saved-path-info)
+     (funcall app env))))      ; fall through to next mount
+#+end_src
+
+So a module returning =(values '(404 …) nil)= says "I don't claim
+this path"; the next mount gets a try with the original path
+restored. That's how two modules can both be mounted at ="="
+(=shiso-auth= and =home=) without colliding.
+
+A module that /does/ match its mapper but returns 404 for a real
+"not found" case returns =(values '(404 …) T)=. The dispatcher
+treats it as the final response.
+
+* Errors and the debugger
+
+With =:debugp t= (the =shiso:start= default), Woo invokes the SBCL
+debugger when a controller signals an error. In a SLIME/SLY
+connection this is great: you get a live stack trace, can inspect
+locals, and restart the request after fixing the code.
+
+In any non-interactive context (background process, mcp REPL,
+unit-test runner), the debugger blocks waiting for input. The
+worker thread hangs. The server stops responding.
+
+Production should always run with =:debugp nil=. Development from a
+terminal-without-debugger likewise. The flag isn't read from the
+environment by default; thread it through =start= explicitly.
+
+* Static files short-circuit
+
+A request to =/static/blog/cover.jpg= visits the session and CSRF
+middlewares (they're outermost), but the static-files middleware
+serves it directly and never enters the module-dispatch path. That
+matters for performance: every static asset request still pays for
+session lookup. If you're serving lots of public images, front the
+app with a reverse proxy that serves =/static/= without touching
+the Lisp process.
+
+* Why the layering ended up this way
+
+A few design choices that aren't obvious:
+
+** Session+CSRF outside, modules inside
+
+Session and CSRF need to run for every request, including ones
+that fall through to 404. Putting them outside the module mounts
+means a 404 still has a session and still can mint a CSRF token if
+needed (e.g., for a "log in to access this page" interstitial).
+
+** Static middleware outside the modules
+
+Static files predate every routing decision. Serving them from
+inside a module would require the module to claim =/static/*=,
+which would conflict with mounting that module at a prefix
+overlapping =/static/=.
+
+** Per-module mappers, not one global one
+
+A module's mapper holds its routes /un-prefixed/. The application
+strips the prefix at dispatch time. This means a module is
+trivially relocatable across applications and prefixes; the same
+=polls= module can be mounted at =/polls=, =/v1/polls=, =/=, or
+anywhere else without changing its source.
+
+* See also
+
+- [[file:module-system.org][The module system]] — registry semantics, late binding.
+- [[../reference/server.org][Reference: server]] — middleware exports.
+- [[../reference/routing.org][Reference: routing]] — module/application macros.

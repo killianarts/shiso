@@ -1,0 +1,144 @@
+#+TITLE: Reference: utils
+#+OPTIONS: toc:2 num:nil
+
+Package: =shiso/utils= (re-exported from =shiso=). Small helpers that
+controllers use constantly.
+
+* =*request*=  /parameter/
+
+The current Lack request object, bound for the duration of each
+controller call by the dispatcher. Outside a request it's =NIL=.
+
+#+begin_src lisp
+(lack/request:request-method shiso:*request*)           ; :GET, :POST, …
+(lack/request:request-path-info shiso:*request*)        ; "/polls/3"
+(lack/request:request-query-parameters shiso:*request*) ; alist of strings
+(lack/request:request-body-parameters shiso:*request*)  ; alist of strings
+(lack/request:request-env shiso:*request*)              ; the raw Clack env plist
+#+end_src
+
+* =http-response=  /function/
+
+#+begin_src lisp
+(shiso:http-response BODY &key (code 200) (headers nil)) => clack-response
+#+end_src
+
+Build a Clack-shaped response: =(STATUS HEADERS (BODY))=. =BODY= is
+a string. =HEADERS= is a plist appended to the default
+=:content-type "text/html; charset=utf-8"=.
+
+#+begin_src lisp
+(shiso:http-response "Hello")
+;; => (200 (:content-type "text/html; charset=utf-8") ("Hello"))
+
+(shiso:http-response "Gone" :code 410)
+;; => (410 (:content-type "text/html; charset=utf-8") ("Gone"))
+
+(shiso:http-response "{}" :headers '(:content-type "application/json"))
+;; => (200 (:content-type "text/html; charset=utf-8"
+;;          :content-type "application/json") ("{}"))
+#+end_src
+
+Note the duplicate =:content-type= in the third example — the
+default is appended, then your override. Most HTTP stacks honour the
+last value (yours), but if you're picky about wire format,
+construct the response list by hand.
+
+* =redirect-response=  /function/
+
+#+begin_src lisp
+(shiso:redirect-response URL &key (code 302)) => clack-response
+#+end_src
+
+Build a redirect:
+
+#+begin_src lisp
+(shiso:redirect-response "/dashboard")
+;; => (302 (:location "/dashboard") (""))
+#+end_src
+
+Use 301 (=:code 301=) for permanent redirects.
+
+* =url=  /function/
+
+See [[file:routing.org][reference: routing]] — =url= reverses a named route to a URL
+string. Reproduced here because it's used everywhere:
+
+#+begin_src lisp
+(shiso:url "polls:detail" :id "42")   ; => "/polls/42"
+#+end_src
+
+* =current-path=  /function/
+
+#+begin_src lisp
+(shiso:current-path) => string
+#+end_src
+
+The path-info of the current request. Equivalent to
+=(lack/request:request-path-info shiso:*request*)=. Useful in nav
+components that highlight the current page.
+
+* =static=  /function/
+
+#+begin_src lisp
+(shiso:static PATH) => "/static/<path>"
+#+end_src
+
+Build a static-file URL. Always prefer this over hard-coding
+=/static/= so a future change to the asset prefix is one edit.
+
+#+begin_src lisp
+(shiso:static "blog/cover.jpg")     ; => "/static/blog/cover.jpg"
+#+end_src
+
+* =absolute-url=  /function/
+
+#+begin_src lisp
+(shiso:absolute-url PATH) => "<scheme>://<host><path>"
+#+end_src
+
+Prepend the current request's scheme + host. Reads
+=lack/request:request-uri-scheme= and =lack/request:request-server-name=
+off =*request*=.
+
+#+begin_src lisp
+;; During a request to https://example.com/posts/1
+(shiso:absolute-url (shiso:static "og-image.png"))
+;; => "https://example.com/static/og-image.png"
+#+end_src
+
+If you're behind a reverse proxy, make sure it forwards
+=X-Forwarded-Proto= so =request-uri-scheme= reports =https= and not
+=http=. See [[../how-to/deploy.org][how-to: deploy]].
+
+* =post-request-p=  /function/
+
+#+begin_src lisp
+(shiso:post-request-p) => boolean
+#+end_src
+
+Shorthand for =(eq :POST (lack/request:request-method shiso:*request*))=.
+Common in controllers that handle both GET (render form) and POST
+(submit form) on the same route.
+
+* =parse-body-params=  /function/
+
+#+begin_src lisp
+(shiso:parse-body-params) => alist
+#+end_src
+
+Parse the current request's body as URL-encoded form data and return
+an alist of =(KEYWORD . STRING)=. Keys are interned in the =:keyword=
+package. Lack returns body params as =(string . string)=; this
+function re-keys them.
+
+#+begin_src lisp
+;; POST body: title=hello&body=world
+(shiso:parse-body-params)
+;; => ((:TITLE . "hello") (:BODY . "world"))
+#+end_src
+
+* See also
+
+- [[file:routing.org][Reference: routing]] — the =url= helper and module mounts.
+- [[file:auth.org][Reference: auth]] — current-user, session helpers.

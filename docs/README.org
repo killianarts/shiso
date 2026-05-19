@@ -1,0 +1,110 @@
+#+TITLE: Shiso documentation
+#+OPTIONS: toc:2 num:nil
+
+Shiso is a Django-shaped web framework for Common Lisp: modular apps,
+ORM-backed models, an auto-generated admin, session+CSRF auth, and a
+scaffolder that stamps both.
+
+This documentation follows the [[https://diataxis.fr/][Diátaxis]] model. It splits into four
+quadrants — pick the one that matches what you're trying to do right
+now.
+
+* Tutorials — /learning-oriented/
+
+Step-by-step lessons for someone meeting Shiso for the first time.
+Read these in order; later parts assume earlier setup.
+
+- [[file:tutorial/01-getting-started.org][1. Getting started]] — install Shiso, scaffold your first app, see
+  "Hello, world" in the browser.
+- [[file:tutorial/02-polls-part-1.org][2. The polls tutorial, part 1]] — models, the admin, and a list view.
+- [[file:tutorial/03-polls-part-2.org][3. The polls tutorial, part 2]] — detail/results/vote, forms with
+  CSRF, named URL routing.
+- [[file:tutorial/04-polls-part-3.org][4. The polls tutorial, part 3]] — tests, the lisp-unit2 setup,
+  fixtures.
+- [[file:tutorial/05-todo-app.org][5. Build a TODO app from scratch]] — a smaller worked example
+  covering a single CRUD resource end-to-end.
+- [[file:tutorial/06-authentication.org][6. Adding authentication]] — wiring =shiso-auth= into an app, login
+  / signup, and guarding modules behind =:require :login=.
+
+* How-to guides — /task-oriented/
+
+Goal-driven recipes. Skim by title until one matches your problem.
+
+- [[file:how-to/define-a-model.org][Define a model]]
+- [[file:how-to/register-a-model-in-admin.org][Register a model in the admin]]
+- [[file:how-to/render-a-form-with-csrf.org][Render a form with a CSRF token]]
+- [[file:how-to/mount-a-module-under-a-prefix.org][Mount a module under a URL prefix]]
+- [[file:how-to/serve-static-files.org][Serve static files]]
+- [[file:how-to/set-up-authentication.org][Set up authentication in a new project]]
+- [[file:how-to/customize-the-scaffolder-templates.org][Customize the scaffolder templates]]
+- [[file:how-to/run-from-a-repl.org][Run a Shiso app from a REPL]]
+- [[file:how-to/deploy.org][Deploy a Shiso app]]
+
+* Reference — /information-oriented/
+
+Every exported symbol, grouped by subsystem. Includes signatures,
+parameter shapes, return values, and one-line examples.
+
+- [[file:reference/routing.org][routing]] — =define-module=, =define-application=, =url=
+- [[file:reference/server.org][server]] — =start=, =stop=, middleware stack
+- [[file:reference/utils.org][utils]] — =http-response=, =redirect-response=,
+  =parse-body-params=, =static=, …
+- [[file:reference/models.org][models]] — =define-model=, field types, registry, introspection
+- [[file:reference/forms.org][forms]] — fields, validation, =make-model-form=, rendering
+- [[file:reference/admin.org][admin]] — =define-admin=, customisation options
+- [[file:reference/auth.org][auth]] — users, sessions, guards, login/logout/signup
+- [[file:reference/validators.org][validators]] — built-in validators and the resolver protocol
+- [[file:reference/cli.org][cli]] — the =shiso= scaffolder binary
+
+* Explanation — /understanding-oriented/
+
+Why Shiso looks the way it does. Read these when you want the
+mental model, not a step-by-step.
+
+- [[file:explanation/architecture.org][Architecture at a glance]]
+- [[file:explanation/request-lifecycle.org][The request lifecycle]]
+- [[file:explanation/module-system.org][The module system]]
+- [[file:explanation/model-metadata.org][Model metadata and the registry]]
+- [[file:explanation/admin-design.org][How the admin is built]]
+- [[file:explanation/auth-architecture.org][The authentication architecture]]
+
+* Working examples
+
+The =examples/= directory at the repository root contains two real,
+runnable Shiso apps that the tutorials walk through:
+
+- =examples/mysite/= — the Django-poll-style polls site
+  (Question / Choice / vote flow / admin).
+- =examples/todo/= — the TODO walkthrough (single resource, CRUD,
+  CSRF-protected forms, optional auth).
+
+Both can be loaded straight from a REPL or built into a binary with
+=make=. The tutorials cross-reference these files line by line.
+
+* Heads-up: the almighty-html =</> = DSL
+
+A handful of the gotchas in this documentation come from how the
+=almighty-html= HTML DSL (=</>=) macro walks its body. Three things
+to internalise early — every tutorial reminds you of these in
+context, but flagging them here too:
+
+1. =</>= looks up element names by /symbol name only/, ignoring the
+   symbol's package. =(models:title todo)= inside =</>= is parsed as
+   the HTML =<title>= element, not as a function call. Bind the
+   value to a local first: =(let ((todo-title (models:title todo)))
+   (ah:</> (span todo-title)))=.
+2. =</>= walks its body looking for component calls (symbol names
+   starting with =ac-=). Two-character symbols like =IF= crash the
+   detector, so don't write =(if …)= directly inside =</>=. Use
+   =when=, =unless=, =cond=, or compute the conditional value in a
+   surrounding =let= and reference it.
+3. =</>= passes its body straight through to the underlying element
+   function — =(loop …)= inside it evaluates normally, but the
+   compiler can't always track variable use through the macro
+   walker; if you see a spurious "variable X is defined but never
+   used" style warning that escalates to a compile-file failure,
+   move that piece out into a helper function.
+
+* License
+
+Shiso is MIT-licensed. See =LICENSE= at the repository root.

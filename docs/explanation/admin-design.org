@@ -1,0 +1,199 @@
+#+TITLE: How the admin is built
+#+OPTIONS: toc:2 num:nil
+
+The admin is the simplest /useful/ subsystem to read for getting a
+feel for Shiso. It's:
+
+- A normal Shiso module (=shiso-admin=).
+- A small registry of =admin-config= structs keyed by model name.
+- A handful of generic controllers that walk the model registry to
+  render lists, build forms, validate, and persist.
+
+* Components
+
+** =shiso/admin/registry.lisp= — the config object
+
+#+begin_src lisp
+(defclass admin-config ()
+  ((model-name    :reader admin-model-name)
+   (list-display  :reader admin-list-display  :initform nil)
+   (list-filter   :reader admin-list-filter   :initform nil)
+   (search-fields :reader admin-search-fields :initform nil)
+   (fieldsets     :reader admin-fieldsets     :initform nil)
+   (fields        :reader admin-fields        :initform nil)
+   (exclude       :reader admin-exclude       :initform nil)
+   (readonly      :reader admin-readonly      :initform nil)
+   (per-page      :reader admin-per-page      :initform 25)
+   (ordering      :reader admin-ordering      :initform nil)))
+#+end_src
+
+One per registered model. =define-admin= builds these from the
+=(:key val …)= options you write; =*admin-registry*= is a hash
+table keyed by registry symbol → =admin-config=.
+
+** =shiso/admin/routes.lisp= — the module
+
+#+begin_src lisp
+(routing:define-module shiso-admin
+  (:guard (:require :staff))
+  (:urls
+   (:GET  "/"                  'controllers:index                  "index")
+   (:GET  "/:model"            'controllers:model-instance-list    "model-instance-list")
+   (:GET  "/:model/build"      'controllers:model-instance-build   "model-instance-build")
+   (:POST "/:model/persist"    'controllers:model-instance-persist "model-instance-persist")
+   (:GET  "/:model/:id"        'controllers:model-instance-rebuild "model-instance-rebuild")
+   (:POST "/:model/:id"        'controllers:model-instance-repersist "model-instance-repersist")
+   (:POST "/:model/:id/delete" 'controllers:model-instance-delete  "model-instance-delete")))
+#+end_src
+
+Notice:
+
+- Module-level =:guard (:require :staff)= — no per-controller guard
+  needed; the entire module is gated.
+- The =:model= path parameter is the model name as a string. The
+  controller resolves it through the registry.
+- One template per "shape of action": list, build (create form),
+  persist (create submit), rebuild (edit form), repersist (edit
+  submit), delete.
+
+** =shiso/admin/controllers.lisp= — the generic handlers
+
+Every controller starts with:
+
+#+begin_src lisp
+(let* ((model-name (models:get-model-name model-name-str))
+       (config     (reg:get-admin model-name))
+       (model-class (models:model-class model-name))
+       …)
+  …)
+#+end_src
+
+Three lookups by name. From those, the controller has everything it
+needs: the class to query, the metadata to render columns, the
+config to honour user customisations.
+
+For example, =model-instance-list= is:
+
+#+begin_src lisp
+(defun model-instance-list (model-name-str)
+  (let* ((model-name (models:get-model-name model-name-str))
+         (config (reg:get-admin model-name))
+         (model-class (models:model-class model-name))
+         (items (mito:select-dao model-class))
+         (columns (display-columns model-name config))
+         (create-href (shiso/utils:url
+                        "shiso-admin:model-instance-build"
+                        :model model-name-str))
+         (title (format nil "~A List" (string-capitalize model-name-str))))
+    (render-page title
+                 (ah:</>
+                  (div
+                   (div :class "admin-actions"
+                     (a :href create-href :class "btn btn-primary" "Add New"))
+                   (ac-admin-table :columns columns
+                     :items items
+                     :model-name model-name-str))))))
+#+end_src
+
+=display-columns= picks =list-display= if set, otherwise falls back
+to "every editable slot's name from the registry". =mito:select-dao=
+on the class gives the rows. =ac-admin-table= is the
+=almighty-html= component that lays them out.
+
+The create/edit pair (=model-instance-build= /
+=model-instance-persist=, =model-instance-rebuild= /
+=model-instance-repersist=) both build a =model-form=:
+
+#+begin_src lisp
+(forms:make-model-form model-name
+                       :fields  (reg:admin-fields config)
+                       :exclude (reg:admin-exclude config)
+                       :instance instance
+                       :data data)
+#+end_src
+
+=make-model-form= reads =model-fields= off the registry, maps each
+to a form field class (=col-type-to-field-class=), and instantiates
+them with labels/help/validators from the metadata. The result is a
+form that the generic renderer turns into HTML.
+
+** =shiso/admin/components.lisp= — the HTML chrome
+
+Defines =ac-admin-page=, =ac-admin-nav=, =ac-admin-table=, and
+=ac-admin-flash= via =almighty-html:define-component=. Includes an
+inline =<style>= block — the admin doesn't rely on external CSS.
+
+The nav iterates over =all-registered-admins= and renders one link
+per model. So adding =(define-admin foo)= adds Foo to the sidebar
+without touching the nav.
+
+** =shiso/admin/middleware.lisp= — duplicated helpers
+
+This file re-implements a small handful of the same helpers that
+=shiso/utils= exports (=http-response=, =redirect-response=,
+=post-request-p=, =parse-body-params=). The duplication is
+historical; both versions work identically. There's a refactor
+waiting to collapse them.
+
+* What you can change without touching the admin
+
+The admin reads three things from the registry:
+
+1. =model-fields= → defines the columns shown and the form fields
+   built.
+2. =field-verbose-name= / =field-help-text= → labels and inline help.
+3. =field-validators= → enforced on form submission.
+
+So:
+
+- Re-titling a column: change =:verbose-name= on the slot.
+- Hiding a field: =:editablep nil= on the slot, or
+  =(:exclude FIELD)= in =define-admin=.
+- Restricting choices: =:choices ((:foo "Foo") (:bar "Bar"))= on the
+  slot. The admin renders a =<select>= and validates against the
+  =one-of= validator that field-type expansion installs.
+- Adding a column to the list: add the slot name to
+  =(:list-display …)=.
+
+You don't have to write controllers or templates. The same flow
+that ships handles arbitrary models.
+
+* What the admin doesn't do (yet)
+
+Treat the planned options in [[file:../reference/admin.org][reference: admin]] as honest signals:
+
+- =list-filter=, =search-fields=, =fieldsets=, =readonly=, =per-page=,
+  =ordering=: stored on the config but not yet consumed.
+
+The implementation order will likely be: list pagination, search,
+filtering, fieldsets, readonly. Each is a localised change to the
+list and form controllers. You can add any of them yourself by
+forking the admin module — it's about 200 lines.
+
+* The =:require :staff= choice
+
+The admin gates by =is-staff = T= rather than rolling its own
+permission system. That's a deliberately small abstraction: one
+boolean per user. The trade is simplicity over flexibility.
+
+If you need finer-grained admin permissions (e.g., "this user can
+edit Articles but not Authors"), the path is:
+
+1. Add your own permission table.
+2. Replace the module guard with a predicate guard:
+   =(:guard (:require (:predicate can-access-admin-p)))=.
+3. Add per-controller checks inside individual admin controllers
+   (or fork the admin module).
+
+There's no plan to bake group/role permissions into Shiso itself
+yet. The =is-staff= flag is the minimum viable thing the framework
+needs to keep =/admin= safe by default.
+
+* See also
+
+- [[file:model-metadata.org][Model metadata and the registry]] —
+  what the admin reads from.
+- [[../reference/admin.org][Reference: admin]] — exact options and
+  behaviour.
+- [[../how-to/register-a-model-in-admin.org][How-to: register a model
+  in the admin]] — the cookbook view.

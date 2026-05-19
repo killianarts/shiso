@@ -1,0 +1,216 @@
+#+TITLE: The authentication architecture
+#+OPTIONS: toc:2 num:nil
+
+Shiso's auth subsystem is opinionated in a few specific ways. This
+chapter spells out the choices and their consequences.
+
+* The four pieces
+
+#+begin_example
+┌─────────────────────────────────────────────────────────┐
+│  shiso/auth/user      Mito model: user, password-hash,  │
+│                       is-active, is-staff, last-login-at │
+│                                                          │
+│  shiso/auth/password  cl-pass wrapper: hash/verify       │
+│                                                          │
+│  shiso/auth/session   - Mito model: session             │
+│                       - DBI session store factory       │
+│                       - per-request helpers              │
+│                                                          │
+│  shiso/auth/guards    - Spec evaluator                  │
+│                       - Module-level :around method     │
+│                       - Per-controller macros/HOFs      │
+│                                                          │
+│  shiso/auth/forms     login-form, signup-form           │
+│  shiso/auth/controllers  login-view, logout-view, signup-view │
+│  shiso/auth/routes    /login, /logout, /signup           │
+└─────────────────────────────────────────────────────────┘
+#+end_example
+
+Eight files. ≈400 lines of Lisp. Everything else is provided by
+existing libraries (Lack middlewares, cl-pass, Mito).
+
+* The choices
+
+** Sessions, not bearer tokens
+
+The default credentials are email+password, the default flow is
+cookie-based sessions. That's the right default for the
+browser-facing apps Shiso is shaped for. For an API you'd add a
+bearer-token middleware in front of the session middleware; the
+session layer doesn't reject token-authenticated requests, it just
+ignores them.
+
+** DB-backed sessions, not in-memory
+
+Lack's session middleware can use in-memory storage, a file store,
+Memcached, or DBI. Shiso defaults to DBI pointed at Mito's
+connection.
+
+The trade: every request reads from the DB. With SQLite on the
+same host the cost is sub-millisecond. With Postgres on a hot
+network the cost is real. Most apps won't notice; high-traffic
+public apps should consider a Redis-backed store. The plumbing for
+that is a one-line change to =wrap-app=.
+
+The benefit: multi-process and multi-host deployments work out of
+the box. There's no sticky-session requirement at the load balancer
+layer.
+
+** A unified =user= table, not a polymorphic hierarchy
+
+There's one Mito model =shiso/auth/user:user= with the universal
+columns: email, password-hash, is-active, is-staff, last-login-at.
+That's the same shape as Django's =auth.User= — and like Django,
+the assumption is that you /extend/ rather than /replace/.
+
+Three patterns when you need more user fields:
+
+- *Add columns to the user model* by subclassing it. This works
+  because Mito (CLOS) supports inheritance.
+- *Side-table.* Add a =profile= model with a =user-id= FK and put
+  app-specific fields there. Most apps end up here.
+- *Tenant/multi-account flows.* Add an =account= model owned by a
+  user. Keep =user= as the identity table.
+
+What the framework doesn't ship: roles, groups, fine-grained
+permissions. The =is-staff= boolean is the minimum viable thing
+the admin needs.
+
+** CSRF on every state-changing method
+
+The middleware rejects POST/PUT/DELETE/PATCH without a valid token.
+GET/HEAD/OPTIONS bypass. That matches the OWASP/Django convention
+and is the safest default; the trade is that every form needs an
+=_csrf_token= hidden input (or =X-CSRF-Token= header).
+
+For a JSON API you'd typically disable CSRF for the API subtree and
+authenticate by bearer token instead. The current pattern: mount
+the API behind a separate =define-module= and wrap it with a
+different middleware stack outside of =wrap-app=.
+
+** Session ID rotation on login
+
+=login-user= sets =:change-id= in the session options. Lack's
+session middleware sees the flag at response finalize and rotates
+the session ID. The cookie carries the new ID; the old session row
+is replaced.
+
+Why: a "session fixation" attack works when an attacker hands the
+victim a known session ID, waits for the victim to authenticate,
+then re-uses the same ID. Rotating on login means the attacker's
+known ID stops working the moment the victim logs in.
+
+There's no equivalent rotation on logout — the session is /expired/
+instead (the cookie is unset, the row deleted). An attacker who
+captured the cookie before logout still can't re-use it, because
+the row is gone.
+
+** =next=-URL guarded against open redirect
+
+After successful login the controller honours a =?next=<url>= query
+parameter — /only if/ the URL is a local path:
+
+#+begin_src lisp
+(defun safe-next-url (raw)
+  (cond
+    ((null raw) nil)
+    ((and (stringp raw)
+          (plusp (length raw))
+          (char= (char raw 0) #\/)
+          (not (and (> (length raw) 1) (char= (char raw 1) #\/))))
+     raw)
+    (t nil)))
+#+end_src
+
+Starts with =/= but not =//=. The =//foo= form is rejected because
+some browsers interpret it as a protocol-relative URL, which would
+let an attacker craft =?next=//evil.com= and redirect victims off-
+site post-login.
+
+Absolute URLs (=http://…=) are rejected outright. So is anything
+that doesn't start with =/=.
+
+** Guards as data, not code
+
+A guard spec is a list literal:
+
+#+begin_src lisp
+(:guard (:require :login))
+(:guard (:require :staff))
+(:guard (:require :anonymous))
+(:guard (:require (:predicate owner-of-post-3-p)))
+#+end_src
+
+That's deliberate. The data form makes it easy to:
+
+- Read at runtime — the module's guard slot stores the spec
+  verbatim.
+- Cover with tests — pass specs into =check-guard= or
+  =evaluate-guard= and assert the response shape.
+- Compose programmatically — generate specs from configuration.
+
+The four spec types cover the bulk of real cases. =:predicate=
+handles everything else by punting to a user-supplied function.
+
+** No password reset, no email verification
+
+Both need a mailer. Shiso doesn't ship one. The recommended path:
+
+- Bring an SMTP library (=cl-smtp= or =mailgun=, etc.).
+- Add a =password-reset-token= column to your user subclass.
+- Build the controllers (/=password-reset=, =password-reset/done=,
+  =password-reset/confirm=) following the auth controller pattern.
+
+It's a few hundred lines of code per feature. The framework doesn't
+have a strong opinion about which mailer to use yet.
+
+** =is-active= is checked on every request
+
+=current-user= reads the session, finds the user, /and verifies
+=user-is-active=/. If you flip the flag to =NIL=, the user's next
+request goes anonymous — no log-out call needed. That's an
+operational convenience: disabling a user is a single column
+update; the session-eviction is automatic.
+
+* The middleware stack, again
+
+For completeness — the session+CSRF half of [[file:request-lifecycle.org][the request lifecycle]]:
+
+#+begin_example
+session middleware                  (reads/writes shiso_session)
+  └─ CSRF middleware                (validates _csrf_token / X-CSRF-Token)
+       └─ <static files, modules>
+#+end_example
+
+Both are installed by =shiso/server:wrap-app= /every time= you call
+=shiso:start=. Removing them is theoretically possible (rebuild
+=wrap-app=) but undermines the auth subsystem entirely — the
+=shiso-auth= module expects to find sessions in env, and module
+guards expect to read =current-user= from them.
+
+* Where the auth code is
+
+#+begin_example
+src/auth/
+├── package.lisp          — top-level :export re-exports
+├── password.lisp         — hash/verify wrappers
+├── user.lisp             — Mito model + CRUD helpers
+├── session.lisp          — Mito session model, store factory, current-user
+├── guards.lisp           — spec evaluator + module :around + macros
+├── forms.lisp            — login-form, signup-form
+├── controllers.lisp      — login-view, logout-view, signup-view
+└── routes.lisp           — the shiso-auth define-module
+#+end_example
+
+Worth reading top-to-bottom once. It's the only subsystem that
+exercises the form layer, the model layer, the routing layer, and
+the middleware stack together — the cleanest example of how the
+pieces compose.
+
+* See also
+
+- [[../reference/auth.org][Reference: auth]]
+- [[../how-to/set-up-authentication.org][How-to: set up authentication]]
+- [[../tutorial/06-authentication.org][Tutorial: adding authentication]]
+- [[file:request-lifecycle.org][The request lifecycle]]

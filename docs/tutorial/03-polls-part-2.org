@@ -1,0 +1,249 @@
+#+TITLE: 3. The polls tutorial — part 2
+#+OPTIONS: toc:2 num:nil
+
+[[file:02-polls-part-1.org][Part 1]] left you with a working index page
+and dead links to =/polls/:id=. This part fills in the
+detail/results/vote flow and shows how Shiso handles forms with
+CSRF.
+
+By the end you'll be able to:
+
+- Vote on a question and see the count update.
+- Re-render a page with an error message when the user submits a
+  bad form.
+- Generate URLs from named routes (instead of hard-coding paths
+  scattered through your templates).
+
+* Step 1 — A page layout helper
+
+Part 1 already wrote =hypermedia/components.lisp= with a =page=
+function. Let's extend the stylesheet to cover the new pages:
+
+#+begin_src lisp
+(defparameter *style* "
+body { font-family: system-ui, sans-serif; max-width: 640px;
+       margin: 2rem auto; padding: 0 1rem; }
+h1 { margin-bottom: 1rem; }
+ul.questions { list-style: none; padding: 0; }
+ul.questions li { padding: 0.5rem 0; border-bottom: 1px solid #eee; }
+form.vote { margin-top: 1rem; }
+form.vote label { display: block; padding: 0.25rem 0; }
+button { margin-top: 0.75rem; padding: 0.5rem 1rem; }
+.results li { padding: 0.25rem 0; }
+.error { color: #c00; }
+")
+#+end_src
+
+Nothing changes about the =page= function itself.
+
+* Step 2 — Render a CSRF token
+
+POST/PUT/DELETE/PATCH requests must include a valid =_csrf_token=
+hidden input. Shiso installs Lack's CSRF middleware automatically
+when the auth subsystem is loaded — meaning every form you render
+needs the token, or the middleware will reject the submission with
+=400 Bad Request=.
+
+Add a helper to your controllers file:
+
+#+begin_src lisp
+(defun csrf-token-input ()
+  "Render a hidden CSRF token input for the current request's session."
+  (let* ((env (lack/request:request-env s:*request*))
+         (session (getf env :lack.session))
+         (token (and session (lack/middleware/csrf:csrf-token session))))
+    (when token
+      (ah:</> (input :type "hidden" :name "_csrf_token" :value token)))))
+#+end_src
+
+Three things to notice:
+
+- =s:*request*= is bound to the current Lack request for the
+  duration of a controller. The session lives on the request's env
+  plist under =:lack.session= (a hash table maintained by the
+  session middleware).
+- =lack/middleware/csrf:csrf-token= lazily mints the token on first
+  read and stores it back on the session.
+- We render the input only if the token resolves; if you call this
+  outside an active request, you get =nil= back (which renders as
+  nothing), not an error.
+
+There's a how-to that walks through this in more depth:
+[[file:../how-to/render-a-form-with-csrf.org][how-to: render a form with CSRF]].
+
+* Step 3 — Implement =detail=
+
+Add to =polls/controllers=:
+
+#+begin_src lisp
+(defun choice-radios (question)
+  (ah:</>
+   (<>
+     (loop for choice in (models:choices-for-question question)
+           for cid = (princ-to-string (mito:object-id choice))
+           collect (ah:</>
+                    (label
+                      (input :type "radio" :name "choice" :value cid)
+                      (models:choice-text choice)))))))
+
+(defun detail (id-str)
+  (let* ((id (parse-integer id-str :junk-allowed t))
+         (question (models:find-question id))
+         (error-msg (cdr (assoc "error"
+                                (lack/request:request-query-parameters s:*request*)
+                                :test #'string=))))
+    (cond
+      ((null question)
+       (s:http-response "Question not found." :code 404))
+      (t
+       (let* ((error-block (when error-msg
+                             (ah:</> (p :class "error" error-msg))))
+              (q-text (models:question-text question)))
+         (render
+          q-text
+          (ah:</>
+           (div
+             (h1 q-text)
+             error-block
+             (form :class "vote" :method "POST"
+                   :action (s:url "polls:vote" :id id-str)
+               (csrf-token-input)
+               (choice-radios question)
+               (button :type "submit" "Vote"))))))))))
+#+end_src
+
+Also export =#:detail= from the package definition at the top of
+the file. (Same for the other controllers we're about to add.)
+
+A few patterns worth pointing at:
+
+- *Path parameters arrive as strings.* The route =:GET "/:id"=
+  passes whatever appears in =:id= to your function as a string;
+  parse it yourself with =parse-integer=. Bad inputs become =NIL=
+  with =:junk-allowed t=, and your =find-question= guard handles
+  that case.
+- *=q-text= is bound before being passed into =</>=*. If you wrote
+  =(h1 (models:question-text question))= directly inside =</>=, the
+  DSL would treat =models:question-text= as an HTML element named
+  =question-text= and try to render it that way. Always bind
+  accessor results to a local before passing them into the DSL.
+- *=(<> …)= is the fragment marker.* The =choice-radios= helper
+  wraps the loop's collected list in =(<> …)= so the surrounding
+  =</>= treats it as a flat fragment rather than a single nested
+  element. The pattern shows up any time a helper returns a list of
+  siblings.
+- *=s:url= generates the URL from a named route.* When you mount the
+  =polls= module under =/polls= and ask for =polls:vote=, the
+  helper returns =/polls/:id/vote= with =:id= substituted from your
+  keyword args. Re-mounting the module at a different prefix updates
+  every URL in your app — no path strings to grep for.
+
+* Step 4 — Implement =results=
+
+#+begin_src lisp
+(defun results-list (question)
+  (ah:</>
+   (ul :class "results"
+     (loop for c in (models:choices-for-question question)
+           collect (ah:</>
+                    (li (format nil "~A — ~D vote~:P"
+                                (models:choice-text c)
+                                (models:votes c))))))))
+
+(defun results (id-str)
+  (let* ((id (parse-integer id-str :junk-allowed t))
+         (question (models:find-question id)))
+    (cond
+      ((null question)
+       (s:http-response "Question not found." :code 404))
+      (t
+       (let ((q-text (models:question-text question)))
+         (render
+          (format nil "Results for ~A" q-text)
+          (ah:</>
+           (div
+             (h1 q-text)
+             (results-list question)
+             (a :href (s:url "polls:detail" :id id-str) "Vote again")))))))))
+#+end_src
+
+Nothing new here — the pattern matches =detail=.
+
+* Step 5 — Implement =vote=
+
+#+begin_src lisp
+(defun vote (id-str)
+  (let* ((id (parse-integer id-str :junk-allowed t))
+         (question (models:find-question id)))
+    (cond
+      ((null question)
+       (s:http-response "Question not found." :code 404))
+      (t
+       (let* ((body (s:parse-body-params))
+              (choice-id-str (cdr (assoc :choice body)))
+              (choice-id (and choice-id-str
+                              (parse-integer choice-id-str :junk-allowed t)))
+              (choice (and choice-id
+                           (mito:find-dao (shiso/models:model-class 'choice)
+                                          :id choice-id))))
+         (cond
+           ((null choice)
+            (s:redirect-response
+             (format nil "~A?error=~A"
+                     (s:url "polls:detail" :id id-str)
+                     (quri:url-encode "You didn't select a choice." :encoding :utf-8))))
+           (t
+            (incf (models:votes choice))
+            (mito:save-dao choice)
+            (s:redirect-response (s:url "polls:results" :id id-str)))))))))
+#+end_src
+
+Two things worth pulling apart:
+
+** =s:parse-body-params=
+
+Returns the POST body as an alist of =(KEYWORD . STRING)=. The body
+of =(:choice "3")= comes through as =((:CHOICE . "3"))=. Lookup with
+=(cdr (assoc :choice body))=.
+
+** Post-then-redirect
+
+After a successful vote we redirect (302) to the results page rather
+than rendering directly. This is the standard
+[[https://en.wikipedia.org/wiki/Post/Redirect/Get][Post-Redirect-Get]] pattern —
+it prevents the browser's "refresh to resubmit" prompt from
+re-incrementing the vote count.
+
+On failure we redirect back to the detail page with an =?error=
+query parameter. The detail controller reads it and renders an
+error block above the form. This is the simplest cross-request
+error pattern; for richer flash messages you'd push the message
+into the session and read it back. There's no built-in flash helper
+yet — open an issue if you need one.
+
+* Step 6 — Try it
+
+Rebuild, restart, visit =/polls=, click a question, pick a choice,
+and hit "Vote". You should land on the results page with the chosen
+choice's count incremented.
+
+If you submit without selecting a choice you'll bounce back to the
+detail page with "You didn't select a choice." rendered in red.
+
+If the form 400s instead, the CSRF token isn't being included.
+Double-check that =(csrf-token-input)= is inside the =(form …)=
+form and not buried somewhere it gets stripped.
+
+* What you have
+
+The vote flow works end-to-end:
+
+- =GET /polls/= lists the latest questions.
+- =GET /polls/:id= renders a question with a radio form.
+- =POST /polls/:id/vote= records the vote (CSRF-protected) and
+  redirects.
+- =GET /polls/:id/results= shows the tally.
+- 404s for missing questions; query-param error rendering for the
+  "no choice selected" case.
+
+[[file:04-polls-part-3.org][Continue to part 3]] to add tests.

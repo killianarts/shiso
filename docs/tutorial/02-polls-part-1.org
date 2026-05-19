@@ -1,0 +1,508 @@
+#+TITLE: 2. The polls tutorial — part 1
+#+OPTIONS: toc:2 num:nil
+
+This is the Shiso adaptation of Django's official polls tutorial.
+By the end of all three parts you'll have built a small voting site
+with:
+
+- Two models — =question= and =choice= — backed by SQLite via Mito.
+- The Shiso admin auto-generated for both.
+- An index of recent polls, a per-poll detail/vote page, and a
+  per-poll results page.
+- A CSRF-protected vote endpoint.
+- Tests covering the model helpers and the URL surface.
+
+The finished version lives at =examples/mysite/= in the Shiso
+repository. You can run it directly:
+
+#+begin_src bash
+cd examples/mysite
+vend get
+make
+./mysite
+#+end_src
+
+In this part you'll set up the project, write the =question= and
+=choice= models, register them in the admin, and ship the polls
+index page.
+
+* The project layout
+
+Django's split between /project/ and /app/ maps directly onto
+Shiso's split between /application/ and /module/.
+
+- *Project / application* — the top-level system (=mysite=). It owns
+  =main.lisp= (entry point), =routes.lisp= (the
+  =define-application= form that mounts everything), database setup,
+  and configuration. There is one of these per deployable.
+- *App / module* — a reusable feature unit (=polls=). A module
+  defines its own routes, controllers, models, forms, and components.
+  An application mounts zero or more modules under URL prefixes.
+
+That distinction matters for naming: the application is =mysite=, the
+poll-handling module is =polls=. Re-using the same name for both would
+clash at the ASDF system-name level.
+
+* Step 1 — Scaffold
+
+Create the application and the module:
+
+#+begin_src bash
+shiso new-application mysite
+cd mysite
+shiso new-module polls
+#+end_src
+
+After =new-module=, the layout looks like this (some files trimmed):
+
+#+begin_example
+mysite/
+├── Makefile
+├── build.lisp
+├── mysite.asd
+└── src/
+    ├── main.lisp
+    ├── package.lisp
+    ├── routes.lisp
+    └── modules/
+        └── polls/
+            ├── controllers.lisp
+            ├── forms.lisp
+            ├── hypermedia/
+            │   └── components.lisp
+            ├── models.lisp
+            ├── polls.asd
+            ├── polls.lisp
+            └── routes.lisp
+#+end_example
+
+The scaffolder explicitly /does not/ edit your =mysite.asd= or
+=src/routes.lisp= — it prints the lines you need to add. We'll wire
+the module in by hand in a moment.
+
+* Step 2 — Declare the dependency
+
+Open =mysite.asd= and add =:polls= to =:depends-on=:
+
+#+begin_src lisp
+(defsystem "mysite"
+  :description "mysite — the Django-poll-style Shiso tutorial app"
+  :version "0.1"
+  :depends-on (:shiso
+               :polls)             ; <- new
+  :build-operation "program-op"
+  :build-pathname "mysite"
+  :entry-point "mysite:main"
+  :components ((:module "src"
+                :serial t
+                :components ((:file "package")
+                             (:file "routes")
+                             (:file "main")))))
+#+end_src
+
+ASDF discovers =polls= via the source registry — its =polls.asd= sits
+inside =src/modules/polls/=, and =vend= will pick it up there.
+
+Now mount the module in =src/routes.lisp=:
+
+#+begin_src lisp
+(defpackage #:mysite/routes
+  (:use #:cl)
+  (:local-nicknames (#:s #:shiso))
+  (:export #:application))
+
+(in-package #:mysite/routes)
+
+(s:define-application application ()
+  (:modules
+   ("/admin" shiso-admin)        ; the bundled admin
+   (""       shiso-auth)         ; /login, /logout, /signup
+   ("/polls" polls)))             ; our module
+#+end_src
+
+Three mounts. =shiso-admin= and =shiso-auth= are framework-provided
+modules — wiring them is one line each. The =polls= module is yours,
+mounted under =/polls=.
+
+* Step 3 — Define the models
+
+Open =src/modules/polls/models.lisp= and replace its contents with:
+
+#+begin_src lisp
+(defpackage #:polls/models
+  (:use #:cl)
+  (:export
+   #:question-text #:pub-date
+   #:question-id #:choice-text #:votes
+   #:all-questions #:find-question #:choices-for-question
+   #:create-choice #:question-published-recently-p))
+
+(in-package #:polls/models)
+
+(shiso:define-model question
+    ((question-text :field-type :char
+                    :max-length 200
+                    :verbose-name "Question text"
+                    :help-text "The text shown to voters."
+                    :accessor question-text)
+     (pub-date :field-type :datetime
+               :verbose-name "Date published"
+               :default (local-time:now)
+               :accessor pub-date)))
+
+(shiso:define-model choice
+    ((question-id :field-type :integer
+                  :verbose-name "Question id"
+                  :help-text "Primary key of the question this choice belongs to."
+                  :accessor question-id)
+     (choice-text :field-type :char
+                  :max-length 200
+                  :verbose-name "Choice text"
+                  :accessor choice-text)
+     (votes :field-type :integer
+            :default 0
+            :editablep nil
+            :accessor votes)))
+#+end_src
+
+A few things worth unpacking:
+
+** =define-model= is /not/ raw Mito
+
+It's a thin macro on top of =mito:deftable= that:
+
+1. Expands the =:field-type= shorthand into a =:col-type= plus
+   sensible defaults — =:char= becomes =(:varchar N)= with a
+   =max-length= validator wired up; =:datetime= becomes
+   =:timestamptz= with a =datetime-local= form widget; etc.
+2. Strips Shiso-specific options like =:verbose-name=, =:help-text=,
+   =:validators=, and =:choices= before handing the cleaned slot
+   definitions to Mito.
+3. Records the original metadata in =shiso/models:*model-registry*=
+   so the admin, forms, and introspection helpers can find it.
+
+A complete list of field types is in [[file:../reference/models.org][reference: models]].
+
+** Slot symbols and the accessor pattern
+
+Slot symbols live in the package where =define-model= is called
+(here, =polls/models=). That means =(slot-value question 'question-text)=
+from a /controller/ would fail — the controller's =question-text= is a
+different symbol than the model's.
+
+Two ways to dodge this:
+
+- The clean way (used above): pass =:accessor question-text= explicitly
+  on the slot. The accessor is a function exported from
+  =polls/models=, callable from any package as =polls/models:question-text=
+  or via a local nickname.
+- The lazy way: don't. Use =(slot-value q 'polls/models::question-text)=
+  with the qualified symbol. Works but reads badly.
+
+Always prefer the accessor pattern in modules you intend to reuse.
+
+** Why =question-id= and not Mito's =:col-type CLASS= FK?
+
+Mito's =deftable= supports a real foreign-key declaration —
+=(question :col-type question :initarg :question)= sets up a join with
+an automatic =question-id= column behind it. It works, but the class
+symbol must resolve to the model class /which lives in the
+=shiso/models/registry= package/, not in your model's package. That
+means you'd have to write =:col-type shiso/models/registry::question=
+or import the registry symbol back into your package after the model
+is defined. Both options are workable for a real project; both are
+painful to teach in a first tutorial.
+
+So this tutorial keeps the relationship as a plain =:integer= slot
+named =question-id=, with the lookup done manually in
+=choices-for-question= below. If you want the Mito-managed FK, see
+[[file:../how-to/define-a-model.org][how-to: define a model]] for the
+exact incantation.
+
+* Step 4 — Add the query helpers
+
+Append these to the same file:
+
+#+begin_src lisp
+(defun all-questions (&key (limit 5))
+  "Return the LIMIT most recently-published questions, newest first."
+  (mito:select-dao (shiso/models:model-class 'question)
+    (sxql:order-by (:desc :pub-date))
+    (sxql:limit limit)))
+
+(defun find-question (id)
+  "Return the question with primary key ID, or NIL."
+  (when id
+    (mito:find-dao (shiso/models:model-class 'question) :id id)))
+
+(defun choices-for-question (question)
+  "Return all choices belonging to QUESTION, in id order."
+  (mito:select-dao (shiso/models:model-class 'choice)
+    (sxql:where (:= :question-id (mito:object-id question)))
+    (sxql:order-by :id)))
+
+(defun create-choice (question text)
+  "Create and persist a choice for QUESTION with TEXT."
+  (mito:create-dao (shiso/models:model-class 'choice)
+                   :question-id (mito:object-id question)
+                   :choice-text text))
+
+(defun question-published-recently-p (question)
+  "T iff QUESTION was published in the last 24 hours."
+  (let* ((pub (pub-date question))
+         (one-day-ago (local-time:timestamp- (local-time:now) 1 :day)))
+    (local-time:timestamp> pub one-day-ago)))
+#+end_src
+
+The pattern =(mito:select-dao (shiso/models:model-class 'question)
+…)= shows up everywhere — Shiso's registry resolves =NAME= (a symbol
+in your package) to the canonical class object. =find-dao= and
+=create-dao= take the same first argument shape.
+
+* Step 5 — Register the models in the admin
+
+Below the model definitions:
+
+#+begin_src lisp
+(shiso/admin:define-admin question
+  (:list-display question-text pub-date))
+
+(shiso/admin:define-admin choice
+  (:list-display choice-text votes question-id))
+#+end_src
+
+=define-admin= registers the model for CRUD in the bundled admin.
+=:list-display= sets which columns appear in the model's list view.
+The full set of options (=:list-filter=, =:search-fields=,
+=:fields=, =:exclude=, =:readonly=, =:per-page=, =:ordering=, …)
+lives in [[file:../reference/admin.org][reference: admin]].
+
+* Step 6 — Wire the database
+
+The scaffolded =src/main.lisp= only starts the server. Replace its
+contents with:
+
+#+begin_src lisp
+(in-package #:mysite)
+
+(defun setup-database ()
+  (ensure-directories-exist #P"db/")
+  (mito:connect-toplevel :sqlite3 :database-name "db/mysite.db")
+  (shiso/auth:ensure-tables)
+  (dolist (name (shiso/models:all-models))
+    (mito:ensure-table-exists (shiso/models:model-class name))))
+
+(defun start (&key (host "127.0.0.1") (port 5000))
+  (setup-database)
+  (shiso:start mysite/routes:application :host host :port port))
+
+(defun stop ()
+  (shiso:stop))
+
+(defun main ()
+  (start)
+  (loop (sleep 60)))
+#+end_src
+
+And export the new functions from =src/package.lisp=:
+
+#+begin_src lisp
+(defpackage #:mysite
+  (:use #:cl)
+  (:export #:main #:start #:stop))
+#+end_src
+
+What this does:
+
+- =mito:connect-toplevel= opens a SQLite file under =db/=. Use
+  =:postgres= or =:mysql= in real deployments.
+- =shiso/auth:ensure-tables= creates the =shiso_user= and
+  =shiso_session= tables. Even if you don't have any auth-guarded
+  routes yet, =shiso-auth= and =shiso-admin= need them.
+- =(dolist (name (shiso/models:all-models)) …)= walks every
+  registered Shiso model and ensures its table exists. After you
+  =define-model= a new thing, restarting the server creates its
+  table automatically. For production schema changes, use
+  =mito:migrate-table=.
+
+* Step 7 — A minimal index page
+
+Open =src/modules/polls/controllers.lisp= and replace its body:
+
+#+begin_src lisp
+(defpackage #:polls/controllers
+  (:use #:cl)
+  (:local-nicknames (#:s #:shiso)
+                    (#:ah #:almighty-html)
+                    (#:models #:polls/models)
+                    (#:hy #:polls/hypermedia))
+  (:export #:index))
+
+(in-package #:polls/controllers)
+
+(defun render (title body)
+  (s:http-response (hy:page title body)))
+
+(defun question-list (questions)
+  (ah:</>
+   (ul :class "questions"
+     (loop for q in questions
+           for id-str = (princ-to-string (mito:object-id q))
+           collect (ah:</>
+                    (li (a :href (s:url "polls:detail" :id id-str)
+                          (models:question-text q))))))))
+
+(defun index ()
+  (let* ((questions (models:all-questions :limit 5))
+         (body-content (cond ((null questions)
+                              (ah:</> (p "No polls are available.")))
+                             (t (question-list questions)))))
+    (render
+     "Polls"
+     (ah:</>
+      (div
+        (h1 "Latest polls")
+        body-content
+        (a :href "/admin" "Admin"))))))
+#+end_src
+
+And the corresponding =src/modules/polls/hypermedia/components.lisp=:
+
+#+begin_src lisp
+(defpackage #:polls/hypermedia
+  (:use #:cl)
+  (:local-nicknames (#:ah #:almighty-html))
+  (:export #:page))
+
+(in-package #:polls/hypermedia)
+
+(defparameter *style* "
+body { font-family: system-ui, sans-serif; max-width: 640px;
+       margin: 2rem auto; padding: 0 1rem; }
+h1 { margin-bottom: 1rem; }
+ul.questions { list-style: none; padding: 0; }
+ul.questions li { padding: 0.5rem 0; border-bottom: 1px solid #eee; }
+")
+
+(defun page (page-title body)
+  "Render PAGE-TITLE and BODY into a complete HTML page string."
+  (ah:render-to-string
+   (ah:</>
+    (html :lang "en"
+      (head
+        (meta :charset "utf-8")
+        (meta :name "viewport" :content "width=device-width, initial-scale=1")
+        (title page-title)
+        (style *style*))
+      (body body)))))
+#+end_src
+
+** A note about =</>=
+
+=almighty-html='s =</>= is the HTML-DSL macro. Three things to know
+that bite first-time users:
+
+1. *It looks up element names by name, not by package.* Inside =</>=,
+   =(models:title todo)= will be parsed as the HTML =<title>= element
+   with =todo= as its body, /not/ as a function call to
+   =models:title=. Bind values to locals before passing them in:
+   =(let ((todo-title (models:title todo))) (ah:</> (span todo-title)))=.
+2. *Don't put =if= inside =</>=.* The component-detector walks the
+   body and calls =subseq= on every symbol's name; on a two-character
+   symbol like =IF= it crashes, and the SBCL compiler surfaces the
+   damage as a confusing "variable unused" style-warning that
+   escalates to compile failure. Use =when=, =cond=, or compute the
+   conditional in a surrounding =let= (we do exactly this with
+   =body-content= above).
+3. *=(loop …)= inside =</>= evaluates normally* — that's how the
+   =question-list= helper works. The macro passes its body through
+   to the element function, which receives the loop's collected list
+   as its children.
+
+These constraints are documented up front in [[file:../README.org][docs/README]] and
+revisited every time they apply.
+
+* Step 8 — Add the routes
+
+Open =src/modules/polls/routes.lisp=:
+
+#+begin_src lisp
+(defpackage #:polls/routes
+  (:use #:cl)
+  (:local-nicknames (#:s #:shiso)
+                    (#:controllers #:polls/controllers)))
+
+(in-package #:polls/routes)
+
+(s:define-module polls
+  (:urls (:GET  "/"            'controllers:index   "index")
+         (:GET  "/:id"         'controllers:detail  "detail")
+         (:GET  "/:id/results" 'controllers:results "results")
+         (:POST "/:id/vote"    'controllers:vote    "vote")))
+#+end_src
+
+We're declaring all four URLs the polls module will eventually
+handle — the controllers for =detail=, =results=, and =vote= don't
+exist yet, but that's fine. =define-module= stores controller
+designators as quoted symbols and looks them up at /request time/,
+not at expansion time. You can register a name before the function
+is defined; the first request that hits it will fail loudly until
+you fill it in.
+
+Route names are namespaced under the module name automatically, so
+the URL helper sees =polls:index=, =polls:detail=, =polls:results=,
+and =polls:vote=. We already use =polls:detail= in =question-list=
+above.
+
+* Step 9 — Run it
+
+Rebuild and run:
+
+#+begin_src bash
+make
+./mysite
+#+end_src
+
+Hit it:
+
+#+begin_src bash
+curl http://127.0.0.1:5000/polls
+#+end_src
+
+You should see the "Latest polls" page with a "No polls are
+available." message (since the database is empty).
+
+Now seed two questions from a REPL or by visiting
+=http://127.0.0.1:5000/admin=. The admin will ask you to sign in —
+follow [[file:06-authentication.org][adding authentication]] (or jump
+ahead and create a staff user from the REPL):
+
+#+begin_src lisp
+(in-package :cl-user)
+(asdf:load-system :mysite)
+(mito:connect-toplevel :sqlite3 :database-name "db/mysite.db")
+(shiso/auth:ensure-tables)
+(let ((u (shiso/auth:make-user "you@example.com" "yourpassword")))
+  (setf (shiso/auth:user-is-staff u) t)
+  (mito:save-dao u))
+#+end_src
+
+Restart the server, sign in at =/login=, visit =/admin=, click into
+=Question=, hit "Add New", and create one or two.
+
+Refresh =/polls= — your questions appear as links. The links go
+to =/polls/<id>= but currently 404 because =detail= isn't
+implemented yet.
+
+* What you have so far
+
+- Two models registered with Mito and the Shiso registry.
+- An admin generated from those models, gated behind staff
+  authentication.
+- A working index page that lists the latest five questions.
+- The URL surface declared up front, with a stable named route
+  graph so you can keep using =shiso:url= even while controllers
+  are still TODO.
+
+[[file:03-polls-part-2.org][Continue to part 2]] to implement the
+detail / results / vote flow.

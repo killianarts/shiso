@@ -1,0 +1,105 @@
+#+TITLE: How to mount a module under a URL prefix
+#+OPTIONS: toc:2 num:nil
+
+* The pattern
+
+#+begin_src lisp
+(shiso:define-application application ()
+  (:modules
+   ("/blog"    blog)            ; blog routes get a /blog/* prefix
+   ("/admin"   shiso-admin)
+   (""         shiso-auth)      ; root mount — paths stay as-is
+   (""         pages)))
+#+end_src
+
+Each =(PREFIX MODULE-NAME)= pair mounts =MODULE-NAME= such that
+incoming requests matching =PREFIX= have the prefix stripped before
+being dispatched to the module's mapper.
+
+So if the =blog= module declares a route =(:GET "/" 'blog-index
+"index")=, the request that lands is =GET /blog/= — the application
+matches the prefix, strips it, the module sees =/=, and dispatches
+to =blog-index=.
+
+* Prefix matching rules
+
+A request matches a mount iff:
+
+1. The request path starts with the prefix string, /and/
+2. Either the prefix is empty, or the request length equals the
+   prefix, or the next char in the request is =/=.
+
+So =/blog= and =/blog/= both hit the =blog= mount; =/blogger= does
+not (=g= isn't =/=). The exact algorithm is in
+=src/routing.lisp='s =define-application= expansion.
+
+* Fall-through
+
+Mounts are evaluated in declaration order. If the matched module
+returns a 404 — meaning its mapper didn't find the route — the
+dispatcher falls through to the next mount. So:
+
+#+begin_src lisp
+(:modules
+  (""  shiso-auth)        ; gets first crack at /login, /logout, /signup
+  (""  pages))            ; handles the rest of the root-level paths
+#+end_src
+
+A request to =/login= matches =shiso-auth=, succeeds, and returns.
+A request to =/about= matches =shiso-auth=, gets a 404 from its
+mapper, and falls through to =pages=.
+
+If nothing handles the request, the final fallback returns a 404.
+
+* Static files come first
+
+The application also installs a static-file middleware /before/ any
+module mount. Requests to =/static/<path>= are served by Shiso's
+static handler, which searches the project-wide =static/= directory
+plus every registered module's =static/= sub-directory.
+
+That means a module at =src/modules/blog/= with a
+=src/modules/blog/static/blog-cover.jpg= file is reachable at
+=/static/blog/blog-cover.jpg= during development. After
+=(shiso:collectstatic)= it's copied to the project's =static/=
+directory, and the same URL serves it from there. See [[file:serve-static-files.org][serve static
+files]] for the production flow.
+
+* Trailing slashes
+
+The dispatcher emits a 301 redirect from =/blog/= to =/blog= for any
+path longer than =/= that ends in a slash. Most browsers follow it;
+=curl= without =-L= will see the 301 directly. Don't write routes
+with trailing slashes — they'll never match.
+
+* Where the prefix shows up later
+
+The url helper accounts for it:
+
+#+begin_src lisp
+;; Blog module declared (:GET "/post/:id" 'show "show")
+;; Mounted at "/blog"
+(shiso:url "blog:show" :id "42")
+;; => "/blog/post/42"
+#+end_src
+
+Re-mounting the same module elsewhere updates every URL it
+generates. There are no path strings to grep for in templates.
+
+* Reading the current prefix
+
+If you need to know where a module is mounted at runtime:
+
+#+begin_src lisp
+(shiso:module-prefix (shiso:get-module :blog))
+;; => "/blog"
+#+end_src
+
+The prefix is a writable accessor (the application sets it during
+dispatch). For configuration purposes, treat it as read-only.
+
+* See also
+
+- [[file:../reference/routing.org][Reference: routing]] — =define-application=, =define-module=
+- [[file:../explanation/module-system.org][Explanation: the module system]]
+- [[file:serve-static-files.org][How to serve static files]]
