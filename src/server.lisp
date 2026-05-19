@@ -1,13 +1,25 @@
 (defpackage #:shiso/server
   (:use #:cl)
+  (:local-nicknames (#:session #:shiso/auth/session))
   (:export
    #:*server-connection*
    #:start
-   #:stop))
+   #:stop
+   #:wrap-app))
 
 (in-package #:shiso/server)
 
 (defparameter *server-connection* nil)
+
+(defun wrap-app (inner-app)
+  "Wrap INNER-APP with the standard shiso middleware stack: session
+(DB-backed via Mito's connection) and CSRF protection. The session
+middleware must precede CSRF so that the CSRF middleware can find the
+session in env."
+  (funcall lack/middleware/session:*lack-middleware-session*
+           (funcall lack/middleware/csrf:*lack-middleware-csrf*
+                    inner-app)
+           :store (session:make-store)))
 
 (defmacro start (app &rest args &key (host "127.0.0.1") (port 5000) (debugp t))
   (declare (ignore host port debugp))
@@ -20,9 +32,10 @@
       (restart-server ()
         :report "Restart the server"
         (stop))))
-  (setf *server-connection*
-        (clack:clackup (lambda (env) (funcall (symbol-value app-symbol) env))
-                       :server :woo :address host :port port :debug debugp)))
+  (let ((wrapped (wrap-app (symbol-value app-symbol))))
+    (setf *server-connection*
+          (clack:clackup (lambda (env) (funcall wrapped env))
+                         :server :woo :address host :port port :debug debugp))))
 
 (defun stop ()
   (prog1

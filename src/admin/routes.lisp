@@ -6,6 +6,7 @@
 (in-package #:shiso/admin/routes)
 
 (routing:define-module shiso-admin
+  (:guard (:require :staff))
   (:urls
    (:GET       "/"                  'controllers:index                            "index")
    (:GET       "/:model"            'controllers:model-instance-list              "model-instance-list")

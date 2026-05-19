@@ -92,16 +92,6 @@
     (assert-true (typep module 'shiso:module)
                  "shiso-admin should be registered as a module")))
 
-(define-test admin-module-dispatches-dashboard ()
-  (with-fresh-registries
-    (eval '(shiso/models:define-model dispatch-admin-test
-             ((title :col-type (:varchar 200)))))
-    (shiso/admin:register-admin 'dispatch-admin-test)
-    (let ((module (shiso:get-module :shiso-admin)))
-      (let ((response (lack/component:call module (make-test-env "/"))))
-        (assert-true (listp response) "Response should be a list")
-        (assert-eql 200 (first response) "Dashboard should return 200")))))
-
 (defun make-test-env (path &key (method :GET))
   "Create a minimal Lack environment for testing."
   (list :request-method method
@@ -119,19 +109,70 @@
         :headers (make-hash-table :test 'equal)
         :input (make-string-input-stream "")))
 
+(defclass fake-staff-user () ())
+(defmethod shiso/auth/user:user-is-staff ((u fake-staff-user)) t)
+(defmethod shiso/auth/user:user-is-active ((u fake-staff-user)) t)
+
+(defmacro with-fake-staff (&body body)
+  "Stub `shiso/auth/user:find-user-by-id' to return a fake staff user
+so module-level guards (which the admin module installs) treat the
+request as authenticated."
+  (let ((saved (gensym "SAVED")))
+    `(let ((,saved (fdefinition 'shiso/auth/user:find-user-by-id)))
+       (unwind-protect
+            (progn
+              (setf (fdefinition 'shiso/auth/user:find-user-by-id)
+                    (lambda (id)
+                      (declare (ignore id))
+                      (make-instance 'fake-staff-user)))
+              ,@body)
+         (setf (fdefinition 'shiso/auth/user:find-user-by-id) ,saved)))))
+
+(defun make-staff-env (path &key (method :GET))
+  "Like `make-test-env' but with a session attached so the admin guard
+treats the request as authenticated. Pair with `with-fake-staff'."
+  (let ((env (make-test-env path :method method))
+        (session (make-hash-table :test 'equal)))
+    (setf (gethash :user-id session) 1)
+    (append env (list :lack.session session
+                      :lack.session.options (list :id "test-sid")))))
+
+(define-test admin-module-dispatches-dashboard ()
+  (with-fresh-registries
+    (eval '(shiso/models:define-model dispatch-admin-test
+             ((title :col-type (:varchar 200)))))
+    (shiso/admin:register-admin 'dispatch-admin-test)
+    (with-fake-staff
+      (let ((module (shiso:get-module :shiso-admin)))
+        (let ((response (lack/component:call module (make-staff-env "/"))))
+          (assert-true (listp response) "Response should be a list")
+          (assert-eql 200 (first response) "Dashboard should return 200"))))))
+
 (define-test admin-dashboard-contains-model-links ()
   (with-fresh-registries
     (eval '(shiso/models:define-model link-test-model
              ((title :col-type (:varchar 200)))))
     (shiso/admin:register-admin 'link-test-model)
-    (let* ((module (shiso:get-module :shiso-admin))
-           (response (lack/component:call module (make-test-env "/")))
-           (body (third response)))
-      (assert-true (search "link-test-model" (first body))
-                   "Dashboard should contain model name in links"))))
+    (with-fake-staff
+      (let* ((module (shiso:get-module :shiso-admin))
+             (response (lack/component:call module (make-staff-env "/")))
+             (body (third response)))
+        (assert-true (search "link-test-model" (first body))
+                     "Dashboard should contain model name in links")))))
 
 (define-test admin-returns-404-for-unknown-route ()
-  (let ((module (shiso:get-module :shiso-admin)))
-    (let ((response (lack/component:call module (make-test-env "/nonexistent/deeply/nested"))))
-      (assert-eql 404 (first response)
-                  "Unknown route should return 404"))))
+  (with-fake-staff
+    (let ((module (shiso:get-module :shiso-admin)))
+      (let ((response (lack/component:call module
+                                           (make-staff-env "/nonexistent/deeply/nested"))))
+        (assert-eql 404 (first response)
+                    "Unknown route should return 404")))))
+
+(define-test admin-anonymous-redirects-to-login ()
+  (let* ((module (shiso:get-module :shiso-admin))
+         (response (lack/component:call module (make-test-env "/"))))
+    (assert-eql 302 (first response)
+                "Anonymous request to /admin should redirect to /login")
+    (assert-true (search "/login"
+                         (getf (second response) :location))
+                 "Redirect should target /login")))

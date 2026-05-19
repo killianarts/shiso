@@ -5,6 +5,7 @@
    #:module-routes
    #:module-prefix
    #:module-static-root
+   #:module-guard
    #:*module-registry*
    #:register-module
    #:get-module))
@@ -14,7 +15,8 @@
 (defclass module (lack/component::lack-component)
   ((routes :initarg :routes :accessor module-routes)
    (prefix :initarg :prefix :accessor module-prefix :initform "")
-   (static-root :initarg :static-root :accessor module-static-root :initform nil)))
+   (static-root :initarg :static-root :accessor module-static-root :initform nil)
+   (guard :initarg :guard :accessor module-guard :initform nil)))
 
 (defvar *module-registry* (make-hash-table :test 'eq)
   "Global registry of defined modules, keyed by module name (keyword).")

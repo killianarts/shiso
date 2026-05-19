@@ -15,6 +15,9 @@
                :lack-request
                :lack-response
                :lack-middleware-static
+               :lack-middleware-session
+               :lack-session-store-dbi
+               :lack-middleware-csrf
                :lack-app-file
                ;; Almighty Components
                :almighty-html
@@ -24,6 +27,8 @@
                :cl-ppcre
                ;; Pattern Matching
                :trivia
+               ;; Auth
+               :cl-pass
                )
   :components ((:module "src"
                 :serial t
@@ -32,7 +37,6 @@
                  (:file "static")
                  (:file "routing")
                  (:file "requests")
-                 (:file "server")
                  (:file "utils")
                  ;; Validators (no dependencies on models)
                  (:file "validators")
@@ -56,6 +60,19 @@
                                (:file "model-form")
                                (:file "rendering")
                                (:file "package")))
+                 ;; Auth (defined before admin so admin can guard with :staff)
+                 (:module "auth" :serial t
+                  :components ((:file "password")
+                               (:file "user")
+                               (:file "session")
+                               (:file "guards")
+                               (:file "forms")
+                               (:file "controllers")
+                               (:file "routes")
+                               (:file "package")))
+                 ;; Server — loaded after auth so it can install the
+                 ;; session+CSRF middleware stack using shiso/auth/session.
+                 (:file "server")
                  ;; Admin
                  (:module "admin" :serial t
                   :components ((:file "registry")
@@ -77,7 +94,8 @@
                  (:file "models")
                  (:file "validators")
                  (:file "forms")
-                 (:file "admin"))))
+                 (:file "admin")
+                 (:file "auth"))))
   :perform (test-op (o s)
                     (uiop:symbol-call :lisp-unit2 :run-tests
                                       :package :shiso/t/routes)
@@ -90,5 +108,7 @@
                     (uiop:symbol-call :lisp-unit2 :run-tests
                                       :package :shiso/t/forms)
                     (uiop:symbol-call :lisp-unit2 :run-tests
-                                      :package :shiso/t/admin)))
+                                      :package :shiso/t/admin)
+                    (uiop:symbol-call :lisp-unit2 :run-tests
+                                      :package :shiso/t/auth)))
 

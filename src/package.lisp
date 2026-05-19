@@ -33,12 +33,41 @@
   (:import-from #:shiso/admin
                 #:define-admin)
 
+  (:import-from #:shiso/auth
+                #:hash-password
+                #:verify-password
+                #:user
+                #:user-email
+                #:user-is-active
+                #:user-is-staff
+                #:make-user
+                #:find-user-by-email
+                #:find-user-by-id
+                #:set-password
+                #:check-password
+                #:ensure-tables
+                #:current-user
+                #:authenticatedp
+                #:login-user
+                #:logout-user
+                #:authenticate
+                #:check-guard
+                #:require-login
+                #:require-staff
+                #:login-required
+                #:staff-required
+                #:*login-url*
+                #:*post-login-redirect*)
+
   (:import-from #:shiso/utils
                 #:http-response
                 #:url
                 #:current-path
                 #:static
-                #:absolute-url)
+                #:absolute-url
+                #:post-request-p
+                #:parse-body-params
+                #:redirect-response)
   (:import-from #:shiso/models
                 ;; Structs
                 #:slot-metadata
@@ -110,9 +139,38 @@
    #:static
    #:absolute-url
    #:collectstatic
+   #:post-request-p
+   #:parse-body-params
+   #:redirect-response
 
    ;; Admin
    #:define-admin
+
+   ;; Auth
+   #:hash-password
+   #:verify-password
+   #:user
+   #:user-email
+   #:user-is-active
+   #:user-is-staff
+   #:make-user
+   #:find-user-by-email
+   #:find-user-by-id
+   #:set-password
+   #:check-password
+   #:ensure-tables
+   #:current-user
+   #:authenticatedp
+   #:login-user
+   #:logout-user
+   #:authenticate
+   #:check-guard
+   #:require-login
+   #:require-staff
+   #:login-required
+   #:staff-required
+   #:*login-url*
+   #:*post-login-redirect*
 
    ;; Models
    ;; Structs

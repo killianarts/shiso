@@ -116,10 +116,15 @@ Each URL spec is (METHOD PATH CONTROLLER NAME).
 METHOD can be a keyword or a list of keywords.
 Routes are registered with their original paths on the module's own mapper.
 Route names are namespaced under the module name (e.g., articles:index).
-The module instance is stored in the registry for url generation and mounting."
+The module instance is stored in the registry for url generation and mounting.
+
+A :guard option attaches an authentication/authorization guard that runs
+before any route in this module is dispatched. See `shiso/auth/guards'
+for the recognized specs (e.g. (:require :staff))."
   (let* ((module-name-str (string-downcase (symbol-name name)))
          (module-keyword (intern (string-upcase (symbol-name name)) :keyword))
          (urls (cdr (assoc :urls options)))
+         (guard (cadr (assoc :guard options)))
          (module-routes-var (gensym "MODULE-ROUTES"))
          ;; Detect static directory at compile time
          (source-path (or *compile-file-pathname* *load-pathname*))
@@ -145,7 +150,8 @@ The module instance is stored in the registry for url generation and mounting."
          (modules:register-module ,module-keyword
                           (make-instance 'modules:module
                                          :routes ,module-routes-var
-                                         :static-root ,static-root)))
+                                         :static-root ,static-root
+                                         :guard ',guard)))
        ',name)))
 
 (defmacro define-application (name () &body options)
@@ -199,14 +205,41 @@ the project's static/ directory and per-module static/ directories."
                           (list :location clean)
                           (list "")))
                   (funcall app env)))))
-        ;; Module mounts
+        ;; Module mounts. Each mount is a hand-rolled middleware (rather
+        ;; than lack's :mount) so that a module which doesn't match the
+        ;; request can fall through to the next mounted module instead of
+        ;; returning its own 404. The module's lack/component:call returns
+        ;; a second value indicating whether it handled the request.
         ,@(loop for (prefix mod-name) in modules
                 for mod-kw = (intern (string-upcase (symbol-name mod-name)) :keyword)
-                collect `(:mount ,prefix
-                          (lambda (env)
-                            (let ((mod (modules:get-module ,mod-kw)))
-                              (setf (modules:module-prefix mod) ,prefix)
-                              (lack/component:call mod env)))))
+                collect `(lambda (app)
+                           (let* ((prefix ,prefix)
+                                  (prefix-len (length prefix))
+                                  (mod-kw ,mod-kw))
+                             (lambda (env)
+                               (let ((path-info (getf env :path-info)))
+                                 (if (and path-info
+                                          (>= (length path-info) prefix-len)
+                                          (string= path-info prefix :end1 prefix-len)
+                                          (or (zerop prefix-len)
+                                              (= (length path-info) prefix-len)
+                                              (char= (aref path-info prefix-len) #\/)))
+                                     (let ((mod (modules:get-module mod-kw))
+                                           (saved-path-info path-info))
+                                       (setf (modules:module-prefix mod) prefix)
+                                       (when (plusp prefix-len)
+                                         (setf (getf env :path-info)
+                                               (if (= (length path-info) prefix-len)
+                                                   "/"
+                                                   (subseq path-info prefix-len))))
+                                       (multiple-value-bind (response handledp)
+                                           (lack/component:call mod env)
+                                         (cond
+                                           (handledp response)
+                                           (t
+                                            (setf (getf env :path-info) saved-path-info)
+                                            (funcall app env)))))
+                                     (funcall app env)))))))
         (lambda (env)
           (declare (ignore env))
           '(404 (:content-type "text/html") ("Not found")))))))

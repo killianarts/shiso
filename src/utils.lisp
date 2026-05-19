@@ -2,19 +2,40 @@
   (:use #:cl)
   (:local-nicknames (#:routing #:shiso/routing)
                     (#:modules #:shiso/modules)
-                    (#:requests #:shiso/requests))
+                    (#:requests #:shiso/requests)
+                    (#:req #:lack/request))
   (:export
    #:url
    #:current-path
    #:static
    #:absolute-url
-   #:http-response))
+   #:http-response
+   #:post-request-p
+   #:parse-body-params
+   #:redirect-response))
 
 (in-package #:shiso/utils)
 
 (defun http-response (body &key (code 200) (headers nil))
   (let ((headers (append `(:content-type "text/html; charset=utf-8") headers)))
     `(,code ,headers (,body)) ))
+
+(defun post-request-p ()
+  "Return T if the current request method is POST."
+  (eq :POST (req:request-method requests:*request*)))
+
+(defun parse-body-params ()
+  "Parse the current request body as URL-encoded form data and return an
+alist of (keyword . string)."
+  (let* ((body-params (req:request-body-parameters requests:*request*)))
+    (mapcar (lambda (pair)
+              (cons (intern (string-upcase (car pair)) :keyword)
+                    (cdr pair)))
+            body-params)))
+
+(defun redirect-response (url &key (code 302))
+  "Return a Clack-style redirect response to URL."
+  (list code (list :location url) '("")))
 
 (defun url (name &rest params)
   "Return the URL for a named route, with module prefix prepended.
