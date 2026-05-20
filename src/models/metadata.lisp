@@ -13,6 +13,7 @@
    #:slot-metadata-blankp
    #:slot-metadata-editablep
    #:slot-metadata-widget
+   #:slot-metadata-foreign-key
    ;; Model metadata
    #:model-metadata
    #:make-model-metadata
@@ -31,7 +32,8 @@
   choices       ; alist of (keyword . "Display Label") pairs, or nil
   (blankp nil)  ; t = field may be blank; nil = required
   (editablep t) ; nil = excluded from forms entirely
-  widget)       ; keyword override for rendering (:textarea, :hidden, etc.)
+  widget        ; keyword override for rendering (:textarea, :hidden, etc.)
+  foreign-key)  ; string -- target model name for FK columns, or nil
 
 (defstruct model-metadata
   "Metadata for a model: its CLOS class and ordered field definitions."

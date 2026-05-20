@@ -10,36 +10,49 @@ Package: =shiso/models= (re-exported from =shiso= for =define-model=).
 #+end_src
 
 Define a Mito-backed model class and register it in
-=*model-registry*=.
+=shiso/models:*model-registry*=.
 
 ** Slot definitions
 
-Each entry in =SLOTS= is =(SLOT-NAME &rest OPTIONS)=. Options are
-split into two groups when the macro expands:
+Each entry in =SLOTS= is =(SLOT-NAME &rest PLIST)=. The plist may
+mix two groups of keys:
 
-- *Shiso keys* (extracted into the registry, stripped from
-  =mito:deftable=): =:verbose-name=, =:help-text=, =:validators=,
-  =:choices=, =:blankp=, =:editablep=, =:widget=, =:field-type=.
-- *Mito/CLOS keys* (passed through to =deftable=): =:col-type=,
-  =:initform=, =:initarg=, =:accessor=, =:reader=, =:writer=,
-  =:inflate=, =:deflate=, =:references=, =:ghost=, =:documentation=,
-  =:allocation=, =:type=.
+- *Shiso keys* (extracted into the registry, stripped before the
+  slot reaches =mito:deftable=): =:field-type=, =:foreign-key=,
+  =:verbose-name=, =:help-text=, =:validators=, =:choices=,
+  =:blankp=, =:editablep=, =:widget=.
+- *Mito/CLOS keys* (passed through to =deftable= verbatim):
+  =:col-type=, =:initform=, =:initarg=, =:accessor=, =:reader=,
+  =:writer=, =:inflate=, =:deflate=, =:references=, =:ghost=,
+  =:documentation=, =:allocation=, =:type=.
 
 =:default= is an alias for =:initform=.
 
-** Options
+You rarely need to write =:accessor= by hand. Mito's =dao-table-class=
+auto-derives readers and writers using a =<MODEL-NAME>-= conc-name
+(see [[*Accessors are auto-derived][Accessors are auto-derived]] below).
 
-=OPTIONS= follows the slot list:
+** Class-level options
 
-| Option                  | Meaning                                          |
-|-------------------------+--------------------------------------------------|
-| =(:module MODULE-NAME)= | Associate the model with a routing module (planned) |
-| =(:table-name STRING)=  | Override the Mito table name                     |
+=OPTIONS= follows the slot list. Two flavours:
 
-Both options are currently inert pass-through — declared but
-unused by the framework. =(:table-name …)= specifically is a no-op
-in the current expansion; use Mito's =:table-name= class option
-directly if you need it.
+- =(:module MODULE-NAME)= — declared but currently inert. Reserved
+  for a future "associate this model with a routing module" feature.
+- Everything else is forwarded verbatim to =mito:deftable=. That
+  includes =(:table-name STRING)=, =(:unique-keys SLOT…)=,
+  =(:keys …)=, =(:primary-key SLOT)=, =(:auto-pk BOOL)=,
+  =(:record-timestamps BOOL)=, =(:conc-name SYMBOL)=.
+
+Example:
+
+#+begin_src lisp
+(shiso:define-model user
+    ((email :field-type :email)
+     (password-hash :field-type :text :editablep nil)
+     (is-active :field-type :boolean :default t))
+  (:table-name "shiso_user")
+  (:unique-keys email))
+#+end_src
 
 ** Class registration
 
@@ -47,7 +60,7 @@ The expansion produces:
 
 #+begin_src lisp
 (progn
-  (mito:deftable REGISTRY-PACKAGE::NAME () (mito-slots))
+  (mito:deftable REGISTRY-PACKAGE::NAME () (mito-slots) mito-options…)
   (shiso/models/registry:register-model
      'REGISTRY-PACKAGE::NAME (find-class 'REGISTRY-PACKAGE::NAME)
      (list slot-metadata …))
@@ -61,34 +74,109 @@ Two important consequences:
 - The class name lives in =shiso/models/registry=, not in your
   package. From your package, =shiso/models/registry::NAME= is the
   class symbol; the bare =NAME= you wrote is a /different/ symbol.
-- Slot symbols stay in your package. Accessors you declare are
-  interned in your package too. Other packages reaching for slots
-  via =slot-value= must use the qualified slot symbol or rely on
-  accessors.
+  When you pass a class to Mito, go through =(shiso/models:model-class
+  'NAME)= so the lookup is package-agnostic.
+- Slot symbols stay in /your/ package — that's where they were read.
+  Accessors (auto-derived or hand-written) also land in your package.
 
 See [[../explanation/model-metadata.org][explanation: model metadata]] for the full path.
+
+** Accessors are auto-derived
+
+When a slot has no explicit =:reader=/=:writer=/=:accessor=, Mito's
+metaclass interns one in the current package using the class's
+conc-name. For =(define-model user ((email …)))= in package
+=myapp/models= you get:
+
+| Function                 | Lives in            |
+|--------------------------+---------------------|
+| =myapp/models:user-email= | =myapp/models=     |
+| =(setf myapp/models:user-email)= | =myapp/models= |
+
+Export the names you want callers to use. To opt out, supply an
+explicit =:accessor= / =:reader= / =:writer=. To change the prefix,
+supply =(:conc-name MY-PREFIX-)= as a class option.
 
 * Field types
 
 Registered via =define-field-type=. The built-ins:
 
-| Keyword     | Mito col-type    | Defaults                                              |
-|-------------+------------------+-------------------------------------------------------|
-| =:char=     | =(:varchar N)=   | =:initarg :NAME=, =max-length= validator              |
-| =:text=     | =:text=          | =:initarg :NAME=, =:widget :textarea=                 |
-| =:integer=  | =:integer=       | =:initarg :NAME=                                      |
-| =:boolean=  | =:boolean=       | =:initarg :NAME=, =:widget :checkbox=                 |
-| =:choice=   | =(:varchar 50)=  | =:initarg :NAME=                                      |
-| =:email=    | =(:varchar 254)= | =:initarg :NAME=, =valid-email= validator, =:widget :email= |
-| =:slug=     | =(:varchar 200)= | =:initarg :NAME=, =matches-pattern "^[a-z0-9-]+$"=    |
+| Keyword     | Mito col-type     | Auto-applied                                                |
+|-------------+-------------------+-------------------------------------------------------------|
+| =:char=     | =(:varchar N)=    | =:initarg :NAME=, =max-length= validator                    |
+| =:text=     | =:text=           | =:initarg :NAME=, =:widget :textarea=                       |
+| =:integer=  | =:integer=        | =:initarg :NAME=                                            |
+| =:boolean=  | =:boolean=        | =:initarg :NAME=, =:widget :checkbox=                       |
+| =:choice=   | =(:varchar 50)=   | =:initarg :NAME=                                            |
+| =:email=    | =(:varchar 254)=  | =:initarg :NAME=, =valid-email= validator, =:widget :email= |
+| =:slug=     | =(:varchar 200)=  | =:initarg :NAME=, =matches-pattern "^[a-z0-9-]+$"=          |
 | =:url=      | =(:varchar 2000)= | =:initarg :NAME=, =matches-pattern "^https?://"=, =:widget :url= |
-| =:datetime= | =:timestamptz=   | =:initarg :NAME=, =:widget :datetime-local=           |
-| =:date=     | =:date=          | =:initarg :NAME=, =:widget :date=                     |
-| =:decimal=  | =(:numeric P S)= | =:initarg :NAME= (requires =:precision=, =:scale=)    |
+| =:datetime= | =:timestamptz=    | =:initarg :NAME=, =:widget :datetime-local=                 |
+| =:date=     | =:date=           | =:initarg :NAME=, =:widget :date=                           |
+| =:decimal=  | =(:numeric P S)=  | =:initarg :NAME= (requires =:precision=, =:scale=)          |
 
-User-provided slot options /win/ over the field-type defaults
-(except =:validators=, where the defaults are /prepended/ to your
-list so both run).
+User-provided slot options /win/ over the field-type defaults,
+except =:validators=, where the defaults are /prepended/ to your
+list so both run.
+
+** Foreign keys (=:foreign-key=)
+
+A slot with =:foreign-key "target-model"= becomes a plain integer
+FK column. The target is a /string/ resolved lazily through
+=shiso/models:*model-registry*=:
+
+#+begin_src lisp
+(article :foreign-key "article")
+;; → :col-type :integer :initarg :article :foreign-key "article"
+#+end_src
+
+- =:col-type= defaults to =:integer=. Override with another type
+  (=:bigint=, =:uuid=, etc.) by writing =:col-type= explicitly.
+- The target name is captured in slot metadata. Read it back with
+  =shiso/models:field-foreign-key=. Resolve it to a class with
+  =(shiso/models:model-class (shiso/models:field-foreign-key f))= or
+  =(shiso/models:get-model-name "article")=.
+- Combine with =(or X :null)= for nullable FKs:
+  =(parent :foreign-key "category" :field-type (or :integer :null))=.
+
+The target model does not need to be defined before the FK slot is
+declared — resolution is deferred until you actually read it.
+
+** Nullable columns
+
+Wrap the field type in =(or … :null)= to make the underlying column
+nullable. Either order works.
+
+#+begin_src lisp
+(last-login-at :field-type (or :datetime :null))
+(deleted-at   :field-type (or :null :datetime))
+#+end_src
+
+The wrap is recognised in two cases:
+
+1. /Registered field type/ — the inner type expands normally
+   (defaults, widget, initarg, validators all preserved), then the
+   resulting =:col-type= is wrapped in =(or … :null)=:
+
+   #+begin_src lisp
+   (image-url :field-type (or :url :null))
+   ;; →  :col-type (or (:varchar 2000) :null)
+   ;;    :widget :url
+   ;;    :initarg :image-url
+   ;;    :validators ((matches-pattern "^https?://"))
+   #+end_src
+
+2. /Raw Mito col-type/ — passed through and wrapped, with an
+   auto-derived =:initarg=:
+
+   #+begin_src lisp
+   (deleted-at :field-type (or :timestamptz :null))
+   ;; →  :col-type (or :timestamptz :null) :initarg :deleted-at
+   #+end_src
+
+Note: nullable here refers to the /database column/. To make a
+field optional at form-validation time as well, also set
+=:blankp t=.
 
 * =define-field-type=  /macro/
 
@@ -114,8 +202,9 @@ Then in a model: =(mobile :field-type :phone :region :us)=.
 (shiso/models:expand-field-type SLOT-DEF) => expanded-slot-def
 #+end_src
 
-Apply the field-type expansion to a single slot definition. Used by
-=define-model= internally; available for tooling.
+Apply the field-type expansion to a single slot definition,
+including the =(or … :null)= rewrite. Used by =define-model=
+internally; available for tooling.
 
 * =*field-types*=  /parameter/
 
@@ -200,6 +289,7 @@ For a =slot-metadata=:
 | =field-blankp=        | =T= = blank allowed; =NIL= = required (default)  |
 | =field-editablep=     | =NIL= = excluded from forms                      |
 | =field-widget=        | Widget keyword override or =NIL=                 |
+| =field-foreign-key=   | Target-model name string, or =NIL=               |
 
 =field-verbose-name= is the one that auto-derives. Other readers
 return =NIL= when nothing was provided.
@@ -209,6 +299,127 @@ return =NIL= when nothing was provided.
 Both are =defstruct=. Constructors =make-slot-metadata= and
 =make-model-metadata= take keyword args matching the slot names.
 You won't typically build these by hand — =define-model= does.
+
+* Worked examples
+
+** A =user= model (authentication)
+
+The canonical shape used by =shiso/auth=:
+
+#+begin_src lisp
+(in-package #:myapp/users)
+
+(shiso:define-model user
+    ((email :field-type :email
+            :verbose-name "Email"
+            :help-text "Used as the login identifier.")
+     (password-hash :field-type :text
+                    :verbose-name "Password hash"
+                    :editablep nil)
+     (is-active :field-type :boolean
+                :default t
+                :verbose-name "Active")
+     (is-staff :field-type :boolean
+               :default nil
+               :verbose-name "Staff"
+               :help-text "Staff users may access the admin.")
+     (last-login-at :field-type (or :datetime :null)
+                    :editablep nil
+                    :verbose-name "Last login"))
+  (:table-name "users")
+  (:unique-keys email))
+#+end_src
+
+Worth noting:
+
+- =:field-type :email= gives a 254-char varchar plus an email-format
+  validator and =widget :email= for forms.
+- =password-hash= is =:editablep nil= so admin/forms never offer it as
+  an input.
+- =last-login-at= is nullable via =(or :datetime :null)= — it's not
+  set until the first successful login.
+- =(:unique-keys email)= enforces email uniqueness at the SQL level.
+
+Accessors (=user-email=, =user-password-hash=, =user-is-active=,
+=user-is-staff=, =user-last-login-at=, and the matching =setf=
+functions) are auto-interned in =myapp/users=.
+
+** An e-commerce =product= model
+
+Shows decimals, choices, slugs, and a nullable image URL:
+
+#+begin_src lisp
+(in-package #:shop/models)
+
+(shiso:define-model product
+    ((sku :field-type :slug
+          :verbose-name "SKU"
+          :help-text "Lowercase letters, digits and dashes only.")
+     (name :field-type :char :max-length 200)
+     (description :field-type :text :blankp t)
+     (price :field-type :decimal :precision 10 :scale 2
+            :help-text "Price in USD.")
+     (status :field-type :choice
+             :choices ((:draft        "Draft")
+                       (:active       "Active")
+                       (:discontinued "Discontinued"))
+             :default :draft)
+     (inventory-count :field-type :integer :default 0
+                      :verbose-name "Inventory count")
+     (image-url :field-type (or :url :null)
+                :blankp t
+                :verbose-name "Image URL")
+     (published-at :field-type (or :datetime :null)
+                   :editablep nil))
+  (:unique-keys sku))
+#+end_src
+
+Worth noting:
+
+- =:precision 10 :scale 2= gives =NUMERIC(10,2)= — eight digits left
+  of the decimal, two right.
+- The =:choices= list backs both the rendered =<select>= and a
+  =one-of= validator that rejects out-of-set values.
+- =:blankp t= on =description= and =image-url= says the /form/
+  accepts blank input; pairing =:blankp t= with =(or :url :null)=
+  also makes the column nullable.
+
+** A =hotel-room= model
+
+Showcases unique keys on a non-id business key plus all-numeric
+slots:
+
+#+begin_src lisp
+(in-package #:hotel/models)
+
+(shiso:define-model room
+    ((room-number :field-type :char :max-length 10
+                  :verbose-name "Room number")
+     (floor :field-type :integer)
+     (room-type :field-type :choice
+                :choices ((:single "Single")
+                          (:double "Double")
+                          (:suite  "Suite")
+                          (:deluxe "Deluxe Suite"))
+                :default :single
+                :verbose-name "Room type")
+     (nightly-rate :field-type :decimal :precision 8 :scale 2
+                   :verbose-name "Nightly rate"
+                   :help-text "Base rate in local currency.")
+     (max-occupancy :field-type :integer :default 2
+                    :verbose-name "Max occupancy")
+     (smoking-allowed :field-type :boolean :default nil
+                      :verbose-name "Smoking allowed")
+     (last-cleaned-at :field-type (or :datetime :null)
+                      :editablep nil
+                      :verbose-name "Last cleaned")
+     (notes :field-type :text :blankp t))
+  (:unique-keys room-number))
+#+end_src
+
+This one is interesting because every nullable slot uses the
+=(or … :null)= wrap, and the unique key is on a human-meaningful
+string (=room-number=) rather than the surrogate =id=.
 
 * See also
 

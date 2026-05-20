@@ -7,8 +7,8 @@
 (in-package #:myapp/models)
 
 (shiso:define-model article
-    ((title :field-type :char :max-length 200 :accessor article-title)
-     (body  :field-type :text :accessor article-body)))
+    ((title :field-type :char :max-length 200)
+     (body  :field-type :text)))
 #+end_src
 
 Three things happen:
@@ -17,8 +17,9 @@ Three things happen:
 2. Slot metadata (verbose name, validators, widget choices, …) is
    captured in =shiso/models:*model-registry*= for the admin and form
    layers.
-3. The accessor =article-title= is interned in =myapp/models= and
-   should be exported if external callers will use it.
+3. Accessors =article-title= and =article-body= (plus their =setf=
+   functions) are auto-interned in =myapp/models=. Export the ones
+   you want callers to use.
 
 To create the SQL table, ensure =mito:connect-toplevel= has run, then:
 
@@ -30,21 +31,34 @@ The startup pattern in =main.lisp= loops over =(shiso/models:all-models)=
 and calls =ensure-table-exists= on each — see [[file:../tutorial/02-polls-part-1.org][the polls tutorial]]
 for the full =setup-database= function.
 
+* Accessors are automatic
+
+You don't need to write =:accessor= on each slot. Mito's
+=dao-table-class= auto-derives =<MODEL-NAME>-<SLOT-NAME>= accessors
+in the current package whenever a slot has no explicit
+=:reader=/=:writer=/=:accessor=. For =article= above you get
+=myapp/models:article-title= and =myapp/models:article-body= for
+free.
+
+Supply =:accessor= only when you want a different name or a
+different package. To change the prefix for the whole class, use
+=(:conc-name MY-PREFIX-)= as a class option.
+
 * Field types
 
-| Keyword     | Mito col-type         | Auto-applied validators / widgets                   |
-|-------------+-----------------------+-----------------------------------------------------|
-| =:char=     | =(:varchar N)=        | =max-length= validator                              |
-| =:text=     | =:text=               | =widget :textarea=                                  |
-| =:integer=  | =:integer=            | —                                                   |
-| =:boolean=  | =:boolean=            | =widget :checkbox=                                  |
-| =:choice=   | =(:varchar 50)=       | =one-of= validator from =:choices=                  |
-| =:email=    | =(:varchar 254)=      | =valid-email= validator, =widget :email=            |
-| =:slug=     | =(:varchar 200)=      | =matches-pattern "^[a-z0-9-]+$"=                    |
-| =:url=      | =(:varchar 2000)=     | =matches-pattern "^https?://"=, =widget :url=       |
-| =:datetime= | =:timestamptz=        | =widget :datetime-local=                            |
-| =:date=     | =:date=               | =widget :date=                                      |
-| =:decimal=  | =(:numeric P S)=      | requires =:precision=/=:scale=                      |
+| Keyword   | Mito col-type   | Auto-applied validators / widgets         |
+|-----------+-----------------+-------------------------------------------|
+| =:char=     | =(:varchar N)=    | =max-length= validator                      |
+| =:text=     | =:text=           | =widget :textarea=                          |
+| =:integer=  | =:integer=        | —                                         |
+| =:boolean=  | =:boolean=        | =widget :checkbox=                          |
+| =:choice=   | =(:varchar 50)=   | =one-of= validator from =:choices=            |
+| =:email=    | =(:varchar 254)=  | =valid-email= validator, =widget :email=      |
+| =:slug=     | =(:varchar 200)=  | =matches-pattern "^[a-z0-9-]+$"=            |
+| =:url=      | =(:varchar 2000)= | =matches-pattern "^https?://"=, =widget :url= |
+| =:datetime= | =:timestamptz=    | =widget :datetime-local=                    |
+| =:date=     | =:date=           | =widget :date=                              |
+| =:decimal=  | =(:numeric P S)=  | requires =:precision= / =:scale=              |
 
 Define your own with =shiso:define-field-type=. See [[file:../reference/models.org][reference: models]].
 
@@ -52,39 +66,82 @@ Define your own with =shiso:define-field-type=. See [[file:../reference/models.o
 
 These can appear on any slot in =define-model=:
 
-| Option          | Purpose                                                |
-|-----------------+--------------------------------------------------------|
-| =:field-type=   | Sugar for col-type + defaults (table above)            |
-| =:verbose-name= | Label shown in forms and admin lists                   |
-| =:help-text=    | Help string rendered next to form inputs               |
-| =:validators=   | List of validator designators                          |
-| =:choices=      | =((:key "Label") …)= for select inputs                 |
-| =:blankp=       | =T= = optional, =NIL= = required (default)             |
-| =:editablep=    | =NIL= excludes the field from admin forms              |
-| =:widget=       | Override the rendered widget (=:textarea=, =:hidden=…) |
-| =:default=      | Initial value at create time (alias for =:initform=)   |
+| Option        | Purpose                                                 |
+|---------------+---------------------------------------------------------|
+| =:field-type=   | Sugar for col-type + defaults (table above)             |
+| =:verbose-name= | Label shown in forms and admin lists                    |
+| =:help-text=    | Help string rendered next to form inputs                |
+| =:validators=   | List of validator designators                           |
+| =:choices=      | =((:key "Label") …)= for select inputs                    |
+| =:blankp=       | =T= = optional, =NIL= = required (default)                  |
+| =:editablep=    | =NIL= excludes the field from admin forms                 |
+| =:widget=       | Override the rendered widget (=:textarea=, =:hidden=, etc.) |
+| =:default=      | Initial value at create time (alias for =:initform=)      |
 
 Plus everything Mito understands: =:col-type=, =:initform=,
 =:initarg=, =:accessor=, =:reader=, =:writer=, =:references=,
 =:ghost=, etc. Shiso strips its own keys before handing the slot to
 Mito.
 
-* Required vs optional fields
+* Class-level options
 
-By default a field is required (=:blankp nil=). To make one optional:
+After the slot list, =define-model= accepts class options. The
+shiso-specific one is =(:module MODULE-NAME)= (declared but
+currently inert). Everything else is forwarded verbatim to
+=mito:deftable=:
+
+| Option                    | What it does                          |
+|---------------------------+---------------------------------------|
+| =(:table-name STRING)=      | Override the SQL table name           |
+| =(:unique-keys SLOT…)=      | Add a UNIQUE constraint               |
+| =(:keys SLOT…)=             | Add an index                          |
+| =(:primary-key SLOT)=       | Override the surrogate =id= primary key |
+| =(:auto-pk BOOL)=           | Disable the auto =id= column            |
+| =(:record-timestamps BOOL)= | Disable =created_at= / =updated_at=     |
+| =(:conc-name PREFIX-)=      | Override the accessor prefix          |
 
 #+begin_src lisp
-(subtitle :field-type :char :max-length 200 :blankp t :accessor article-subtitle)
+(shiso:define-model user
+    ((email :field-type :email))
+  (:table-name "users")
+  (:unique-keys email))
+#+end_src
+
+* Required vs optional fields
+
+By default a field is required (=:blankp nil=). To make one optional
+at form-validation time:
+
+#+begin_src lisp
+(subtitle :field-type :char :max-length 200 :blankp t)
 #+end_src
 
 The blank check happens at form-validation time, not at the database
-layer. If you also want the DB column nullable, declare it
-explicitly:
+layer. To make the DB column nullable too, wrap the field type in
+=(or … :null)= — see the next section.
+
+* Nullable columns
+
+Database-nullable columns use the =(or X :null)= wrap on
+=:field-type=. Either order works.
 
 #+begin_src lisp
-(subtitle :col-type (or (:varchar 200) :null) :initarg :subtitle
-          :blankp t :accessor article-subtitle)
+(deleted-at :field-type (or :datetime :null))
+(image-url  :field-type (or :null :url))
 #+end_src
+
+If =X= is a registered field type, the wrap preserves widget,
+validators and initarg from the field-type expansion. If =X= is a
+raw Mito col-type (=:timestamptz=, =(:varchar 64)=, etc.), it passes
+through and the slot gets an auto =:initarg=:
+
+#+begin_src lisp
+(legacy-id :field-type (or :timestamptz :null))
+;;          ↑ raw col-type, just gets wrapped in (or … :null)
+#+end_src
+
+Use =:blankp t= when you also want the /form/ to accept blank
+submissions for the field.
 
 * Default values
 
@@ -135,36 +192,64 @@ mapped to a human-readable label. The form layer renders a
 =<select>= with these as options, and the =one-of= validator (auto-
 applied) restricts submissions to one of the keys.
 
-* Relationships — the integer-FK pattern
+* Relationships — =:foreign-key= (recommended)
 
-For one-to-many relationships, the easiest pattern is a plain
-integer column:
+Use =:foreign-key "target-model"= on a slot. The target is a string
+naming another model; it's resolved /lazily/ through
+=shiso/models:*model-registry*=, so define order doesn't matter and
+no package-qualified symbols leak into your code:
 
 #+begin_src lisp
 (shiso:define-model comment
-    ((article-id :field-type :integer :accessor comment-article-id)
-     (body       :field-type :text    :accessor comment-body)))
+    ((article :foreign-key "article")
+     (body    :field-type :text)))
 
 (defun comments-for-article (article)
   (mito:select-dao (shiso/models:model-class 'comment)
-    (sxql:where (:= :article-id (mito:object-id article)))
+    (sxql:where (:= :article (mito:object-id article)))
     (sxql:order-by :id)))
 #+end_src
 
-The polls tutorial uses this exact shape. Pros: dead-simple, no
-package juggling, the SQL maps to what you'd write by hand.
+The slot is a plain integer column at the SQL layer (default
+=:col-type :integer=, override with e.g. =:col-type :bigint= if
+needed). The =:foreign-key= value lives in slot metadata, so the
+admin, form renderer, and any introspection code can resolve the
+target with =(shiso/models:get-model-name "article")= → the registry
+symbol → =model-class=.
+
+Nullable FK? Combine with the =(or … :null)= wrap:
+
+#+begin_src lisp
+(parent :foreign-key "category" :field-type (or :integer :null))
+#+end_src
+
+* Relationships — plain integer column
+
+If you don't want to declare the relationship at all (or you're
+modelling a column that points to a non-Shiso table), the plain
+integer pattern still works:
+
+#+begin_src lisp
+(shiso:define-model comment
+    ((article-id :field-type :integer)
+     (body       :field-type :text)))
+#+end_src
+
+You're on your own for resolving the FK target — no metadata, no
+admin specialisation. Prefer =:foreign-key= when both sides are
+Shiso models.
 
 * Relationships — Mito's typed FK
 
 Mito supports a real FK declaration that gives you a slot holding
-the related instance plus an automatic =<name>-id= column behind it:
+the related /instance/ (not its id) plus an automatic =<name>-id=
+column behind it:
 
 #+begin_src lisp
 (shiso:define-model comment
     ((article :col-type shiso/models/registry::article
-              :initarg :article
-              :accessor comment-article)
-     (body :field-type :text :accessor comment-body)))
+              :initarg :article)
+     (body :field-type :text)))
 #+end_src
 
 You have to write =shiso/models/registry::article= explicitly:
@@ -181,21 +266,11 @@ Creating an instance:
 #+end_src
 
 Mito stores the FK in =article-id= behind the scenes; reading the
-=article= slot triggers a lookup.
+=article= slot triggers a lookup of the article row.
 
-If you want the bare symbol to work from your own package, import it
-after the =define-model= form runs:
-
-#+begin_src lisp
-(in-package #:myapp/models)
-(shiso:define-model article (…))
-(import 'shiso/models/registry::article)   ; now `article` here = registry symbol
-#+end_src
-
-This works at load time but plays badly with compile-time
-=defpackage= forms in other files — they can't import a symbol that
-hasn't been created yet. Stick with the integer-FK pattern unless
-you specifically want Mito's auto-join behaviour.
+Use this when you specifically want the slot to /hold the instance/
+and trigger an automatic join on read. Otherwise =:foreign-key=
+gives you the same column shape without the package gymnastics.
 
 * Read the registry from code
 
@@ -216,6 +291,130 @@ you specifically want Mito's auto-join behaviour.
 
 Both =model-class= and =model-fields= accept a symbol from any
 package (they resolve by string name) or a string.
+
+* Worked examples
+
+** =user= — authentication
+
+The shape used by =shiso/auth=:
+
+#+begin_src lisp
+(in-package #:myapp/users)
+
+(shiso:define-model user
+    ((email :field-type :email
+            :verbose-name "Email"
+            :help-text "Used as the login identifier.")
+     (password-hash :field-type :text
+                    :verbose-name "Password hash"
+                    :editablep nil)
+     (is-active :field-type :boolean
+                :default t
+                :verbose-name "Active")
+     (is-staff :field-type :boolean
+               :default nil
+               :verbose-name "Staff"
+               :help-text "Staff users may access the admin.")
+     (last-login-at :field-type (or :datetime :null)
+                    :editablep nil
+                    :verbose-name "Last login"))
+  (:table-name "users")
+  (:unique-keys email))
+#+end_src
+
+What this gives you:
+
+- A unique email constraint at the SQL level.
+- A nullable =last_login_at= column (no value until the first login).
+- =password-hash= and =last-login-at= excluded from admin forms via
+  =:editablep nil=.
+- Auto-derived accessors =user-email=, =user-password-hash=,
+  =user-is-active=, =user-is-staff=, =user-last-login-at= in
+  =myapp/users= (plus the matching =setf= functions). Export any
+  you want callers to use.
+
+** =product= — an e-commerce item
+
+Shows decimals, choices, slugs, and a nullable image URL:
+
+#+begin_src lisp
+(in-package #:shop/models)
+
+(shiso:define-model product
+    ((sku :field-type :slug
+          :verbose-name "SKU"
+          :help-text "Lowercase letters, digits and dashes only.")
+     (name :field-type :char :max-length 200)
+     (description :field-type :text :blankp t)
+     (price :field-type :decimal :precision 10 :scale 2
+            :help-text "Price in USD.")
+     (status :field-type :choice
+             :choices ((:draft        "Draft")
+                       (:active       "Active")
+                       (:discontinued "Discontinued"))
+             :default :draft)
+     (inventory-count :field-type :integer :default 0
+                      :verbose-name "Inventory count")
+     (image-url :field-type (or :url :null)
+                :blankp t
+                :verbose-name "Image URL")
+     (published-at :field-type (or :datetime :null)
+                   :editablep nil))
+  (:unique-keys sku))
+#+end_src
+
+Worth noting:
+
+- =:precision 10 :scale 2= gives =NUMERIC(10,2)= — eight digits left
+  of the decimal, two right.
+- =:choices= drives both the rendered =<select>= and a =one-of=
+  validator that rejects values outside the set.
+- Pairing =:blankp t= with =(or :url :null)= makes =image-url=
+  optional both in the form and in the database column.
+- =published-at= is set by the publish workflow, never by an admin
+  form (=:editablep nil=), and stays =NULL= until then.
+
+** =room= — a hotel room
+
+Unique key on a business-meaningful column plus a mix of numeric
+slots:
+
+#+begin_src lisp
+(in-package #:hotel/models)
+
+(shiso:define-model room
+    ((room-number :field-type :char :max-length 10
+                  :verbose-name "Room number")
+     (floor :field-type :integer)
+     (room-type :field-type :choice
+                :choices ((:single "Single")
+                          (:double "Double")
+                          (:suite  "Suite")
+                          (:deluxe "Deluxe Suite"))
+                :default :single
+                :verbose-name "Room type")
+     (nightly-rate :field-type :decimal :precision 8 :scale 2
+                   :verbose-name "Nightly rate"
+                   :help-text "Base rate in local currency.")
+     (max-occupancy :field-type :integer :default 2
+                    :verbose-name "Max occupancy")
+     (smoking-allowed :field-type :boolean :default nil
+                      :verbose-name "Smoking allowed")
+     (last-cleaned-at :field-type (or :datetime :null)
+                      :editablep nil
+                      :verbose-name "Last cleaned")
+     (notes :field-type :text :blankp t))
+  (:unique-keys room-number))
+#+end_src
+
+Worth noting:
+
+- =(:unique-keys room-number)= ensures no two rooms share a number.
+- =last-cleaned-at= is set by the housekeeping workflow, not by a
+  user form (=:editablep nil=).
+- =notes= is optional at the form level (=:blankp t=) but the
+  column itself is non-null with an empty-string default — fine for
+  free-text notes.
 
 * See also
 

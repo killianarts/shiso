@@ -228,8 +228,6 @@ library twice (quicklisp + =vendored/=), not from the auth code.
 - Remember-me / persistent cookies.
 - Per-IP login rate limiting.
 - Permission objects beyond =is-staff=.
-- Linking users to Stripe customers (subclass =shiso/auth:user= and
-  add the field when you add billing).
 
 For background and rationale, see =AUTHENTICATION-TUTORIAL.org=. For
 the design decisions and out-of-scope list, see

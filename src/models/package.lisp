@@ -12,6 +12,7 @@
                 #:slot-metadata-blankp
                 #:slot-metadata-editablep
                 #:slot-metadata-widget
+                #:slot-metadata-foreign-key
                 #:model-metadata
                 #:make-model-metadata
                 #:model-metadata-class
@@ -32,7 +33,8 @@
                 #:field-choices
                 #:field-blankp
                 #:field-editablep
-                #:field-widget)
+                #:field-widget
+                #:field-foreign-key)
   (:import-from #:shiso/models/field-types
                 #:*field-types*
                 #:define-field-type
@@ -52,6 +54,7 @@
    #:slot-metadata-blankp
    #:slot-metadata-editablep
    #:slot-metadata-widget
+   #:slot-metadata-foreign-key
    #:model-metadata
    #:make-model-metadata
    #:model-metadata-class
@@ -77,6 +80,7 @@
    #:field-blankp
    #:field-editablep
    #:field-widget
+   #:field-foreign-key
    ;; Field types
    #:*field-types*
    #:define-field-type

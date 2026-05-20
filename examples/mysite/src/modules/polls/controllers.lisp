@@ -28,11 +28,11 @@
 (defun question-list (questions)
   (ah:</>
    (ul :class "questions"
-     (loop for q in questions
-           for id-str = (princ-to-string (mito:object-id q))
-           for href = (s:url "polls:detail" :id id-str)
-           collect (ah:</>
-                    (li (a :href href (models:question-text q))))))))
+     (loop :for q :in questions
+           :for id-str := (princ-to-string (mito:object-id q))
+           :for href := (s:url "polls:detail" :id id-str)
+           :collect (ah:</>
+                     (li (a :href href (models:question-text q))))))))
 
 (defun index ()
   (let* ((questions (models:all-questions :limit 5))
@@ -82,7 +82,7 @@
              (h1 q-text)
              error-block
              (form :class "vote" :method "POST"
-                   :action (s:url "polls:vote" :id id-str)
+               :action (s:url "polls:vote" :id id-str)
                (csrf-token-input)
                (choice-radios question)
                (button :type "submit" "Vote"))))))))))

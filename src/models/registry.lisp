@@ -20,6 +20,7 @@
    #:field-blankp
    #:field-editablep
    #:field-widget
+   #:field-foreign-key
    #:get-model-name))
 
 (in-package #:shiso/models/registry)
@@ -103,3 +104,7 @@ by string-upcase in that package."
 
 (defun field-widget (f)
   (meta:slot-metadata-widget f))
+
+(defun field-foreign-key (f)
+  "Return the target-model name string for an FK column, or NIL."
+  (meta:slot-metadata-foreign-key f))

@@ -190,16 +190,22 @@ Slot symbols live in the package where =define-model= is called
 from a /controller/ would fail — the controller's =question-text= is a
 different symbol than the model's.
 
-Two ways to dodge this:
+The good news: =define-model= (via Mito's metaclass) auto-derives an
+accessor =<MODEL-NAME>-<SLOT-NAME>= for every slot, in the current
+package. So a slot =title= on the =question= model would give you
+=polls/models:question-title= for free — no =:accessor= needed.
 
-- The clean way (used above): pass =:accessor question-text= explicitly
-  on the slot. The accessor is a function exported from
-  =polls/models=, callable from any package as =polls/models:question-text=
-  or via a local nickname.
-- The lazy way: don't. Use =(slot-value q 'polls/models::question-text)=
-  with the qualified symbol. Works but reads badly.
+The wrinkle for the polls model: the slots are already named
+=question-text=, =pub-date=, etc. The auto-derived accessor would be
+=question-question-text=, which is redundant. To get the shorter
+name we passed =:accessor question-text= explicitly. The accessor is
+still a function exported from =polls/models=, callable as
+=polls/models:question-text= or via a local nickname.
 
-Always prefer the accessor pattern in modules you intend to reuse.
+Rule of thumb: name slots /without/ the model prefix and rely on the
+auto-derived accessor. Override =:accessor= only when the auto name
+would read badly (as here, where the slot itself already carries the
+prefix).
 
 ** Why =question-id= and not Mito's =:col-type CLASS= FK?
 

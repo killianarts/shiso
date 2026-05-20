@@ -17,7 +17,8 @@
   "Slot option keys that Mito/CLOS understand.  Everything else is shiso metadata.")
 
 (defparameter *shiso-slot-keys*
-  '(:verbose-name :help-text :validators :choices :blankp :editablep :widget :field-type)
+  '(:verbose-name :help-text :validators :choices :blankp :editablep :widget
+    :field-type :foreign-key)
   "Slot option keys that shiso extracts as field metadata.")
 
 (defun strip-shiso-keys (slot-def)
@@ -74,6 +75,19 @@ Extracts shiso-specific keys and also captures :col-type for introspection."
                       (push val args)))))
       `(meta:make-slot-metadata ,@(nreverse args)))))
 
+(defparameter *shiso-class-option-keys*
+  '(:module)
+  "Class-level option keys that shiso consumes; everything else passes through to mito:deftable.")
+
+(defun split-class-options (options)
+  "Partition class-level OPTIONS into (shiso-options . mito-options)."
+  (let (shiso mito)
+    (dolist (opt options)
+      (if (and (consp opt) (member (car opt) *shiso-class-option-keys*))
+          (push opt shiso)
+          (push opt mito)))
+    (values (nreverse shiso) (nreverse mito))))
+
 (defmacro define-model (name slots &body options)
   "Define a model class with database backing and field metadata.
 
@@ -81,19 +95,23 @@ Each slot in SLOTS is (slot-name &rest plist) where the plist may contain
 both Mito keys (:col-type, :initform, etc.) and shiso metadata keys
 (:verbose-name, :help-text, :validators, :choices, :blankp, :editablep, :widget).
 
-OPTIONS may include:
+OPTIONS may include shiso-specific class options:
   (:module <module-name>) -- associate with a shiso module
-  (:table-name <string>)  -- override the Mito table name"
-  (declare (ignore options))
-  (let* ((slots (mapcar #'ft:expand-field-type slots))
-         (mito-slots (mapcar #'strip-shiso-keys slots))
-         (meta-forms (mapcar #'extract-metadata slots))
-         (registry-package (symbol-package 'reg:*model-registry*))
-         (registered-name (intern (string-upcase name) registry-package)))
-    `(progn
-       (mito:deftable ,registered-name ()
-         ,mito-slots)
-       (reg:register-model ',registered-name
-                           (find-class ',registered-name)
-                           (list ,@meta-forms))
-       ',registered-name)))
+
+All other class options (e.g. :table-name, :unique-keys, :keys, :auto-pk,
+:record-timestamps, :conc-name) are forwarded verbatim to mito:deftable."
+  (multiple-value-bind (shiso-options mito-options) (split-class-options options)
+    (declare (ignore shiso-options))
+    (let* ((slots (mapcar #'ft:expand-field-type slots))
+           (mito-slots (mapcar #'strip-shiso-keys slots))
+           (meta-forms (mapcar #'extract-metadata slots))
+           (registry-package (symbol-package 'reg:*model-registry*))
+           (registered-name (intern (string-upcase name) registry-package)))
+      `(progn
+         (mito:deftable ,registered-name ()
+           ,mito-slots
+           ,@mito-options)
+         (reg:register-model ',registered-name
+                             (find-class ',registered-name)
+                             (list ,@meta-forms))
+         ',registered-name))))
