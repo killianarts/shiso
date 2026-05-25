@@ -2,7 +2,9 @@
   (:use #:cl)
   (:local-nicknames (#:fields #:shiso/forms/fields)
                     (#:form #:shiso/forms/form)
-                    (#:ah #:almighty-html))
+                    (#:ah #:almighty-html)
+                    (#:req #:lack/request)
+                    (#:csrf #:lack/middleware/csrf))
   (:export
    #:render-field
    #:render-form))
@@ -142,18 +144,34 @@
        (render-help-text field)
        (render-errors errors)))))
 
+(defun csrf-token-input ()
+  "Render a hidden `_csrf_token' input for the current request's session,
+or NIL when there is no live request/session (e.g. unit tests that
+render forms outside an HTTP cycle)."
+  (when (boundp 'shiso/requests:*request*)
+    (let* ((env (req:request-env shiso/requests:*request*))
+           (session (getf env :lack.session))
+           (token (and session (csrf:csrf-token session))))
+      (when token
+        (ah:</> (input :type "hidden" :name "_csrf_token" :value token))))))
+
 (defun render-form (form &key (action "") (method "POST") (submit-label "Submit"))
-  "Render an entire form to an almighty-html element."
-  (let ((field-elements
-          (mapcar (lambda (field)
-                    (let* ((name (fields:field-name field))
-                           (value (or (cdr (assoc name (form:form-data form)
-                                                  :test #'string-equal))
-                                      (fields:field-initial field)))
-                           (field-errors (gethash name (form:form-errors form))))
-                      (render-field field :value value :errors field-errors)))
-                  (form:form-fields form))))
+  "Render an entire form to an almighty-html element. State-changing
+methods (anything but GET) get a hidden CSRF token input prepended so
+the Lack CSRF middleware accepts the submission."
+  (let* ((field-elements
+           (mapcar (lambda (field)
+                     (let* ((name (fields:field-name field))
+                            (value (or (cdr (assoc name (form:form-data form)
+                                                   :test #'string-equal))
+                                       (fields:field-initial field)))
+                            (field-errors (gethash name (form:form-errors form))))
+                       (render-field field :value value :errors field-errors)))
+                   (form:form-fields form)))
+         (csrfp (not (string-equal method "GET")))
+         (csrf-input (and csrfp (csrf-token-input))))
     (ah:</>
      (form :action action :method method
+       (when csrf-input (ah:</> csrf-input))
        field-elements
        (ah:</> (button :type "submit" submit-label))))))

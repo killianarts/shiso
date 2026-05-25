@@ -72,7 +72,7 @@ registration uses sensible defaults; =define-admin= allows customization.
   (or (gethash model-name *admin-registry*)
       (error "No admin registered for model ~A" model-name)))
 
-#+nil
+,#+nil
 (get-admin 'book)
 
 (defun all-registered-admins ()
@@ -83,11 +83,11 @@ registration uses sensible defaults; =define-admin= allows customization.
   "Convert a URL model name string to a symbol, e.g. \"article\" -> ARTICLE."
   (intern (string-upcase str) (symbol-package '*admin-registry*)))
 
-#+nil
+,#+nil
 (all-registered-admins)
  ; => (ARTICLES/MODELS::ARTICLE)
 
-#+nil
+,#+nil
 (model-name-from-string "article")
 #+end_src
 

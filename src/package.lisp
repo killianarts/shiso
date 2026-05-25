@@ -67,7 +67,12 @@
                 #:absolute-url
                 #:post-request-p
                 #:parse-body-params
-                #:redirect-response)
+                #:redirect-response
+                #:current-session-hash
+                #:csrf-token-value
+                #:text-response
+                #:json-response
+                #:html-fragment-response)
   (:import-from #:shiso/models
                 ;; Structs
                 #:slot-metadata
@@ -212,4 +217,14 @@
    #:define-field-type
    #:expand-field-type
    ;; Macro
-   #:define-model))
+   #:define-model
+   ;; Utils
+   #:post-request-p
+   #:parse-body-params
+   #:redirect-response
+   #:current-session-hash
+   #:csrf-token-value
+   #:text-response
+   #:json-response
+   #:html-fragment-response
+   ))

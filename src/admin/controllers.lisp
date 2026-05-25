@@ -56,7 +56,7 @@
                    :collect (ah:</> (li :class "admin-model-link" (a :href href label))))))))
 
 #+nil
-(model-name-from-string "article")
+(reg:all-registered-admins)
 #+nil
 (mito:select-dao "book")
 
