@@ -48,13 +48,13 @@ Create =t/polls-models.lisp=:
      (unwind-protect
           (progn
             (dolist (name (shiso/models:all-models))
-              (mito:ensure-table-exists (shiso/models:model-class name)))
+              (mito:ensure-table-exists name)))
             ,@body)
        (mito:disconnect-toplevel))))
 
 (define-test all-questions-orders-newest-first ()
   (with-fresh-db
-    (let* ((cls (shiso/models:model-class 'polls/models::question))
+    (let* ((cls 'polls/models:question)
            (q1 (mito:create-dao cls :question-text "Older"
                                 :pub-date (local-time:timestamp- (local-time:now) 1 :day)))
            (q2 (mito:create-dao cls :question-text "Newer"
@@ -66,9 +66,9 @@ Create =t/polls-models.lisp=:
 
 (define-test choices-for-question-filters-by-fk ()
   (with-fresh-db
-    (let* ((q1 (mito:create-dao (shiso/models:model-class 'polls/models::question)
+    (let* ((q1 (mito:create-dao 'polls/models:question
                                 :question-text "A"))
-           (q2 (mito:create-dao (shiso/models:model-class 'polls/models::question)
+           (q2 (mito:create-dao 'polls/models:question
                                 :question-text "B")))
       (polls/models:create-choice q1 "a1")
       (polls/models:create-choice q1 "a2")
@@ -78,7 +78,7 @@ Create =t/polls-models.lisp=:
 
 (define-test question-published-recently-p-respects-24h-window ()
   (with-fresh-db
-    (let* ((cls (shiso/models:model-class 'polls/models::question))
+    (let* ((cls 'polls/models:question)
            (now (mito:create-dao cls :question-text "fresh"
                                  :pub-date (local-time:now)))
            (old (mito:create-dao cls :question-text "stale"
@@ -92,17 +92,15 @@ private in-memory SQLite, the model tables get rebuilt fresh, and
 the connection is torn down on the way out. No test state leaks
 between cases.
 
-** Why the qualified =polls/models::question= symbol?
+** Why the qualified =polls/models:question= symbol?
 
 When you wrote =(shiso:define-model question …)= inside the
-=polls/models= package, the resulting Mito class was registered as
-=shiso/models/registry::question= but the slot symbols stayed in
-=polls/models=. From the test package, =polls/models::question= is
-the slot owner. =(shiso/models:model-class 'polls/models::question)=
-walks the registry to the canonical class object — which is the
-same one whether you ask via =polls/models::question= or via
-=shiso/models/registry::question=. See [[file:../explanation/model-metadata.org][explanation: model metadata]]
-for the full path.
+=polls/models= package, the class was named by that very symbol —
+=polls/models::question= — just as =defclass= would have. The test
+file lives in a different package, so it refers to the class with
+the package-qualified (and exported) =polls/models:question= and
+passes it straight to Mito. See [[file:../explanation/model-metadata.org][explanation: model metadata]]
+for how the registry resolves names that arrive as strings.
 
 * Step 3 — Route-level tests
 
@@ -136,7 +134,7 @@ Create =t/polls-routes.lisp=:
      (unwind-protect
           (progn
             (dolist (name (shiso/models:all-models))
-              (mito:ensure-table-exists (shiso/models:model-class name)))
+              (mito:ensure-table-exists name)))
             ,@body)
        (mito:disconnect-toplevel))))
 
@@ -150,7 +148,7 @@ Create =t/polls-routes.lisp=:
 
 (define-test index-lists-questions ()
   (with-fresh-db
-    (mito:create-dao (shiso/models:model-class 'polls/models::question)
+    (mito:create-dao 'polls/models:question
                      :question-text "What is your name?")
     (let* ((mod (shiso:get-module :polls))
            (response (lack/component:call mod (make-env "/")))

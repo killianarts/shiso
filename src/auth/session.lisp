@@ -41,7 +41,7 @@
 
 (defun ensure-tables ()
   "Ensure the user and session tables exist. Call after Mito is connected."
-  (mito:ensure-table-exists (shiso/models:model-class 'user))
+  (mito:ensure-table-exists 'user:user)
   (mito:ensure-table-exists 'session))
 
 ;;; ----------------------------------------------------------------------

@@ -76,6 +76,25 @@
                       (eq 'test-article (second last-form)))
                  "Last form should be the quoted model name")))
 
+(define-test define-model-names-class-in-current-package ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model pkg-home-test
+             ((title :col-type (:varchar 200)))))
+    (let ((class (shiso/models:model-class "pkg-home-test")))
+      (assert-eq 'pkg-home-test (class-name class)
+                 "Class should be named by the symbol as written, in this package"))))
+
+(define-test register-model-rejects-same-name-in-other-package ()
+  (with-fresh-registry
+    (eval '(shiso/models:define-model collide-test
+             ((title :col-type (:varchar 200)))))
+    (assert-error 'error
+                  (shiso/models:register-model
+                   (intern "COLLIDE-TEST" :cl-user)
+                   (find-class 'collide-test)
+                   nil)
+                  "Registering a different symbol with the same name should error")))
+
 (define-test define-model-registers-metadata ()
   (with-fresh-registry
     (eval '(shiso/models:define-model reg-test

@@ -46,6 +46,11 @@
     (assert-error 'error (shiso/admin:get-admin 'nonexistent-admin)
                   "get-admin should error for unregistered model")))
 
+(define-test register-admin-errors-for-unknown-model ()
+  (with-fresh-registries
+    (assert-error 'error (shiso/admin:register-admin 'no-such-model-here)
+                  "register-admin should error when the model does not exist")))
+
 (define-test all-registered-admins-lists-names ()
   (with-fresh-registries
     (eval '(shiso/models:define-model admin-list-a

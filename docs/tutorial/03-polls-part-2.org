@@ -184,8 +184,7 @@ Nothing new here — the pattern matches =detail=.
               (choice-id (and choice-id-str
                               (parse-integer choice-id-str :junk-allowed t)))
               (choice (and choice-id
-                           (mito:find-dao (shiso/models:model-class 'choice)
-                                          :id choice-id))))
+                           (mito:find-dao 'models:choice :id choice-id))))
          (cond
            ((null choice)
             (s:redirect-response

@@ -3,6 +3,7 @@
   (:local-nicknames (#:pw #:shiso/auth/password)
                     (#:models #:shiso/models))
   (:export
+   #:user
    #:user-email
    #:user-password-hash
    #:user-is-active
@@ -38,12 +39,9 @@
   (:table-name "shiso_user")
   (:unique-keys email))
 
-(defun user-class ()
-  (models:model-class 'user))
-
 (defun make-user (email plaintext-password &key (is-active t) (is-staff nil))
   "Create and persist a new user. Hashes PLAINTEXT-PASSWORD before storing."
-  (mito:create-dao (user-class)
+  (mito:create-dao 'user
                    :email email
                    :password-hash (pw:hash-password plaintext-password)
                    :is-active is-active
@@ -52,12 +50,12 @@
 (defun find-user-by-email (email)
   "Return the user with EMAIL, or NIL."
   (when (and email (stringp email) (plusp (length email)))
-    (mito:find-dao (user-class) :email email)))
+    (mito:find-dao 'user :email email)))
 
 (defun find-user-by-id (id)
   "Return the user with primary key ID, or NIL."
   (when id
-    (mito:find-dao (user-class) :id id)))
+    (mito:find-dao 'user :id id)))
 
 (defun set-password (user plaintext-password)
   "Update USER's password to PLAINTEXT-PASSWORD (hashing it) and persist."

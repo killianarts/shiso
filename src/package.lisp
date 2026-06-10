@@ -72,7 +72,8 @@
                 #:csrf-token-value
                 #:text-response
                 #:json-response
-                #:html-fragment-response)
+                #:html-fragment-response
+                #:ensure-session-table)
   (:import-from #:shiso/models
                 ;; Structs
                 #:slot-metadata
@@ -227,4 +228,5 @@
    #:text-response
    #:json-response
    #:html-fragment-response
+   #:ensure-session-table
    ))

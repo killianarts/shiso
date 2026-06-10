@@ -29,7 +29,9 @@ feel for Shiso. It's:
 
 One per registered model. =define-admin= builds these from the
 =(:key val …)= options you write; =*admin-registry*= is a hash
-table keyed by registry symbol → =admin-config=.
+table keyed by model name symbol → =admin-config=. Registration
+resolves the name through the model registry, so =define-admin=
+for a model that hasn't been defined signals an error at load time.
 
 ** =shiso/admin/routes.lisp= — the module
 

@@ -77,7 +77,10 @@ The auto-generated form skips it; the list view still shows it.
 Most apps put =define-model= and the matching =define-admin= side by
 side. The admin module is loaded before your modules (see
 =shiso.asd='s component ordering), so =shiso/admin:define-admin= is
-always available where you'd want to call it.
+always available where you'd want to call it. Order matters within
+your own code too: the model must be defined before its
+=define-admin= form is loaded — registering an admin for a model
+that doesn't exist signals an error.
 
 #+begin_src lisp
 (shiso:define-model question (…))

@@ -28,23 +28,40 @@
 (defparameter *model-registry* (make-hash-table :test 'eq)
   "Maps model name symbols to model-metadata structs.")
 
+(defparameter *model-name-index* (make-hash-table :test 'equal)
+  "Maps model name strings (upcased) to model name symbols.  Lets the admin
+and other string-driven callers (e.g. URL segments) find a model without
+knowing which package its name symbol lives in.")
+
 (defun register-model (name class fields)
-  "Register a model's metadata.  Called by the define-model expansion."
+  "Register a model's metadata.  Called by the define-model expansion.
+Model names must be unique across packages: registering a different symbol
+with the same name signals a continuable error."
+  (let ((existing (gethash (symbol-name name) *model-name-index*)))
+    (when (and existing
+               (not (eq existing name))
+               (nth-value 1 (gethash existing *model-registry*)))
+      (cerror "Replace the existing model."
+              "Cannot register model ~S: a model named ~A is already ~
+               registered as ~S.  Model names must be unique across packages."
+              name (symbol-name name) existing)))
+  (setf (gethash (symbol-name name) *model-name-index*) name)
   (setf (gethash name *model-registry*)
         (meta:make-model-metadata :class class :fields fields)))
 
 (defun resolve-model-name (name)
-  "Resolve NAME (symbol or string) to the canonical registry symbol.
-Models are interned in the registry package by define-model, so we look up
-by string-upcase in that package."
-  (etypecase name
-    (string (find-symbol (string-upcase name) (symbol-package '*model-registry*)))
-    (symbol (multiple-value-bind (val foundp) (gethash name *model-registry*)
-              (declare (ignore val))
-              (if foundp
-                  name  ; already canonical
-                  (find-symbol (string-upcase (symbol-name name))
-                               (symbol-package '*model-registry*)))))))
+  "Resolve NAME (symbol or string) to the canonical registered name symbol.
+A symbol that is itself a registry key is returned as-is; otherwise the
+name is looked up by string in the name index.  Returns NIL if no model
+with that name is registered."
+  (let ((key (etypecase name
+               (string (string-upcase name))
+               (symbol (if (nth-value 1 (gethash name *model-registry*))
+                           (return-from resolve-model-name name)
+                           (symbol-name name))))))
+    (let ((found (gethash key *model-name-index*)))
+      (when (and found (nth-value 1 (gethash found *model-registry*)))
+        found))))
 
 (defun get-model-name (model-name-str)
   (resolve-model-name model-name-str))

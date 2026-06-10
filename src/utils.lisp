@@ -18,7 +18,8 @@
    #:csrf-token-value
    #:text-response
    #:json-response
-   #:html-fragment-response))
+   #:html-fragment-response
+   #:ensure-session-table))
 
 (in-package #:shiso/utils)
 
@@ -101,6 +102,34 @@ Searches registered module mappers by namespace for namespaced routes
   (let ((scheme (lack.request:request-uri-scheme requests:*request*))
         (server-name (lack.request:request-server-name requests:*request*)))
     (format nil "~a://~a~a" scheme server-name path)))
+
+(defun ensure-session-table (&key (table-name "shiso_session")
+                               (id-column-name "id")
+                               (data-column-name "session_data")
+                               (connection nil))
+  "Creates the session table (IF NOT EXISTS) used by Lack's DBI session store
+(typically configured via shiso/auth/session or directly with
+lack.middleware.session).
+
+This must be called during database setup (e.g. in your app's setup-database)
+because the lack dbi store does not automatically create its backing table.
+
+Example:
+  (shiso:ensure-session-table)  ; uses default \"shiso_session\"
+  (shiso:ensure-session-table :table-name \"sessions\")
+
+The table schema matches what lack/session/store/dbi expects:
+  id TEXT PRIMARY KEY, session_data TEXT, created_at TEXT, updated_at TEXT
+"
+  (let ((conn (or connection mito:*connection*)))
+    (unless conn
+      (error "No active database connection. Call mito:connect-toplevel first, or pass :connection."))
+    (dbi:do-sql conn
+      (format nil "CREATE TABLE IF NOT EXISTS ~A (~A TEXT PRIMARY KEY, ~A TEXT, created_at TEXT, updated_at TEXT)"
+              table-name
+              id-column-name
+              data-column-name))
+    t))
 
 (defun debug! (sym)
   (when (symbolp sym)

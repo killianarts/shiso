@@ -13,10 +13,15 @@
 
 Three things happen:
 
-1. A Mito table class =shiso/models/registry::article= is created.
+1. A Mito table class =myapp/models::article= is created — named by
+   the symbol you wrote, in your package, just like =defclass=.
+   Export it and use it directly with =mito:select-dao=,
+   =mito:find-dao=, =make-instance=, etc.
 2. Slot metadata (verbose name, validators, widget choices, …) is
    captured in =shiso/models:*model-registry*= for the admin and form
-   layers.
+   layers. The registry indexes models by /name string/, so model
+   names must be unique across your application regardless of
+   package.
 3. Accessors =article-title= and =article-body= (plus their =setf=
    functions) are auto-interned in =myapp/models=. Export the ones
    you want callers to use.
@@ -24,7 +29,7 @@ Three things happen:
 To create the SQL table, ensure =mito:connect-toplevel= has run, then:
 
 #+begin_src lisp
-(mito:ensure-table-exists (shiso/models:model-class 'article))
+(mito:ensure-table-exists 'article)
 #+end_src
 
 The startup pattern in =main.lisp= loops over =(shiso/models:all-models)=
@@ -196,8 +201,7 @@ applied) restricts submissions to one of the keys.
 
 Use =:foreign-key "target-model"= on a slot. The target is a string
 naming another model; it's resolved /lazily/ through
-=shiso/models:*model-registry*=, so define order doesn't matter and
-no package-qualified symbols leak into your code:
+=shiso/models:*model-registry*=, so define order doesn't matter:
 
 #+begin_src lisp
 (shiso:define-model comment
@@ -205,7 +209,7 @@ no package-qualified symbols leak into your code:
      (body    :field-type :text)))
 
 (defun comments-for-article (article)
-  (mito:select-dao (shiso/models:model-class 'comment)
+  (mito:select-dao 'comment
     (sxql:where (:= :article (mito:object-id article)))
     (sxql:order-by :id)))
 #+end_src
@@ -214,8 +218,8 @@ The slot is a plain integer column at the SQL layer (default
 =:col-type :integer=, override with e.g. =:col-type :bigint= if
 needed). The =:foreign-key= value lives in slot metadata, so the
 admin, form renderer, and any introspection code can resolve the
-target with =(shiso/models:get-model-name "article")= → the registry
-symbol → =model-class=.
+target with =(shiso/models:get-model-name "article")= → the model's
+name symbol → =model-class=.
 
 Nullable FK? Combine with the =(or … :null)= wrap:
 
@@ -247,20 +251,20 @@ column behind it:
 
 #+begin_src lisp
 (shiso:define-model comment
-    ((article :col-type shiso/models/registry::article
+    ((article :col-type article
               :initarg :article)
      (body :field-type :text)))
 #+end_src
 
-You have to write =shiso/models/registry::article= explicitly:
-=define-model= interns model classes in =shiso/models/registry=, not
-in your package. The bare =article= symbol in your package isn't a
-class.
+The =:col-type= names the target model's class — the symbol
+=define-model= was written with. In the same package the bare
+=article= works; from another package, import the exported symbol
+or qualify it (=blog/models:article=).
 
 Creating an instance:
 
 #+begin_src lisp
-(mito:create-dao (shiso/models:model-class 'comment)
+(mito:create-dao 'comment
                  :article some-article
                  :body "first!")
 #+end_src
@@ -270,16 +274,17 @@ Mito stores the FK in =article-id= behind the scenes; reading the
 
 Use this when you specifically want the slot to /hold the instance/
 and trigger an automatic join on read. Otherwise =:foreign-key=
-gives you the same column shape without the package gymnastics.
+gives you the same column shape with a late-bound string instead of
+a class reference.
 
 * Read the registry from code
 
 #+begin_src lisp
 (shiso/models:all-models)
-;; => (ARTICLE COMMENT QUESTION CHOICE …)
+;; => (MYAPP/MODELS::ARTICLE MYAPP/MODELS::COMMENT …)
 
 (shiso/models:model-class 'article)
-;; => #<DAO-TABLE-CLASS SHISO/MODELS/REGISTRY::ARTICLE>
+;; => #<DAO-TABLE-CLASS MYAPP/MODELS::ARTICLE>
 
 (shiso/models:model-fields 'article)
 ;; => (#S(SLOT-METADATA :NAME TITLE :COL-TYPE (:VARCHAR 200) …) …)
@@ -290,7 +295,9 @@ gives you the same column shape without the package gymnastics.
 #+end_src
 
 Both =model-class= and =model-fields= accept a symbol from any
-package (they resolve by string name) or a string.
+package (they resolve by string name) or a string. When you hold
+the model's own symbol you can skip =model-class= and pass the
+symbol straight to Mito.
 
 * Worked examples
 

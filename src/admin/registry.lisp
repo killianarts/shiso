@@ -37,15 +37,17 @@
   "Maps model name symbols to admin-config instances.")
 
 (defun resolve-admin-name (name)
-  "Resolve NAME (symbol or string) to the canonical model registry symbol.
-Models are interned in the model registry package by define-model."
-  (models:get-model-name (etypecase name
-                           (string name)
-                           (symbol (symbol-name name)))))
+  "Resolve NAME (symbol or string) to the canonical model name symbol.
+Signals an error if no model with that name is registered."
+  (or (models:get-model-name name)
+      (error "No model named ~A is registered; define the model with ~
+              define-model before registering an admin for it."
+             name)))
 
 (defun register-admin (model-name &rest initargs)
-  "Register a model for admin CRUD with optional configuration."
-  (let ((canonical (or (resolve-admin-name model-name) model-name)))
+  "Register a model for admin CRUD with optional configuration.
+The model must already be defined via define-model."
+  (let ((canonical (resolve-admin-name model-name)))
     (setf (gethash canonical *admin-registry*)
           (apply #'make-instance 'admin-config
                  :model-name canonical initargs))))
@@ -79,9 +81,11 @@ OPTIONS may include:
   (:exclude field1 field2 ...)
   (:readonly field1 field2 ...)
   (:per-page n)
-  (:ordering field-or-minus-field)"
-  (let* ((model-name (or (models:get-model-name (string model-name)) model-name))
-         (initargs nil))
+  (:ordering field-or-minus-field)
+
+The model must already be defined (and its defining file loaded) before
+the define-admin form is loaded; otherwise registration signals an error."
+  (let ((initargs nil))
     (dolist (opt options)
       (destructuring-bind (key &rest vals) opt
         (case key

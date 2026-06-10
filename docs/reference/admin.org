@@ -20,6 +20,10 @@ Register =MODEL-NAME= for admin CRUD. =MODEL-NAME= is an unquoted
 symbol — same one you passed to =define-model=. Each option is a
 list =(KEY VAL*)=.
 
+The model must already be defined (its =define-model= loaded)
+before the =define-admin= form is loaded; otherwise registration
+signals an error.
+
 ** Options
 
 | Option                                | Status   | Effect                                          |

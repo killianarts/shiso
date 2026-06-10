@@ -87,8 +87,8 @@ The expansion is (cleaned up):
 #+begin_src lisp
 (progn
   ;; The Mito class definition. Slot options stripped of Shiso keys.
-  ;; The class symbol is interned in shiso/models/registry.
-  (mito:deftable shiso/models/registry::question ()
+  ;; The class is named by the symbol you wrote, in your package.
+  (mito:deftable question ()
     ((question-text :col-type (:varchar 200) :initarg :question-text
                     :accessor question-text)
      (pub-date :col-type :timestamptz :initarg :pub-date
@@ -97,8 +97,8 @@ The expansion is (cleaned up):
   ;; The metadata registration. Captures everything that fell out
   ;; of the Shiso keys plus :col-type (kept for introspection).
   (shiso/models/registry:register-model
-   'shiso/models/registry::question
-   (find-class 'shiso/models/registry::question)
+   'question
+   (find-class 'question)
    (list
     (shiso/models/metadata:make-slot-metadata
      :name 'question-text
@@ -110,30 +110,34 @@ The expansion is (cleaned up):
      :col-type :timestamptz
      :widget :datetime-local)))
 
-  'shiso/models/registry::question)
+  'question)
 #+end_src
 
-Two things to take away:
+Three things to take away:
 
-** The class lives in =shiso/models/registry=, not your package
+** The class lives in your package, like any =defclass=
 
-That's a deliberate design choice. The admin needs to map a URL
-fragment like ="question"= back to a class — and the URL is just a
-string, with no package context. By interning every model class in
-a /fixed/ package, =shiso/models:model-class= can do
-=(find-symbol (string-upcase NAME) (symbol-package '*model-registry*))=
-and reliably get the right class.
+The class is named =polls/models::question= — the symbol exactly as
+you wrote it. You can =(:export #:question)= from =polls/models= and
+pass the symbol straight to =make-instance=, =mito:select-dao=,
+=mito:find-dao=, =typep=, and friends. No lookup helper needed.
 
-The price: from your =polls/models= package, the bare symbol
-=question= refers to =polls/models::question= — /not/ the class.
-This is exactly what trips users up at first. The escape hatches:
+** The registry indexes models by name string
 
-- =(shiso/models:model-class 'question)= — package-blind lookup.
-- =(shiso/models:model-class "question")= — same thing, string form.
-- =shiso/models/registry::question= — the symbol the class is
-  actually named with, if you want to write it directly.
+The admin still needs to map a URL fragment like ="question"= back
+to a class — and the URL is just a string, with no package context.
+=register-model= therefore keeps a /name index/ mapping the upcased
+name string to the name symbol, and =shiso/models:model-class= (and
+=get-model-name=) resolve strings — or symbols from any package —
+through it.
 
-** Slot symbols stay in your package
+The corollary: *model names must be unique across your whole
+application*, regardless of package. Defining a second model with
+the same name in a different package signals a continuable error.
+(Django has the same constraint per app label, for the same reason:
+admin URLs are flat.)
+
+** Slot symbols stay in your package too
 
 In the expansion above, =question-text= and =pub-date= are
 =polls/models::question-text= and =polls/models::pub-date=. Mito's
@@ -152,22 +156,27 @@ from the outside. Both example apps (polls, todo) follow this rule.
 
 ** =(all-models)=
 
-Returns the list of registered registry-package symbols. Useful at
-startup to loop and call =ensure-table-exists=.
+Returns the list of registered model name symbols. Each symbol names
+its class, so you can loop at startup and call
+=(mito:ensure-table-exists name)= directly.
 
 ** =(model-class NAME)=
 
 The canonical class object. =NAME= can be:
 
-- A registry-package symbol (already canonical): =shiso/models/registry::question=.
-- Any package's symbol with the same name: =polls/models::question=,
-  =cl-user::question=.
+- The model's own name symbol: =polls/models::question=.
+- Any package's symbol with the same name: =cl-user::question=.
 - A string: ="question"=.
 
-Resolution does =find-symbol (string-upcase NAME)= in the registry
-package. So a typo'd name doesn't match any class — you get =NIL=
-back. Pass =NIL= to Mito and you'll get a clearer error later, but
-no =find-class= explosion.
+Symbols that are registry keys resolve directly; everything else is
+looked up by name string in the name index. A typo'd name doesn't
+match any class — you get =NIL= back. Pass =NIL= to Mito and you'll
+get a clearer error later, but no =find-class= explosion.
+
+If you hold the model's own symbol (imported or package-qualified),
+you rarely need =model-class= at all — Mito accepts the class name
+symbol everywhere. =model-class= earns its keep when the name
+arrives as a string or as a symbol from an unrelated package.
 
 ** =(model-fields NAME)= and =(model-field NAME SLOT)=
 
@@ -220,11 +229,10 @@ registry is that.
 
 #+begin_src lisp
 (shiso/models:all-models)
-;; => (shiso/auth/user::USER shiso/auth/session::SESSION
-;;     SHISO/MODELS/REGISTRY::QUESTION SHISO/MODELS/REGISTRY::CHOICE)
+;; => (SHISO/AUTH/USER::USER POLLS/MODELS::QUESTION POLLS/MODELS::CHOICE)
 
 (shiso/models:model-class 'question)
-;; => #<DAO-TABLE-CLASS SHISO/MODELS/REGISTRY::QUESTION>
+;; => #<DAO-TABLE-CLASS POLLS/MODELS::QUESTION>
 
 (shiso/models:model-class "question")
 ;; => same thing

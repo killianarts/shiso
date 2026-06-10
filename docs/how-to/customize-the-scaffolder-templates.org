@@ -16,6 +16,8 @@ those templates and your scaffolded projects look different.
 │   ├── <%@var name%>.asd
 │   ├── build.lisp
 │   ├── Makefile
+│   ├── static/
+│   │   └── .gitkeep
 │   └── src/
 │       ├── main.lisp
 │       ├── package.lisp
@@ -116,9 +118,10 @@ edit =src/cli/commands.lisp= — the bindings alist is built there
 and passed straight to =render:render-template=. The render
 function loops over each binding and substitutes by regex, so
 adding entries is a one-line change. The CLI itself currently only
-parses the one positional name argument; you'd extend
-=src/cli/main.lisp= to read more flags off
-=uiop:command-line-arguments=.
+parses the one positional name argument; to wire a new flag, add an
+=:options= list to the relevant =clingon:make-command= form in
+=src/cli/main.lisp= and read the value with =clingon:getopt= inside
+the handler before delegating to =commands.lisp=.
 
 * Restoring the defaults
 

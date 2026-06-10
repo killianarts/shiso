@@ -60,22 +60,23 @@ The expansion produces:
 
 #+begin_src lisp
 (progn
-  (mito:deftable REGISTRY-PACKAGE::NAME () (mito-slots) mito-options…)
+  (mito:deftable NAME () (mito-slots) mito-options…)
   (shiso/models/registry:register-model
-     'REGISTRY-PACKAGE::NAME (find-class 'REGISTRY-PACKAGE::NAME)
+     'NAME (find-class 'NAME)
      (list slot-metadata …))
-  'REGISTRY-PACKAGE::NAME)
+  'NAME)
 #+end_src
 
-where =REGISTRY-PACKAGE= is =shiso/models/registry=.
+Three important consequences:
 
-Two important consequences:
-
-- The class name lives in =shiso/models/registry=, not in your
-  package. From your package, =shiso/models/registry::NAME= is the
-  class symbol; the bare =NAME= you wrote is a /different/ symbol.
-  When you pass a class to Mito, go through =(shiso/models:model-class
-  'NAME)= so the lookup is package-agnostic.
+- The class name is the symbol you wrote, in your package — exactly
+  as with =defclass=. Export it and pass it directly to
+  =make-instance=, =mito:select-dao=, =mito:find-dao=, etc.
+- Model names must be unique across the whole application,
+  regardless of package: the registry indexes models by name string
+  so the admin can resolve URL fragments. Registering a second model
+  with the same name from a different package signals a continuable
+  error.
 - Slot symbols stay in /your/ package — that's where they were read.
   Accessors (auto-derived or hand-written) also land in your package.
 
@@ -215,7 +216,7 @@ Inspectable for debugging.
 
 ** =*model-registry*=  /parameter/
 
-Hash table from registry symbol → =model-metadata=. Inspectable:
+Hash table from model name symbol → =model-metadata=. Inspectable:
 
 #+begin_src lisp
 (hash-table-count shiso/models:*model-registry*)
@@ -228,16 +229,19 @@ Hash table from registry symbol → =model-metadata=. Inspectable:
 (shiso/models:register-model NAME CLASS FIELDS)
 #+end_src
 
-Mostly internal — called by =define-model='s expansion.
+Mostly internal — called by =define-model='s expansion. Signals a
+continuable error if a /different/ symbol with the same name string
+is already registered (model names are application-global).
 
 ** =get-model-name=  /function/
 
 #+begin_src lisp
-(shiso/models:get-model-name NAME-STRING-OR-SYMBOL) => registry-symbol-or-nil
+(shiso/models:get-model-name NAME-STRING-OR-SYMBOL) => name-symbol-or-nil
 #+end_src
 
-Resolve a name to its canonical registry symbol. Used by the admin
-for URL-to-class lookups.
+Resolve a name to the canonical model name symbol — the one
+=define-model= was written with. Used by the admin for URL-to-class
+lookups.
 
 * Introspection
 
@@ -246,8 +250,11 @@ All five accept a symbol from any package or a string.
 ** =all-models=
 
 #+begin_src lisp
-(shiso/models:all-models) => (registry-symbol …)
+(shiso/models:all-models) => (name-symbol …)
 #+end_src
+
+Each symbol names its class, so the symbols can be passed directly
+to =mito:ensure-table-exists= and friends.
 
 ** =model-class=
 
@@ -255,8 +262,10 @@ All five accept a symbol from any package or a string.
 (shiso/models:model-class NAME) => class-object-or-nil
 #+end_src
 
-The CLOS/Mito class. Pass this to =mito:select-dao=,
-=mito:find-dao=, =mito:ensure-table-exists=, etc.
+The CLOS/Mito class. Useful when the name arrives as a string (URL
+segment) or as a symbol from an unrelated package; if you hold the
+model's own (exported) symbol, you can pass that to Mito directly
+instead.
 
 ** =model-fields=
 

@@ -98,15 +98,15 @@ the home page, and the rest of its routes (=/:id/toggle=,
 
 (defun all-todos ()
   "All todos, newest first."
-  (mito:select-dao (shiso/models:model-class 'todo)
+  (mito:select-dao 'todo
     (sxql:order-by (:desc :id))))
 
 (defun find-todo (id)
   (when id
-    (mito:find-dao (shiso/models:model-class 'todo) :id id)))
+    (mito:find-dao 'todo :id id)))
 
 (defun create-todo (title-string)
-  (mito:create-dao (shiso/models:model-class 'todo)
+  (mito:create-dao 'todo
                    :title title-string
                    :done nil))
 
@@ -334,7 +334,7 @@ Same shape as the polls tutorial. =src/main.lisp=:
   (mito:connect-toplevel :sqlite3 :database-name "db/todo.db")
   (shiso/auth:ensure-tables)
   (dolist (name (shiso/models:all-models))
-    (mito:ensure-table-exists (shiso/models:model-class name))))
+    (mito:ensure-table-exists name)))
 
 (defun start (&key (host "127.0.0.1") (port 5000))
   (setup-database)

@@ -11,7 +11,13 @@ The =shiso= binary is built from the =shiso= system itself
 #+begin_src bash
 shiso new-application <name>
 shiso new-module <name>
+shiso --help
+shiso --version
 #+end_src
+
+=--help= and =--version= are provided automatically by clingon, the
+argument parser the CLI is built on. =shiso new-application --help= and
+=shiso new-module --help= print the per-subcommand usage.
 
 ** =new-application <name>=
 
@@ -63,9 +69,10 @@ cl-emb's =@var= directive:
 substitution.
 
 The bindings alist is built in =src/cli/commands.lisp= and currently
-contains only =("name" . "<the-cli-arg>")=. Add more by editing
-=commands.lisp= and =main.lisp= to parse extra positional/flag
-arguments.
+contains only =("name" . "<the-cli-arg>")=. To add more, declare extra
+options on the relevant =clingon:make-command= form in
+=src/cli/main.lisp= (read them with =clingon:getopt= inside the
+handler) and thread the values through to =commands.lisp=.
 
 * Exit codes
 
@@ -79,6 +86,6 @@ The binary doesn't log to a file; everything goes to stdout/stderr.
 * See also
 
 - [[../how-to/customize-the-scaffolder-templates.org][How-to: customize the scaffolder templates]]
-- =src/cli/main.lisp= — argv parsing
+- =src/cli/main.lisp= — clingon command tree
 - =src/cli/commands.lisp= — bindings + driver
 - =src/cli/render.lisp= — the cl-emb-style substituter

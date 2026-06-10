@@ -104,14 +104,12 @@ All other class options (e.g. :table-name, :unique-keys, :keys, :auto-pk,
     (declare (ignore shiso-options))
     (let* ((slots (mapcar #'ft:expand-field-type slots))
            (mito-slots (mapcar #'strip-shiso-keys slots))
-           (meta-forms (mapcar #'extract-metadata slots))
-           (registry-package (symbol-package 'reg:*model-registry*))
-           (registered-name (intern (string-upcase name) registry-package)))
+           (meta-forms (mapcar #'extract-metadata slots)))
       `(progn
-         (mito:deftable ,registered-name ()
+         (mito:deftable ,name ()
            ,mito-slots
            ,@mito-options)
-         (reg:register-model ',registered-name
-                             (find-class ',registered-name)
+         (reg:register-model ',name
+                             (find-class ',name)
                              (list ,@meta-forms))
-         ',registered-name))))
+         ',name))))

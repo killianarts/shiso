@@ -29,6 +29,8 @@
                :trivia
                ;; Auth
                :cl-pass
+               ;; CLI
+               :clingon
                )
   :components ((:module "src"
                 :serial t

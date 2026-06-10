@@ -113,12 +113,13 @@ Full pictures: [[file:request-lifecycle.org][the request lifecycle]].
 
 =(define-model NAME (slots) …)= expands into a =mito:deftable= for
 the SQL/CLOS class plus a =register-model= call that records slot
-metadata in =*model-registry*=. The class is interned in
-=shiso/models/registry= (a fixed package) so the admin can resolve
-URL-shaped model names to classes; slot symbols stay in your
-package, so accessors and =slot-value= calls in your own code feel
-local. The admin and the form/model-form layers both read the same
-metadata to render lists, build forms, and validate input.
+metadata in =*model-registry*=. The class is named by the symbol you
+wrote, in your package — exportable and usable like any =defclass=
+name; the registry additionally indexes models by name string so the
+admin can resolve URL-shaped model names to classes (which is why
+model names must be unique application-wide). The admin and the
+form/model-form layers both read the same metadata to render lists,
+build forms, and validate input.
 
 Full picture: [[file:model-metadata.org][model metadata and the registry]].
 

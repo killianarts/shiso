@@ -132,6 +132,7 @@ Open =src/modules/polls/models.lisp= and replace its contents with:
 (defpackage #:polls/models
   (:use #:cl)
   (:export
+   #:question #:choice
    #:question-text #:pub-date
    #:question-id #:choice-text #:votes
    #:all-questions #:find-question #:choices-for-question
@@ -211,13 +212,10 @@ prefix).
 
 Mito's =deftable= supports a real foreign-key declaration —
 =(question :col-type question :initarg :question)= sets up a join with
-an automatic =question-id= column behind it. It works, but the class
-symbol must resolve to the model class /which lives in the
-=shiso/models/registry= package/, not in your model's package. That
-means you'd have to write =:col-type shiso/models/registry::question=
-or import the registry symbol back into your package after the model
-is defined. Both options are workable for a real project; both are
-painful to teach in a first tutorial.
+an automatic =question-id= column behind it. It works (the class is
+named by the =question= symbol in your package, so the bare symbol
+resolves), but the joined-instance behaviour is more machinery than a
+first tutorial needs.
 
 So this tutorial keeps the relationship as a plain =:integer= slot
 named =question-id=, with the lookup done manually in
@@ -232,24 +230,24 @@ Append these to the same file:
 #+begin_src lisp
 (defun all-questions (&key (limit 5))
   "Return the LIMIT most recently-published questions, newest first."
-  (mito:select-dao (shiso/models:model-class 'question)
+  (mito:select-dao 'question
     (sxql:order-by (:desc :pub-date))
     (sxql:limit limit)))
 
 (defun find-question (id)
   "Return the question with primary key ID, or NIL."
   (when id
-    (mito:find-dao (shiso/models:model-class 'question) :id id)))
+    (mito:find-dao 'question :id id)))
 
 (defun choices-for-question (question)
   "Return all choices belonging to QUESTION, in id order."
-  (mito:select-dao (shiso/models:model-class 'choice)
+  (mito:select-dao 'choice
     (sxql:where (:= :question-id (mito:object-id question)))
     (sxql:order-by :id)))
 
 (defun create-choice (question text)
   "Create and persist a choice for QUESTION with TEXT."
-  (mito:create-dao (shiso/models:model-class 'choice)
+  (mito:create-dao 'choice
                    :question-id (mito:object-id question)
                    :choice-text text))
 
@@ -260,10 +258,11 @@ Append these to the same file:
     (local-time:timestamp> pub one-day-ago)))
 #+end_src
 
-The pattern =(mito:select-dao (shiso/models:model-class 'question)
-…)= shows up everywhere — Shiso's registry resolves =NAME= (a symbol
-in your package) to the canonical class object. =find-dao= and
-=create-dao= take the same first argument shape.
+=define-model question= named the class with the =question= symbol
+in /your/ package, so =mito:select-dao=, =find-dao= and =create-dao=
+take the bare symbol directly — same as any =defclass=. When a name
+arrives as a string (say, from a URL), resolve it with
+=(shiso/models:model-class "question")=.
 
 * Step 5 — Register the models in the admin
 
@@ -296,7 +295,7 @@ contents with:
   (mito:connect-toplevel :sqlite3 :database-name "db/mysite.db")
   (shiso/auth:ensure-tables)
   (dolist (name (shiso/models:all-models))
-    (mito:ensure-table-exists (shiso/models:model-class name))))
+    (mito:ensure-table-exists name)))
 
 (defun start (&key (host "127.0.0.1") (port 5000))
   (setup-database)

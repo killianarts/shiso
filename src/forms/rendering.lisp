@@ -148,7 +148,7 @@
   "Render a hidden `_csrf_token' input for the current request's session,
 or NIL when there is no live request/session (e.g. unit tests that
 render forms outside an HTTP cycle)."
-  (when (boundp 'shiso/requests:*request*)
+  (when shiso/requests:*request*
     (let* ((env (req:request-env shiso/requests:*request*))
            (session (getf env :lack.session))
            (token (and session (csrf:csrf-token session))))
