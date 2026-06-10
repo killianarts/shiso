@@ -31,6 +31,9 @@
                 #:staff-required
                 #:*login-url*
                 #:*post-login-redirect*)
+  (:import-from #:shiso/auth/createsuperuser
+                #:create-superuser
+                #:superuser-error)
   (:import-from #:shiso/auth/routes)
   (:export
    ;; Password
@@ -63,4 +66,7 @@
    #:login-required
    #:staff-required
    #:*login-url*
-   #:*post-login-redirect*))
+   #:*post-login-redirect*
+   ;; Management
+   #:create-superuser
+   #:superuser-error))

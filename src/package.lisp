@@ -30,6 +30,10 @@
   (:import-from #:shiso/static
                 #:collectstatic)
 
+  (:import-from #:shiso/management
+                #:run-cli
+                #:register-command)
+
   (:import-from #:shiso/admin
                 #:define-admin)
 
@@ -145,6 +149,11 @@
    #:static
    #:absolute-url
    #:collectstatic
+
+   ;; Management commands (app-binary CLI)
+   #:run-cli
+   #:register-command
+
    #:post-request-p
    #:parse-body-params
    #:redirect-response

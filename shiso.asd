@@ -71,6 +71,7 @@
                                (:file "forms")
                                (:file "controllers")
                                (:file "routes")
+                               (:file "createsuperuser")
                                (:file "package")))
                  ;; Server — loaded after auth so it can install the
                  ;; session+CSRF middleware stack using shiso/auth/session.
@@ -83,6 +84,9 @@
                                (:file "controllers")
                                (:file "routes")
                                (:file "package")))
+                 ;; Management commands for app binaries (createsuperuser, …).
+                 ;; After auth (uses shiso/auth) and clingon.
+                 (:file "management")
                  (:file "package"))))
   :in-order-to ((test-op (test-op "shiso/tests"))))
 
