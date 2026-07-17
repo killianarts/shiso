@@ -1,0 +1,95 @@
+#+title: Changelog
+#+options: toc:2 num:nil
+
+All notable changes to Shiso are documented here.
+
+The format is inspired by [[https://keepachangelog.com/][Keep a Changelog]].
+Versions match the =:version= in =shiso.asd= when set; otherwise
+entries are dated by release milestone.
+
+* Unreleased
+
+** Added
+
+- App skeleton =src/config.lisp=: env-backed =host=, =port=, =debugp=,
+  and =database-path= (absolute XDG data-home default, =DATABASE_PATH=
+  override).
+- Project-wide hypermedia secondary system in the app skeleton
+  (=<%application-name%>/hypermedia=) with =ac-page-skeleton=
+  (charset, viewport, CSRF meta, CSS/JS hooks).
+- Module skeleton =hypermedia/package.lisp= that re-exports
+  module components.
+- Scaffolded =main= wires =shiso:run-cli= (=createsuperuser= and
+  friends) with =:setup-db= / =:serve=.
+
+** Changed
+
+- Scaffolder template bindings:
+  - =new-application= substitutes =application-name=
+  - =new-module= substitutes =module-name=
+  (replacing the single shared =name= key).
+- Skeleton file names and package prefixes follow those keys
+  (=<% @var application-name %>.asd=, =<% @var module-name %>.asd=,
+  etc.).
+- App =build.lisp= / =Makefile=: =vend get= then load+make via
+  =build.lisp= alone.
+- Docs: scaffolder how-to and CLI reference updated for the new
+  placeholders and inventory.
+- Routing uses *vanilla MyWay* (no namespace fork). Each module still
+  has its own mapper; short route names (=:INDEX=) live on that
+  mapper. =shiso:url= with ="module:route"= resolves the module, then
+  looks up the short name. Removed =*global-routes-namespace*= and
+  MyWay =:namespace= usage.
+
+* 0.2 — 2026-07-17
+
+Scaffolding and ops-facing maturity (includes work landed through
+the =Updated scaffolding= line of development).
+
+** Added
+
+- CLI scaffolder (=shiso new-application=, =shiso new-module=) with
+  =SHISO_HOME=-aware template trees under =skeleton/=.
+- Auth subsystem: sessions, CSRF helpers, login flow,
+  =createsuperuser= management command.
+- =shiso:run-cli= / =register-command= for application binaries.
+- Basic logging support.
+- Full Diátaxis documentation tree under =docs/= (tutorials, how-tos,
+  reference, explanation).
+- Model field-type sugar and registry introspection improvements
+  (=define-model=, proper model class interning).
+
+** Changed
+
+- Package exports and utility surface expanded for app authors
+  (=url=, CSRF token access, session table helpers, …).
+- Admin links standardized on =shiso/utils:url=.
+
+** Removed
+
+- Literate-programming org sources as the primary code path (plain
+  =src/= is canonical again).
+
+* 0.1 — 2026-02 … 2026-03
+
+Initial framework shape.
+
+** Added
+
+- Module and application macros: =define-module=,
+  =define-application=, =define-route= / route table.
+- Named and regex routes; request/response helpers.
+- Models (Mito-backed), forms, validators.
+- Admin: registry, CRUD views, module mount.
+- Early scaffold for applications and modules.
+- Tests for routing and related core behaviour.
+
+** Changed
+
+- Route API renamed toward =define-route= and clearer export sets.
+
+* See also
+
+- [[file:README.org][README.org]] — install and quickstart
+- [[file:ROADMAP.md][ROADMAP.md]] — planned work
+- [[file:docs/how-to/customize-the-scaffolder-templates.org][Customize scaffolder templates]]
