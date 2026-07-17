@@ -1,4 +1,4 @@
-(defpackage #:<% @var name %>/models
+(defpackage #:<% @var module-name %>/models
   (:use #:cl))
 
-(in-package #:<% @var name %>/models)
+(in-package #:<% @var module-name %>/models)

@@ -1,5 +1,5 @@
-(defpackage #:<% @var name %>/hypermedia
+(defpackage #:<% @var module-name %>/hypermedia/components
   (:use #:cl)
   (:local-nicknames (#:ah #:almighty-html)))
 
-(in-package #:<% @var name %>/hypermedia)
+(in-package #:<% @var module-name %>/hypermedia/components)

@@ -35,6 +35,12 @@ usage to *error-output* and quit 1 if it's missing."
    :usage       "<name>"
    :handler     #'new-module/handler))
 
+;; TODO Build scaffolding for deploys
+;; Caddy file creation, .env creation, etc.
+(defun new-deploy/command ())
+(defun new-deploy/handler ())
+(defun new-deploy/options ())
+
 (defun top-level/handler (cmd)
   "Bare `shiso` with no subcommand: print usage and exit non-zero."
   (clingon:print-usage cmd *error-output*)

@@ -1,11 +1,12 @@
-(defpackage #:<% @var name %>/routes
+(defpackage #:<% @var application-name %>/routes
   (:use #:cl)
   (:local-nicknames (#:s #:shiso))
   (:export #:application))
-(in-package #:<% @var name %>/routes)
+
+(in-package #:<% @var application-name %>/routes)
 
 (defun home ()
-  (s:http-response "Hello from <% @var name %>!"))
+  (s:http-response "Hello from <% @var application-name %>!"))
 
 (s:define-module home
   (:urls (:GET "/" #'home "index")))

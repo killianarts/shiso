@@ -1,4 +1,4 @@
-(defpackage #:<% @var name %>/forms
+(defpackage #:<% @var module-name %>/forms
   (:use #:cl))
 
-(in-package #:<% @var name %>/forms)
+(in-package #:<% @var module-name %>/forms)

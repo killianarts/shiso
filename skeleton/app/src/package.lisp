@@ -1,3 +1,5 @@
-(defpackage #:<% @var name %>
+(uiop:define-package #:<% @var application-name %>
   (:use #:cl)
-  (:export #:main))
+  (:use-reexport #:<% @var application-name %>/main))
+
+(in-package #:<% @var application-name %>)

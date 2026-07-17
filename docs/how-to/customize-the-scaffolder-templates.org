@@ -4,37 +4,42 @@
 The =shiso= binary's =new-application= and =new-module= commands
 both copy a tree from =$SHISO_HOME/skeleton/= (default
 =~/common-lisp/shiso/skeleton/=) into the current directory,
-substituting =<%@var name%>= placeholders along the way. Change
-those templates and your scaffolded projects look different.
+substituting template placeholders along the way. Change those
+templates and your scaffolded projects look different.
 
 * Where the templates live
 
 #+begin_example
-~/common-lisp/shiso/skeleton/
+$SHISO_HOME/skeleton/   (default install: ~/common-lisp/shiso/)
 ├── app/
 │   ├── .gitignore
-│   ├── <%@var name%>.asd
+│   ├── <%@var application-name%>.asd   ; root + <%application-name%>/hypermedia
 │   ├── build.lisp
 │   ├── Makefile
 │   ├── static/
 │   │   └── .gitkeep
 │   └── src/
-│       ├── main.lisp
-│       ├── package.lisp
-│       └── routes.lisp
+│       ├── config.lisp            ; HOST/PORT/DEBUGP/DATABASE_PATH + XDG default
+│       ├── main.lisp              ; setup-database, run-cli, start/stop-server
+│       ├── package.lisp           ; re-exports main
+│       ├── routes.lisp
+│       └── hypermedia/
+│           ├── components.lisp    ; ac-page-skeleton
+│           └── package.lisp
 └── module/
-    ├── <%@var name%>.asd
-    ├── <%@var name%>.lisp
+    ├── <%@var module-name%>.asd
+    ├── <%@var module-name%>.lisp
     ├── controllers.lisp
     ├── forms.lisp
     ├── hypermedia/
-    │   └── components.lisp
+    │   ├── components.lisp
+    │   └── package.lisp
     ├── models.lisp
     └── routes.lisp
 #+end_example
 
 =app/= is what =shiso new-application= stamps. =module/= is what
-=shiso new-module= stamps. File names with =<%@var name%>= get the
+=shiso new-module= stamps. File names with placeholders get the
 substituted value baked into the path; file contents go through the
 same substitution.
 
@@ -42,13 +47,14 @@ same substitution.
 
 - Syntax: =<%@var KEY%>= (cl-emb's =@var= directive,
   whitespace-tolerant — =<% @var key %>= works too).
-- The only key passed in today is =name= — whatever the user typed
-  on the command line.
+- Keys passed today:
+  - =new-application= → =application-name= (the CLI =<name>= argument)
+  - =new-module= → =module-name= (the CLI =<name>= argument)
 - Substitution runs over both path components and file contents.
 
-So =<%@var name%>.asd= becomes =blog.asd= when the user runs
-=shiso new-module blog=, and any =<%@var name%>= inside the file's
-content becomes =blog= too.
+So =<%@var module-name%>.asd= becomes =blog.asd= when the user runs
+=shiso new-module blog=, and any =<%@var module-name%>= inside the
+file's content becomes =blog= too.
 
 * Quick experiment with =SHISO_HOME=
 
@@ -74,8 +80,8 @@ installed copy at =~/common-lisp/shiso/=.
 Add libraries your team always uses:
 
 #+begin_src lisp
-(defsystem "<%@var name%>"
-  :description "<%@var name%> application"
+(defsystem "<%@var application-name%>"
+  :description "<%@var application-name%> application"
   :version "0.1"
   :depends-on (:shiso :str :alexandria :local-time)
   …)
@@ -83,11 +89,10 @@ Add libraries your team always uses:
 
 ** Default to Postgres
 
-Edit =skeleton/app/src/main.lisp= to call
-=(mito:connect-toplevel :postgres …)= with sensible defaults read
-from environment variables. =gyokubundo='s main.lisp shows the
-=get-env/get-env-int/envp= pattern most apps end up writing — pull
-those helpers into the skeleton and stop rewriting them.
+Env-backed server/DB knobs already live in =skeleton/app/src/config.lisp=.
+To use Postgres, change =setup-database= in =main.lisp= to
+=(mito:connect-toplevel :postgres …)= and extend =database-path= (or
+add host/user/password readers) in =config.lisp=.
 
 ** Add a CLAUDE.md / agents instruction file
 
@@ -113,15 +118,16 @@ so =shiso/auth:ensure-tables= runs at startup.
 
 * Adding new variables to the template engine
 
-If you want more than =name= (say, =:author= or =:license= flags),
-edit =src/cli/commands.lisp= — the bindings alist is built there
-and passed straight to =render:render-template=. The render
-function loops over each binding and substitutes by regex, so
-adding entries is a one-line change. The CLI itself currently only
-parses the one positional name argument; to wire a new flag, add an
-=:options= list to the relevant =clingon:make-command= form in
-=src/cli/main.lisp= and read the value with =clingon:getopt= inside
-the handler before delegating to =commands.lisp=.
+If you want more than =application-name= / =module-name= (say,
+=:author= or =:license= flags), edit =src/cli/commands.lisp= — the
+bindings alist is built there and passed straight to
+=render:render-template=. The render function loops over each
+binding and substitutes by regex, so adding entries is a one-line
+change. The CLI itself currently only parses the one positional name
+argument; to wire a new flag, add an =:options= list to the relevant
+=clingon:make-command= form in =src/cli/main.lisp= and read the
+value with =clingon:getopt= inside the handler before delegating to
+=commands.lisp=.
 
 * Restoring the defaults
 

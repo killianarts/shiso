@@ -1,22 +1,21 @@
 SBCL   ?= sbcl
 PREFIX ?= $(HOME)/.local
 
-SOURCES := <% @var name %>.asd build.lisp $(shell find src -name '*.lisp')
+SOURCES := <% @var application-name %>.asd build.lisp $(shell find src -name '*.lisp')
 
-<% @var name %>: $(SOURCES)
+<% @var application-name %>: $(SOURCES)
 	vend get
 	$(SBCL) --non-interactive \
-	        --load build.lisp \
-	        --eval '(asdf:make :<% @var name %>)'
+	        --load build.lisp
 
-install: <% @var name %>
+install: <% @var application-name %>
 	install -d $(PREFIX)/bin
-	install -m 755 <% @var name %> $(PREFIX)/bin/<% @var name %>
+	install -m 755 <% @var application-name %> $(PREFIX)/bin/<% @var application-name %>
 
 uninstall:
-	rm -f $(PREFIX)/bin/<% @var name %>
+	rm -f $(PREFIX)/bin/<% @var application-name %>
 
 clean:
-	rm -f <% @var name %>
+	rm -f <% @var application-name %>
 
 .PHONY: install uninstall clean
