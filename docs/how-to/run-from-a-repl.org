@@ -1,9 +1,9 @@
 #+TITLE: How to run a Shiso app from a REPL
 #+OPTIONS: toc:2 num:nil
 
-The "edit-rebuild-restart" loop with =make && ./myapp= is fine for
-production smoke tests but slow for development. A persistent REPL
-turns it into edit-eval-test.
+*Development* uses a persistent REPL and =start-server= from the
+scaffolded =src/main.lisp=. =make && ./myapp= is for *deploy* (and
+occasional production smoke tests), not the day-to-day edit loop.
 
 * From SLIME or SLY
 
@@ -11,17 +11,19 @@ In Emacs:
 
 #+begin_src lisp
 ;; Open M-x slime  (or sly)
+;; Ensure ASDF sees the project (load build.lisp once from the project root, or register the tree)
 (asdf:load-system :myapp)
-(myapp:start)              ; boots database + server
-;; Edit src/modules/myapp/controllers.lisp
+(myapp:start-server)       ; setup-database + shiso:start
+;; Edit src/modules/.../controllers.lisp
 ;; C-c C-c on the changed defun re-installs it
 ;; Reload the page in your browser — the new code is live
-(myapp:stop)
+(myapp:stop-server)
 #+end_src
 
-=myapp:start= /must/ set up the database (Mito connection + table
-ensures) before calling =shiso:start=. The scaffolded =main.lisp=
-puts that wiring in =start=, so just calling =start= is enough.
+=myapp:start-server= /must/ set up the database (Mito connection +
+table ensures) before calling =shiso:start=. The scaffolded
+=main.lisp= puts that wiring in =start-server=, so just calling it is
+enough. Host, port, and debug come from =config= / the environment.
 
 * From the cl-mcp REPL or any other bare REPL
 
@@ -29,11 +31,11 @@ Same idea, but without an editor integration:
 
 #+begin_src lisp
 (asdf:load-system :myapp)
-(myapp:start)
+(myapp:start-server)
 ;; Edit a file on disk
 (load "src/modules/myapp/controllers.lisp")    ; or asdf:load-system :myapp/module :force t
 ;; Reload the page
-(myapp:stop)
+(myapp:stop-server)
 #+end_src
 
 For an entire module's worth of edits, force a recompile of the
@@ -91,7 +93,7 @@ responding. Pass =:debugp nil= in headless REPLs.
 =define-application= produces a Lack-builder pipeline at expansion
 time. Re-evaluating the form replaces the application value but does
 /not/ kill the running server. To pick up a new mount list you have
-to =(myapp:stop)= and =(myapp:start)= around the edit.
+to =(myapp:stop-server)= and =(myapp:start-server)= around the edit.
 
 Re-evaluating =define-module=, on the other hand, takes effect
 immediately — the registry is consulted at dispatch time.

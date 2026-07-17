@@ -17,7 +17,7 @@
                 #:routes
                 #:routes-mapper
                 #:*routes*
-                #:*global-routes-namespace*
+                #:coerce-route-name
                 #:define-route
                 #:define-routes
                 #:define-module
@@ -131,7 +131,7 @@
    #:module-prefix
    #:module-static-root
    #:*routes*
-   #:*global-routes-namespace*
+   #:coerce-route-name
    #:define-route
    #:define-routes
    #:define-module

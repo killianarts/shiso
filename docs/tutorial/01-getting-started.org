@@ -148,9 +148,9 @@ route like =(:GET "/:id" 'show "show")=.
 ** A module groups routes
 
 =define-module= registers a named bundle of routes
-(=METHOD PATH CONTROLLER NAME=). Each route gets a /namespaced/
-identifier: the =index= route above can be referenced anywhere as
-=hello:index= via [[file:../reference/routing.org][=shiso:url=]].
+(=METHOD PATH CONTROLLER NAME=) on that module's own MyWay mapper.
+The short name (=index=) is unique within the module; reverse it from
+anywhere as =hello:index= via [[file:../reference/routing.org][=shiso:url=]].
 
 The module here is /unmounted/ — paths are stored as-is on the
 module's own mapper, with no prefix. The prefix gets attached at
@@ -176,11 +176,12 @@ Edit =src/routes.lisp= and change the response:
 
 There are two ways to see your change:
 
-- *Compiled mode*: rebuild and restart — =make && ./hello=. Slow but
-  matches production.
-- *REPL mode*: load Shiso and the project from SLY/SLIME, evaluate
-  =(hello:start)=, edit-eval-test, =(hello:stop)= when done. See
-  [[file:../how-to/run-from-a-repl.org][how-to: run from a REPL]] for the dev setup.
+- *Development (REPL)*: load the project from SLY/SLIME, evaluate
+  =(hello:start-server)=, edit-eval-test, =(hello:stop-server)= when
+  done. This is the normal day-to-day loop. See
+  [[file:../how-to/run-from-a-repl.org][how-to: run from a REPL]].
+- *Deploy / binary*: rebuild and restart — =make && ./hello=. Use this
+  for production and for smoke-testing the shipped binary.
 
 * Where to go next
 

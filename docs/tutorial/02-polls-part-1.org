@@ -454,7 +454,8 @@ not at expansion time. You can register a name before the function
 is defined; the first request that hits it will fail loudly until
 you fill it in.
 
-Route names are namespaced under the module name automatically, so
+Route names are short within the module's mapper; reverse them as
+=MODULE:NAME= (e.g. =polls:index=) via =shiso:url=. So
 the URL helper sees =polls:index=, =polls:detail=, =polls:results=,
 and =polls:vote=. We already use =polls:detail= in =question-list=
 above.

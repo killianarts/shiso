@@ -40,9 +40,10 @@ Each =URL-SPEC= is =(METHOD PATH CONTROLLER NAME)=:
   three reduce to the symbol =foo= at expansion time. The function is
   looked up at /request time/, so it doesn't have to exist when the
   module is defined.
-- *NAME* — a route name string. Stored in the mapper under the
-  module's namespace, so it's referenced from elsewhere as
-  ="MODULE-NAME:NAME"= (e.g. ="polls:detail"=).
+- *NAME* — a short route name string, unique within the module
+  (e.g. ="detail"=). Stored as a MyWay keyword on that module's
+  mapper. Reverse from elsewhere as ="MODULE-NAME:NAME"=
+  (e.g. ="polls:detail"=); =shiso:url= resolves the module half.
 
 ** Effect
 
@@ -176,10 +177,11 @@ A hash table from module-name keyword to =module= instance.
 
 =get-module= signals an error for unknown modules.
 
-* =*global-routes-namespace*=  /parameter/
+* =coerce-route-name=  /function/
 
-The namespace used for route names without an explicit
-=NAMESPACE:= prefix. Defaults to =:global=. Rarely needs to change.
+Coerce a route name designator (string, symbol, or keyword) to the
+keyword MyWay stores as =route-name=. Used by =define-route= and by
+=shiso:url= when falling back to the global mapper.
 
 * See also
 

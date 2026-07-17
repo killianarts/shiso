@@ -35,11 +35,10 @@
            raw)
           routes))))
 
-(defun find-module-route (mod name namespace)
-  "Find a route by name and namespace on a module's mapper."
+(defun find-module-route (mod name)
+  "Find a route by short MyWay name keyword on a module's mapper."
   (find-if (lambda (route)
-             (and (eq (myway.route:route-name route) name)
-                  (eq (myway.route:route-namespace route) namespace)))
+             (eq (myway.route:route-name route) name))
            (module-routes-list mod)))
 
 (defun route-url (route)
@@ -138,18 +137,18 @@
     (eval '(shiso:define-module prefix-test
              (:urls (:GET "/" (lambda () (shiso:http-response "index")) "index"))))
     (let* ((mod (shiso:get-module :prefix-test))
-           (route (find-module-route mod :INDEX :PREFIX-TEST)))
+           (route (find-module-route mod :INDEX)))
       (assert-true route "Route should exist on module mapper")
       (assert-string= "/" (route-url route)
                       "Route path should be un-prefixed on module mapper"))))
 
-(define-test define-module-namespaces-route-names ()
+(define-test define-module-stores-short-route-names ()
   (with-fresh-routes
     (eval '(shiso:define-module articles
              (:urls (:GET "/" (lambda () (shiso:http-response "index")) "index"))))
     (let ((mod (shiso:get-module :articles)))
-      (assert-true (find-module-route mod :INDEX :ARTICLES)
-                   "Route should be namespaced under module name"))))
+      (assert-true (find-module-route mod :INDEX)
+                   "Route should be stored under short name :INDEX on the module mapper"))))
 
 (define-test define-module-handles-multiple-methods ()
   (with-fresh-routes
@@ -168,7 +167,7 @@
     (eval '(shiso:define-module url-test
              (:urls (:GET "/users/:id" (lambda (id) (shiso:http-response id)) "show"))))
     (let* ((mod (shiso:get-module :url-test))
-           (route (find-module-route mod :SHOW :URL-TEST)))
+           (route (find-module-route mod :SHOW)))
       (assert-true route "Route should exist")
       (assert-string= "/users/:id" (route-url route)
                       "Route URL should be un-prefixed on module mapper"))))
@@ -181,22 +180,20 @@
     (assert-true (and (listp expansion) (eq 'defparameter (first expansion)))
                  "Should expand to a defparameter form")))
 
-(define-test define-application-contains-mount-forms ()
+(define-test define-application-contains-module-mounts ()
   (let ((expansion (macroexpand-1
                     '(shiso:define-application my-app ()
                        (:modules ("/blog" blog) ("/shop" shop))))))
-    ;; expansion = (DEFPARAMETER MY-APP (LACK:BUILDER (:MOUNT "/blog" ...) (:MOUNT "/shop" ...) ...))
-    (let* ((builder-form (third expansion))
-           (builder-args (cdr builder-form))
-           (mount-forms (remove-if-not
-                         (lambda (f) (and (listp f) (eq (car f) :mount)))
-                         builder-args)))
-      (assert-eql 2 (length mount-forms)
-                  "Should have two :mount forms for two modules")
-      (assert-string= "/blog" (second (first mount-forms))
-                      "First mount should be at /blog")
-      (assert-string= "/shop" (second (second mount-forms))
-                      "Second mount should be at /shop"))))
+    ;; expansion = (DEFPARAMETER MY-APP (LACK:BUILDER <middleware…> … 404))
+    ;; Mounts are hand-rolled lambdas (not lack :mount) so a miss falls through.
+    (let* ((printed (prin1-to-string expansion)))
+      (assert-true (search "/blog" printed)
+                   "Expansion should mention the /blog prefix")
+      (assert-true (search "/shop" printed)
+                   "Expansion should mention the /shop prefix")
+      (assert-true (or (search ":BLOG" printed) (search ":blog" printed)
+                       (search "BLOG" printed))
+                   "Expansion should reference the blog module keyword"))))
 
 (define-test define-application-creates-lack-app ()
   (with-fresh-routes
@@ -251,7 +248,8 @@
     (eval '(shiso:define-application mounted-app ()
              (:modules ("/mounted-test" mounted-test))))
     (let* ((app (symbol-value (intern "MOUNTED-APP" :cl-user)))
-           (response (funcall app (make-test-env "/mounted-test/"))))
+           ;; No trailing slash: app middleware 301-redirects "/path/" → "/path".
+           (response (funcall app (make-test-env "/mounted-test"))))
       (assert-true (listp response) "Response should be a list")
       (assert-eql 200 (first response) "Status should be 200 for prefixed path"))))
 
@@ -262,7 +260,7 @@
     (eval '(shiso:define-application fallback-app ()
              (:modules ("/fallback-test" fallback-test))))
     (let* ((app (symbol-value (intern "FALLBACK-APP" :cl-user)))
-           (response (funcall app (make-test-env "/unknown/"))))
+           (response (funcall app (make-test-env "/unknown"))))
       (assert-true (listp response) "Response should be a list")
       (assert-eql 404 (first response) "Status should be 404 for unknown prefix"))))
 

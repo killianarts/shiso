@@ -5,13 +5,13 @@
    #:routes
    #:routes-mapper
    #:*routes*
-   #:*global-routes-namespace*
    #:define-route
    #:define-routes
    #:define-module
    #:define-application
    #:to-symbol
    #:to-symbol-form
+   #:coerce-route-name
 ))
 
 (in-package #:shiso/routing)
@@ -20,8 +20,6 @@
   ((mapper :initarg :mapper :reader routes-mapper :initform nil)))
 
 (defparameter *routes* (make-instance 'routes :mapper (myway:make-mapper)))
-
-(defparameter *global-routes-namespace* :global)
 
 (defun get-function-name (fn)
   (when (functionp fn)
@@ -68,28 +66,39 @@
    All three calls expand to the same thing: 'FOO"
   (to-symbol-form fn-form))
 
-(defun get-name-and-namespace (name)
-  (let ((pos (position #\: name)))
-    (if pos
-        (values (intern (string-upcase (subseq name (1+ pos))) :keyword)
-                (intern (string-upcase (subseq name 0 pos)) :keyword))
-        (values (intern (string-upcase name) :keyword)
-                *global-routes-namespace*))))
+(defun coerce-route-name (name)
+  "Turn a route name designator into a keyword for vanilla MyWay.
+Strings are uppercased and interned in the KEYWORD package (so
+\"index\" → :INDEX and \"admin:users\" → a single keyword whose
+name is \"ADMIN:USERS\")."
+  (etypecase name
+    (null nil)
+    (keyword name)
+    (symbol (intern (symbol-name name) :keyword))
+    (string (intern (string-upcase name) :keyword))))
 
 (defun define-route (method routing-rule &key controller name (regexp nil) (routes *routes*))
+  "Register ROUTING-RULE on ROUTES (default `*routes*').
+NAME is stored as a MyWay route name keyword (see `coerce-route-name').
+Module routes should use a short name unique within that module's
+mapper (e.g. \"index\"); reverse URLs with `shiso:url' as
+\"module:index\". Global `define-routes' may use a unique dotted name
+on the shared mapper."
   (let ((param-keys (myway.rule::rule-param-keys
-                     (myway.rule::make-rule routing-rule))))
-    (multiple-value-bind (name namespace)
-        (get-name-and-namespace name)
-      (myway:connect (routes-mapper routes)
-                     routing-rule
-                     (make-endpoint controller param-keys)
-                     :method method
-                     :name name
-                     :namespace namespace
-                     :regexp regexp))))
+                     (myway.rule::make-rule routing-rule)))
+        (name-kw (coerce-route-name name)))
+    (myway:connect (routes-mapper routes)
+                   routing-rule
+                   (make-endpoint controller param-keys)
+                   :method method
+                   :name name-kw
+                   :regexp regexp)))
 
 (defmacro define-routes (module &rest args)
+  "Register routes on the global `*routes*' mapper.
+Prepends :root to paths and prefixes each name with \"MODULE:\" so
+names stay unique on the shared mapper (vanilla MyWay has no
+namespaces). Prefer `define-module' for normal apps."
   (let ((root (getf args :root ""))
         (routes (member-if #'listp args))
         (module-name (string-downcase (symbol-name module))))
@@ -114,15 +123,16 @@ Usage:
 
 Each URL spec is (METHOD PATH CONTROLLER NAME).
 METHOD can be a keyword or a list of keywords.
-Routes are registered with their original paths on the module's own mapper.
-Route names are namespaced under the module name (e.g., articles:index).
+Routes are registered with their original paths on the module's own
+mapper under the short NAME (e.g. :INDEX). Reverse with
+(shiso:url \"articles:index\") — the module half selects the mapper;
+MyWay only sees the short name.
 The module instance is stored in the registry for url generation and mounting.
 
 A :guard option attaches an authentication/authorization guard that runs
 before any route in this module is dispatched. See `shiso/auth/guards'
 for the recognized specs (e.g. (:require :staff))."
-  (let* ((module-name-str (string-downcase (symbol-name name)))
-         (module-keyword (intern (string-upcase (symbol-name name)) :keyword))
+  (let* ((module-keyword (intern (string-upcase (symbol-name name)) :keyword))
          (urls (cdr (assoc :urls options)))
          (guard (cadr (assoc :guard options)))
          (module-routes-var (gensym "MODULE-ROUTES"))
@@ -139,13 +149,12 @@ for the recognized specs (e.g. (:require :staff))."
          ,@(loop for url-spec in urls
                  append
                  (destructuring-bind (method path controller route-name) url-spec
-                   (let* ((full-name (concatenate 'string module-name-str ":" route-name))
-                          (controller-symbol (to-symbol-form controller))
+                   (let* ((controller-symbol (to-symbol-form controller))
                           (methods (if (listp method) method (list method))))
                      (loop for m in methods
                            collect `(define-route ,m ,path
                                       :controller ,controller-symbol
-                                      :name ,full-name
+                                      :name ,route-name
                                       :routes ,module-routes-var)))))
          (modules:register-module ,module-keyword
                           (make-instance 'modules:module

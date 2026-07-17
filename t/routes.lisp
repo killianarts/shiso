@@ -14,11 +14,10 @@
   (myway.mapper:mapper-routes
    (shiso:routes-mapper shiso:*routes*)))
 
-(defun find-route (name namespace)
-  "Find a route by name and namespace keywords."
+(defun find-route (name)
+  "Find a route by MyWay name keyword."
   (find-if (lambda (route)
-             (and (eq (myway.route:route-name route) name)
-                  (eq (myway.route:route-namespace route) namespace)))
+             (eq (myway.route:route-name route) name))
            (registered-routes)))
 
 (defun route-url (route)
@@ -29,27 +28,19 @@
   (with-fresh-routes
     (shiso:define-route :GET "/test"
       :controller (lambda () "test")
-      :name "global:test")
-    (let ((route (find-route :TEST :GLOBAL)))
+      :name "test")
+    (let ((route (find-route :TEST)))
       (assert-true route "Route should be registered")
       (assert-string= "/test" (route-url route)))))
 
-(define-test define-route-parses-namespaced-name ()
+(define-test define-route-coerces-string-name-to-keyword ()
   (with-fresh-routes
     (shiso:define-route :GET "/admin/index"
       :controller (lambda () "admin index")
       :name "admin:index")
-    (let ((route (find-route :INDEX :ADMIN)))
-      (assert-true route "Namespaced route should be registered")
+    (let ((route (find-route (intern "ADMIN:INDEX" :keyword))))
+      (assert-true route "Compound name should be registered as one keyword")
       (assert-string= "/admin/index" (route-url route)))))
-
-(define-test define-route-without-namespace-uses-global ()
-  (with-fresh-routes
-    (shiso:define-route :GET "/home"
-      :controller (lambda () "home")
-      :name "home")
-    (let ((route (find-route :HOME :GLOBAL)))
-      (assert-true route "Route without namespace should use :GLOBAL"))))
 
 (define-test define-routes-expands-to-define-route-calls ()
   (let* ((form `(shiso::define-routes test-mod :root "/app"
@@ -74,7 +65,7 @@
          (expansion (macroexpand-1 form))
          (call (second expansion)))
     (assert-string= "admin:users" (getf (cdddr call) :name)
-                    "Module name should be prefixed to route name")))
+                    "Module name should be prefixed to route name for global uniqueness")))
 
 (define-test define-routes-expands-multiple-methods-to-separate-calls ()
   (let* ((form `(shiso::define-routes admin :root "/admin"
@@ -104,14 +95,17 @@
             (:DELETE "/delete" (lambda () "delete") "delete")))
     (assert-eql 3 (length (registered-routes))
                 "All three routes should be registered")
-    (assert-true (find-route :INDEX :ADMIN) "admin:index should exist")
-    (assert-true (find-route :USERS :ADMIN) "admin:users should exist")
-    (assert-true (find-route :DELETE :ADMIN) "admin:delete should exist")))
+    (assert-true (find-route (intern "ADMIN:INDEX" :keyword))
+                 "admin:index should exist")
+    (assert-true (find-route (intern "ADMIN:USERS" :keyword))
+                 "admin:users should exist")
+    (assert-true (find-route (intern "ADMIN:DELETE" :keyword))
+                 "admin:delete should exist")))
 
 (define-test define-routes-registers-correct-rules ()
   (with-fresh-routes
     (eval '(shiso::define-routes admin :root "/admin"
             (:GET "/users" (lambda () "users") "users")))
-    (let ((route (find-route :USERS :ADMIN)))
+    (let ((route (find-route (intern "ADMIN:USERS" :keyword))))
       (assert-string= "/admin/users" (route-url route)
                       "Route rule should have root prepended"))))

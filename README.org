@@ -13,13 +13,15 @@ git clone <shiso-repo-url>
 cd shiso
 make && make install
 
-# Scaffold + run a project
+# Scaffold a project
 shiso new-application hello
 cd hello
 vend get
-make
-./hello                              # listening on http://127.0.0.1:5000
 #+end_src
+
+*Development* — load the system in a REPL and call =start-server=
+(from =src/main.lisp=). *Deploy / production binary* — =make=, then
+run =./hello=. Details under [[*Development vs deploy][Development vs deploy]].
 
 For a full walk-through see [[file:docs/tutorial/01-getting-started.org][docs/tutorial/01-getting-started]].
 
@@ -42,6 +44,11 @@ Full documentation lives under [[file:docs/][docs/]] and follows the
   registries exist, design choices.
 
 [[file:docs/README.org][docs/README.org]] is the top-level index.
+
+Notable project-level docs:
+
+- [[file:CHANGELOG.org][CHANGELOG.org]] — what changed between versions
+- [[file:ROADMAP.md][ROADMAP.md]] — planned work
 
 * Working examples
 
@@ -77,6 +84,7 @@ After =make install= you'll have:
 
 - =$(PREFIX)/bin/shiso= — the scaffolder binary (default prefix
   =~/.local=, override with =make install PREFIX=/usr/local=).
+  Put =$(PREFIX)/bin= on your =$PATH= if it is not already.
 - =$(ASDF_DIR)/shiso/= — a full copy of the Shiso source tree (default
   =~/common-lisp/shiso/=). This is where the binary reads its skeleton
   templates from at runtime, and it's also discoverable by ASDF for
@@ -107,29 +115,148 @@ Example: =make install PREFIX=/usr/local ASDF_DIR=/opt=
 
 * Using the scaffolder
 
-The =shiso= binary has two commands. Detailed coverage of both
-(plus the layout of the trees they stamp) lives in
+The =shiso= binary stamps project and module trees from templates
+under =$SHISO_HOME/skeleton/=. After install, =SHISO_HOME= defaults to
+=~/common-lisp/shiso/=.
+
+#+begin_src bash
+shiso --help
+shiso --version
+shiso new-application --help
+shiso new-module --help
+#+end_src
+
+Reference: [[file:docs/reference/cli.org][docs/reference/cli]]. Tutorial path:
 [[file:docs/tutorial/01-getting-started.org][docs/tutorial/01-getting-started]].
 
-** =shiso new-application <name>=
+** Scaffold an application
 
-Scaffold a fresh project in =./<name>/= — =.asd=, =Makefile=,
-=src/main.lisp=, =src/routes.lisp=, etc.
+#+begin_src bash
+shiso new-application myapp
+cd myapp
+vend get          # fetch dependencies into vendored/
+#+end_src
 
-** =shiso new-module <name>=
+=new-application= creates =./myapp/= and refuses to overwrite an
+existing directory. The tree includes, among other files:
 
-Scaffold a module under =src/modules/<name>/= in the current
-project. The scaffolder prints the manual wiring lines you need
-(adding =:<name>= to =:depends-on= and the mount to your
-application's =define-application=) but deliberately does not edit
-those files for you.
+| Path | Role |
+|------+------|
+| =<name>.asd= | Root ASDF system + =<name>/hypermedia= secondary system |
+| =Makefile= / =build.lisp= | =vend get= + self-contained binary build (deploy) |
+| =src/config.lisp= | =HOST=, =PORT=, =DEBUGP=, =DATABASE_PATH= (XDG default) |
+| =src/main.lisp= | DB setup, =start-server= / =stop-server=, =run-cli= |
+| =src/routes.lisp= | Hello-world module + =define-application= |
+| =src/hypermedia/= | Project-wide =ac-page-skeleton= |
+| =static/= | Project static root |
 
-* Customising the scaffolder templates
+Template substitution uses the key =application-name= (the CLI
+argument).
 
-The templates live under =$SHISO_HOME/skeleton/= (defaults to
-=~/common-lisp/shiso/skeleton/=). Substitution syntax is cl-emb's
-=@var= directive (e.g. =<%@var name%>=). Full instructions in the
-[[file:docs/how-to/customize-the-scaffolder-templates.org][how-to guide]].
+** Development vs deploy
+
+| Mode | How | When |
+|------+-----+------|
+| *Development* | REPL: load the system, call =start-server= | Day-to-day coding |
+| *Deploy* | =make=, then run the binary | Production, smoke tests, CI |
+
+*** Development (REPL)
+
+Point ASDF at the project (e.g. load =build.lisp= once, or use your
+usual local projects setup), then:
+
+#+begin_src lisp
+(asdf:load-system :myapp)
+(myapp:start-server)    ; setup-database + shiso:start
+;; Edit code, re-eval with SLIME/SLY (C-c C-c), reload the browser
+(myapp:stop-server)
+#+end_src
+
+=start-server= and =stop-server= live in =src/main.lisp= (re-exported
+from the root =myapp= package). They read host/port/debug from
+=config= (and thus from the environment). Prefer this over
+rebuild-and-restart while iterating.
+
+More detail: [[file:docs/how-to/run-from-a-repl.org][how-to: run from a REPL]].
+
+*** Deploy (binary)
+
+#+begin_src bash
+cd myapp
+vend get          # if dependencies changed
+make              # produces ./myapp
+./myapp           # serve (blocks); default http://127.0.0.1:5000
+#+end_src
+
+The binary entry point is =main=, which uses =shiso:run-cli=: bare
+invocation serves; subcommands run management tasks.
+
+#+begin_src bash
+./myapp createsuperuser [EMAIL]
+./myapp --help
+#+end_src
+
+*** Environment variables
+
+Same variables apply to both REPL and binary (see =src/config.lisp=):
+
+| Variable | Default (when unset) | Meaning |
+|----------+----------------------+---------|
+| =HOST= | =127.0.0.1= | Bind address |
+| =PORT= | =5000= | Port |
+| =DEBUGP= | true-ish default in scaffold | Debug flag (=true=/=false=, =t=/=nil=, …) |
+| =DATABASE_PATH= | =$XDG_DATA_HOME/<app>/<app>.db= (or =~/.local/share/…=) | SQLite file |
+
+** Scaffold a module
+
+From inside an application directory:
+
+#+begin_src bash
+cd myapp
+shiso new-module blog
+#+end_src
+
+This stamps =src/modules/blog/= with the usual module layout
+(models, forms, controllers, routes, hypermedia). Substitution uses
+the key =module-name=.
+
+The scaffolder does *not* edit the app's system definition or route
+table. Wire the module by hand:
+
+1. Add =:blog= (or =:depends-on (:shiso :blog)= on the module, and
+   =:blog= on the app) to the application's =.asd= =:depends-on=.
+2. Mount it in =src/routes.lisp= (or =src/main.lisp= if that is where
+   =define-application= lives):
+
+#+begin_src lisp
+(s:define-application application ()
+  (:modules
+   ("/blog" blog)
+   ("" home)))
+#+end_src
+
+The CLI prints these reminders after a successful =new-module=.
+
+** Customising the templates
+
+Templates live under =$SHISO_HOME/skeleton/= (=app/= and =module/=).
+Placeholders use cl-emb's =@var= syntax:
+
+#+begin_example
+<% @var application-name %>
+<% @var module-name %>
+#+end_example
+
+To try edits without reinstalling:
+
+#+begin_src bash
+export SHISO_HOME=~/path/to/your/shiso/checkout
+shiso new-application demo
+#+end_src
+
+When happy, =make install= from that checkout refreshes the installed
+tree. Full instructions:
+[[file:docs/how-to/customize-the-scaffolder-templates.org][how-to: customize the scaffolder templates]].
 
 * License
 

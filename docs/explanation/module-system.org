@@ -101,23 +101,29 @@ That's why the application's =:modules= entries use bare symbols
 (=polls=, not ='polls= or =:polls=): the macroexpansion uppercases
 the symbol-name and interns it as a keyword for the lookup.
 
-* Routes are namespaced under the module
+* Route names: short on the mapper, qualified for reverse
 
-Inside =define-module=, the route name string =index= is stored
-under the namespace matching the module name. =shiso:url= reads
-both halves:
+Each module has its own MyWay mapper, so every module can register
+a short name like =index= without colliding. Inside
+=define-module=, the route name string =index= is stored as =:INDEX=
+on /that/ module's mapper only.
+
+=shiso:url= uses a qualified string so callers name both halves:
 
 #+begin_src lisp
-(shiso:url "polls:index")              ; reads polls module's mapper
+(shiso:url "polls:index")              ; polls module's mapper, name :INDEX
 (shiso:url "polls:detail" :id "3")
 #+end_src
 
-The =NAMESPACE:NAME= form is parsed by =shiso/utils:url=, which:
+The =MODULE:NAME= form is parsed by =shiso/utils:url=, which:
 
-1. Strips the namespace prefix and looks up the module.
-2. Calls =myway:find-route-by-name= on the module's mapper.
+1. Looks up the module in the registry.
+2. Calls vanilla =myway:find-route-by-name= with the short name keyword.
 3. Builds the URL via =myway:url-for=.
 4. Prepends the module's current =module-prefix= slot.
+
+No MyWay fork or route-namespace slot is required — the module
+registry is the namespace.
 
 For routes not associated with a module (registered with
 =define-route= directly on =*routes*=), the same helper falls back

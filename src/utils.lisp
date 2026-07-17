@@ -62,26 +62,36 @@ alist of (keyword . string)."
 
 (defun url (name &rest params)
   "Return the URL for a named route, with module prefix prepended.
-Searches registered module mappers by namespace for namespaced routes
-(e.g., \"articles:index\"), falls back to global `*routes*' for others."
-  (if (and (stringp name) (position #\: name))
-      ;; Namespaced route — search the module's mapper
-      (let* ((pos (position #\: name))
-             (ns-str (subseq name 0 pos))
-             (ns-kw (intern (string-upcase ns-str) :keyword))
-             (mod (modules:get-module ns-kw))
-             (mapper (routing:routes-mapper (modules:module-routes mod)))
-             (route (myway:find-route-by-name mapper name)))
-        (when route
-          (let ((base-url (myway:url-for route params))
-                (prefix (modules:module-prefix mod)))
-            (concatenate 'string prefix base-url))))
-      ;; Non-namespaced route — fall back to global *routes*
-      (let* ((name-kw (intern (string-upcase name) :keyword))
-             (route (myway:find-route-by-name
-                     (routing:routes-mapper routing:*routes*) name-kw)))
-        (when route
-          (myway:url-for route params)))))
+
+NAME is usually \"module:route\" (e.g. \"articles:index\"). The module
+half selects the registered module's MyWay mapper; the route half is the
+short name stored on that mapper (:INDEX). Falls back to the global
+`*routes*' mapper for bare names (and for \"module:route\" strings when
+no such module is registered — used by legacy `define-routes')."
+  (flet ((reverse-on (mapper name-kw &optional prefix)
+           (let ((route (myway:find-route-by-name mapper name-kw)))
+             (when route
+               (let ((base (myway:url-for route params)))
+                 (if (and prefix (plusp (length prefix)))
+                     (concatenate 'string prefix base)
+                     base))))))
+    (let ((name-str (etypecase name
+                      (string name)
+                      (symbol (string-downcase (symbol-name name))))))
+      (if (position #\: name-str)
+          (let* ((pos (position #\: name-str))
+                 (mod-kw (intern (string-upcase (subseq name-str 0 pos)) :keyword))
+                 (short-kw (intern (string-upcase (subseq name-str (1+ pos))) :keyword))
+                 (mod (ignore-errors (modules:get-module mod-kw))))
+            (if mod
+                (reverse-on (routing:routes-mapper (modules:module-routes mod))
+                            short-kw
+                            (modules:module-prefix mod))
+                ;; No module — full "module:route" as a single global name.
+                (reverse-on (routing:routes-mapper routing:*routes*)
+                            (routing:coerce-route-name name-str))))
+          (reverse-on (routing:routes-mapper routing:*routes*)
+                      (routing:coerce-route-name name-str))))))
 
 (defun current-path ()
   "Get the path to the current page."
