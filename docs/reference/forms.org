@@ -176,22 +176,100 @@ cleaned data turned into a keyword-arg plist.
 Don't call =save-form= on a form whose =validate-form= returned
 =NIL= — the cleaned data is incomplete.
 
+* Headless context
+
+The form object owns validation, coercion, sticky values, and errors.
+Markup is optional — pull state with =field-context= and render
+whatever HTML you want.
+
+** =field-context=  /function/
+
+#+begin_src lisp
+(field-context FORM FIELD-DESIGNATOR) => plist
+#+end_src
+
+=FIELD-DESIGNATOR= is a form-field object or a symbol/string naming
+one. Returns a plist:
+
+| Key            | Meaning                                          |
+|----------------+--------------------------------------------------|
+| =:name=        | slot-name symbol                                 |
+| =:name-string= | downcased name for =name=/id= attributes         |
+| =:label=       | human label                                      |
+| =:help-text=   | help text or =NIL=                               |
+| =:value=       | sticky value (submitted data, else initial)      |
+| =:errors=      | list of error strings, or =NIL=                  |
+| =:requiredp=   | =T= when the field must not be blank             |
+| =:widget=      | concrete widget keyword (see =resolve-widget=)   |
+| =:choices=     | choice alist, or =NIL=                           |
+| =:max-length=  | varchar limit for char fields, or =NIL=          |
+
+Scaffolded apps stamp =ac-field= / =ac-fields= /
+=ac-csrf-input= into =src/hypermedia/form-components.lisp=. Those
+components consume =field-context= plists; edit them to restyle the
+whole app.
+
+** =resolve-widget=  /function/
+
+#+begin_src lisp
+(resolve-widget FIELD) => widget-keyword
+#+end_src
+
+Explicit =:widget= from model metadata wins; otherwise a default is
+derived from the field class (=text-field= → =:textarea=,
+=boolean-field= → =:checkbox=, …).
+
+** =request-form-data=  /function/
+
+#+begin_src lisp
+(request-form-data) => alist of (downcased-string . value)
+#+end_src
+
+Canonical body parameters for a form's =:data=. Prefer this over
+=parse-body-params= when building forms — field lookup is by
+string-equal name, and string keys avoid package surprises.
+
+** =cleaned-value=  /function/
+
+#+begin_src lisp
+(cleaned-value FORM NAME) => value-or-nil
+#+end_src
+
+Read a cleaned field after =validate-form=, matching =NAME= by
+symbol name string (so callers in other packages still hit).
+
+** =register-widget-field-class=  /function/
+
+#+begin_src lisp
+(register-widget-field-class WIDGET CLASS-NAME)
+#+end_src
+
+Map a widget keyword to a form-field class consulted during
+=make-model-form= generation (before col-type mapping). Built-in:
+=:email= → =email-field=. Pair a custom =define-field-type= that
+sets =:widget= with a registration here (and a =parse-field-value=
+method when coercion differs).
+
 * Rendering
+
+Rendering is style-dispatched so apps can specialise without
+clobbering the admin.
 
 ** =render-field=  /generic function/
 
 #+begin_src lisp
-(render-field FIELD &key value errors) => almighty-html-element
+(render-field STYLE FIELD &key value errors) => almighty-html-element
 #+end_src
 
-Methods exist for =char-field=, =text-field=, =integer-field=,
-=boolean-field=, =choice-field=, =email-field=, =date-field=, plus a
-fallback method on =form-field=.
+Dispatches on =STYLE= (first) then =FIELD=. The default method
+(=(STYLE t)=) honours the field's resolved widget. The admin always
+passes =:style :admin=, so app EQL methods on other keywords never
+affect admin pages.
 
 The default rendering produces:
 
 #+begin_example
-<div class="form-group">
+<div class="form-group" id="form-row-<name>">
   <label for="…">…</label>
   <input … />
   <p class="help-text">…</p>
@@ -199,32 +277,36 @@ The default rendering produces:
 </div>
 #+end_example
 
-The div gets =has-errors= appended to its class when there are
-errors. No external CSS is included — the admin module ships
-inline styles for these classes; your own pages need to either
+Hidden widgets emit only the input. Checkboxes wrap the control
+inside the label. No external CSS is included — the admin module
+ships inline styles for these classes; your own pages need to either
 re-use those or write your own.
+
+** =render-fields=  /function/
+
+#+begin_src lisp
+(render-fields FORM &key (style t)) => list-of-elements
+#+end_src
+
+Render each of =FORM='s fields via =render-field=. Emits no
+=<form>= wrapper — compose the result inside your own form tag
+alongside a CSRF input and submit button.
 
 ** =render-form=  /function/
 
 #+begin_src lisp
-(render-form FORM &key (action "") (method "POST") (submit-label "Submit"))
+(render-form FORM &key (action "") (method "POST")
+                      (submit-label "Submit") (style t))
   => almighty-html-element
 #+end_src
 
-Render the whole form: each field via =render-field=, then a
-submit button.
+Whole-form sugar: =render-fields= plus submit button inside a
+=<form>=. Non-GET methods get a hidden =_csrf_token= input
+prepended automatically (via =shiso:csrf-token-value=).
 
-** CSRF is /not/ auto-included
-
-=render-form= does not emit a CSRF token. You need to either:
-
-- Wrap the rendered form with one extra hidden input — see
-  [[../how-to/render-a-form-with-csrf.org][how-to: render a form with CSRF]].
-- Render the form by hand and insert the token where you want it.
-
-The admin module's =model-instance-persist= controller demonstrates
-this in =src/admin/controllers.lisp= — it's worth reading if you
-plan to build your own form pipelines.
+Use =render-form= for prototypes and admin-style pages. For
+designed app pages, prefer =field-context= + scaffolded
+=ac-field= / =ac-fields= so markup lives in your tree.
 
 * See also
 

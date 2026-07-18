@@ -43,9 +43,12 @@ DATA       -- submitted form data (alist of (name . string-value))."
   "Convert a slot-metadata struct to a form-field instance."
   (let* ((name (models:field-name meta))
          (col-type (models:field-col-type meta))
-         (class (if (models:field-choices meta)
-                    'fields:choice-field
-                    (fields:col-type-to-field-class col-type)))
+         (class (cond
+                  ((models:field-choices meta) 'fields:choice-field)
+                  ;; A widget can pick a class the col-type can't imply,
+                  ;; e.g. :email on (:varchar 254) → email-field.
+                  ((fields:widget-field-class (models:field-widget meta)))
+                  (t (fields:col-type-to-field-class col-type))))
          (initargs (list :name name
                          :label (models:field-verbose-name meta)
                          :help-text (models:field-help-text meta)

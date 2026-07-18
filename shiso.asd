@@ -59,6 +59,7 @@
                  (:module "forms" :serial t
                   :components ((:file "fields")
                                (:file "form")
+                               (:file "context")
                                (:file "model-form")
                                (:file "rendering")
                                (:file "package")))

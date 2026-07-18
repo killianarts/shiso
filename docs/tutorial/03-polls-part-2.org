@@ -49,9 +49,7 @@ Add a helper to your controllers file:
 #+begin_src lisp
 (defun csrf-token-input ()
   "Render a hidden CSRF token input for the current request's session."
-  (let* ((env (lack/request:request-env s:*request*))
-         (session (getf env :lack.session))
-         (token (and session (lack/middleware/csrf:csrf-token session))))
+  (let ((token (and s:*request* (s:csrf-token-value))))
     (when token
       (ah:</> (input :type "hidden" :name "_csrf_token" :value token)))))
 #+end_src
@@ -59,14 +57,16 @@ Add a helper to your controllers file:
 Three things to notice:
 
 - =s:*request*= is bound to the current Lack request for the
-  duration of a controller. The session lives on the request's env
-  plist under =:lack.session= (a hash table maintained by the
-  session middleware).
-- =lack/middleware/csrf:csrf-token= lazily mints the token on first
-  read and stores it back on the session.
+  duration of a controller.
+- =s:csrf-token-value= reads the session token (minting one on first
+  use via Lack's CSRF middleware).
 - We render the input only if the token resolves; if you call this
   outside an active request, you get =nil= back (which renders as
   nothing), not an error.
+
+Scaffolded apps also get =ac-csrf-input= in
+=src/hypermedia/form-components.lisp= — same idea, stamped into
+your tree.
 
 There's a how-to that walks through this in more depth:
 [[file:../how-to/render-a-form-with-csrf.org][how-to: render a form with CSRF]].

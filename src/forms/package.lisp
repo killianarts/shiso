@@ -19,7 +19,15 @@
                 #:date-field
                 #:email-field
                 #:parse-field-value
-                #:col-type-to-field-class)
+                #:col-type-to-field-class
+                #:register-widget-field-class
+                #:widget-field-class)
+  (:import-from #:shiso/forms/context
+                #:field-context
+                #:form-field-by-name
+                #:cleaned-value
+                #:resolve-widget
+                #:request-form-data)
   (:import-from #:shiso/forms/form
                 #:form
                 #:form-fields
@@ -37,6 +45,7 @@
                 #:model-form-model-name)
   (:import-from #:shiso/forms/rendering
                 #:render-field
+                #:render-fields
                 #:render-form)
   (:export
    ;; Fields
@@ -59,6 +68,14 @@
    #:email-field
    #:parse-field-value
    #:col-type-to-field-class
+   #:register-widget-field-class
+   #:widget-field-class
+   ;; Context (headless render state)
+   #:field-context
+   #:form-field-by-name
+   #:cleaned-value
+   #:resolve-widget
+   #:request-form-data
    ;; Form
    #:form
    #:form-fields
@@ -76,4 +93,5 @@
    #:model-form-model-name
    ;; Rendering
    #:render-field
+   #:render-fields
    #:render-form))

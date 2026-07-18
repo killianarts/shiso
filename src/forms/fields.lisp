@@ -23,7 +23,9 @@
    ;; Parsing
    #:parse-field-value
    ;; Mapping
-   #:col-type-to-field-class))
+   #:col-type-to-field-class
+   #:register-widget-field-class
+   #:widget-field-class))
 
 (in-package #:shiso/forms/fields)
 
@@ -77,9 +79,15 @@
           raw-value))))
 
 (defmethod parse-field-value ((field date-field) raw-value)
-  ;; Convert raw HTML datetime-local value to local-time-parsable value.
-  (let ((timestamp-with-seconds-added (concatenate 'string raw-value ":00")))
-    (local-time:parse-timestring timestamp-with-seconds-added)))
+  ;; HTML date inputs send "YYYY-MM-DD"; datetime-local sends
+  ;; "YYYY-MM-DDTHH:MM" (with seconds only when the control had them).
+  ;; A blank or absent value parses to NIL rather than erroring.
+  (when (and (stringp raw-value) (plusp (length raw-value)))
+    (let ((value (if (= 1 (count #\: raw-value))
+                     ;; Minutes but no seconds — local-time needs them.
+                     (concatenate 'string raw-value ":00")
+                     raw-value)))
+      (local-time:parse-timestring value))))
 
 (defun col-type-to-field-class (col-type)
   "Map a Mito column type keyword to a form-field class symbol."
@@ -92,3 +100,22 @@
     ((member col-type '(:timestamp :timestamptz :date))
      'date-field)
     (t 'char-field)))
+
+(defvar *widget-field-classes* (make-hash-table :test 'eq)
+  "Maps widget keywords to form-field class names. Consulted by model-form
+generation before `col-type-to-field-class', so a widget can select a
+field class the col-type alone cannot imply (e.g. :email on a varchar).
+This is the forms-side half of a custom field type: pair a
+`define-field-type' that sets :widget with a registration here plus a
+`parse-field-value' method when the type needs its own coercion.")
+
+(defun register-widget-field-class (widget class-name)
+  "Register CLASS-NAME (a form-field class symbol) as the field class for
+fields whose model metadata declares :widget WIDGET."
+  (setf (gethash widget *widget-field-classes*) class-name))
+
+(defun widget-field-class (widget)
+  "Return the form-field class registered for WIDGET, or NIL."
+  (and widget (gethash widget *widget-field-classes*)))
+
+(register-widget-field-class :email 'email-field)

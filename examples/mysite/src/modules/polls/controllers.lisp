@@ -16,9 +16,7 @@
 
 (defun csrf-token-input ()
   "Render a hidden CSRF token input for the current request's session."
-  (let* ((env (lack/request:request-env s:*request*))
-         (session (getf env :lack.session))
-         (token (and session (lack/middleware/csrf:csrf-token session))))
+  (let ((token (and s:*request* (s:csrf-token-value))))
     (when token
       (ah:</> (input :type "hidden" :name "_csrf_token" :value token)))))
 

@@ -7,7 +7,6 @@
    ;; Helpers
    #:all-todos
    #:find-todo
-   #:create-todo
    #:toggle-todo
    #:delete-todo))
 
@@ -35,11 +34,6 @@
 (defun find-todo (id)
   (when id
     (mito:find-dao (shiso/models:model-class 'todo) :id id)))
-
-(defun create-todo (title-string)
-  (mito:create-dao (shiso/models:model-class 'todo)
-                   :title title-string
-                   :done nil))
 
 (defun toggle-todo (todo)
   (setf (done todo) (not (done todo)))

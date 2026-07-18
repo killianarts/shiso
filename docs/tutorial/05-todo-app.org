@@ -3,8 +3,8 @@
 
 This is a shorter, lower-ceremony tutorial than the polls walkthrough.
 You'll build a single-resource CRUD app — Todo items with =title= and
-=done=, an /add/ form, toggle-by-checkbox, and delete buttons. About
-half the time of the polls tutorial.
+=done=, an /add/ form backed by the forms layer, toggle-by-checkbox,
+edit, and delete. About half the time of the polls tutorial.
 
 The finished app lives at =examples/todo/= in the repo:
 
@@ -26,6 +26,12 @@ shiso new-module todos
 Two names: the application is =todo= (singular, matches the
 binary), the module is =todos= (plural, matches the resource).
 Different ASDF system names, no clash.
+
+Scaffolding also stamps =src/hypermedia/form-components.lisp= into
+the *application* with =ac-field=, =ac-fields=, and =ac-csrf-input=.
+This tutorial keeps equivalent components under the *module*'s
+hypermedia package so the module stays self-contained (and so the
+example matches =examples/todo/= exactly).
 
 * Step 2 — Wire the module in
 
@@ -65,8 +71,29 @@ Mount it in =src/routes.lisp=:
 #+end_src
 
 The =todos= module is mounted at the root — its =/= route handles
-the home page, and the rest of its routes (=/:id/toggle=,
-=/:id/delete=) hang off paths the auth module doesn't claim.
+the home page, and the rest of its routes hang off paths the auth
+module doesn't claim.
+
+The module's own ASDF system (=todos.asd=) should load forms and
+hypermedia before controllers:
+
+#+begin_src lisp
+(defsystem "todos"
+  :description "todos module"
+  :version "0.1"
+  :depends-on (:shiso)
+  :pathname "."
+  :serial t
+  :components ((:file "todos")
+               (:file "models")
+               (:file "forms")
+               (:module "hypermedia"
+                :serial t
+                :components ((:file "form-components")
+                             (:file "components")))
+               (:file "controllers")
+               (:file "routes")))
+#+end_src
 
 * Step 3 — The model
 
@@ -77,7 +104,7 @@ the home page, and the rest of its routes (=/:id/toggle=,
   (:use #:cl)
   (:export
    #:title #:done
-   #:all-todos #:find-todo #:create-todo
+   #:all-todos #:find-todo
    #:toggle-todo #:delete-todo))
 
 (in-package #:todos/models)
@@ -98,17 +125,12 @@ the home page, and the rest of its routes (=/:id/toggle=,
 
 (defun all-todos ()
   "All todos, newest first."
-  (mito:select-dao 'todo
+  (mito:select-dao (shiso/models:model-class 'todo)
     (sxql:order-by (:desc :id))))
 
 (defun find-todo (id)
   (when id
-    (mito:find-dao 'todo :id id)))
-
-(defun create-todo (title-string)
-  (mito:create-dao 'todo
-                   :title title-string
-                   :done nil))
+    (mito:find-dao (shiso/models:model-class 'todo) :id id)))
 
 (defun toggle-todo (todo)
   (setf (done todo) (not (done todo)))
@@ -118,28 +140,218 @@ the home page, and the rest of its routes (=/:id/toggle=,
   (mito:delete-dao todo))
 #+end_src
 
-One model, two slots, accessor-style. The =shiso/admin:define-admin=
-call hooks the model into the bundled admin (the auto-CRUD UI at
-=/admin/todo/=).
+One model, two slots. Create and update go through
+=shiso:save-form= later; only toggle/delete still touch the DAO
+directly. The =shiso/admin:define-admin= call hooks the model into
+the bundled admin (the auto-CRUD UI at =/admin/todo/=).
 
-* Step 4 — The page renderer
+Slot metadata doubles as form config: =:max-length 200= becomes
+both the DB column width and an auto-derived form validator.
 
-=src/modules/todos/hypermedia/components.lisp=:
+* Step 4 — Form constructors
+
+=src/modules/todos/forms.lisp=:
 
 #+begin_src lisp
-(defpackage #:todos/hypermedia
+(defpackage #:todos/forms
   (:use #:cl)
+  (:local-nicknames (#:s #:shiso)
+                    (#:models #:todos/models))
+  (:export #:make-add-form #:make-edit-form))
+
+(in-package #:todos/forms)
+
+(defun make-add-form (&key data)
+  "Add form exposes only TITLE; DONE stays at its model default."
+  (s:make-model-form 'todo
+                     :fields (list 'models:title)
+                     :data data))
+
+(defun make-edit-form (todo &key data)
+  "Edit form exposes every editable field. Initial values come from
+the instance when DATA is nil."
+  (s:make-model-form 'todo :instance todo :data data))
+#+end_src
+
+Two form shapes, one model:
+
+- *Add* — only =title= (done defaults to false in the model).
+- *Edit* — every editable field, bound to an existing instance so
+  sticky initial values come for free.
+
+=:data= is the submitted body alist. Prefer
+=shiso:request-form-data= in controllers (string keys, ready for
+field lookup) over =parse-body-params=.
+
+* Step 5 — Hypermedia: form components and page shell
+
+** Form components
+
+=src/modules/todos/hypermedia/form-components.lisp= owns field
+markup. The contract is =shiso:field-context= — a plist with
+=:name-string=, =:label=, =:value=, =:errors=, =:widget=, and
+friends. Edit =ac-field= to restyle every form in the module.
+
+#+begin_src lisp
+;;;; Form components owned by the todo example.
+;;;;
+;;;; Same contract as the scaffolded skeleton/app form-components:
+;;;; data from `shiso:field-context', markup here.
+
+(defpackage #:todos/hypermedia/form-components
+  (:use #:cl)
+  (:local-nicknames (#:ah #:almighty-html)
+                    (#:s  #:shiso))
+  (:export #:ac-csrf-input
+           #:ac-field
+           #:ac-fields))
+
+(in-package #:todos/hypermedia/form-components)
+
+(ah:define-component ac-csrf-input (&key children)
+  "Hidden `_csrf_token' input for the current session."
+  (declare (ignore children))
+  (let ((token (and s:*request* (s:csrf-token-value))))
+    (when token
+      (ah:</> (input :type "hidden" :name "_csrf_token" :value token)))))
+
+(defun field-value-string (widget value)
+  (typecase value
+    (null "")
+    (string value)
+    (local-time:timestamp
+     (if (eq widget :date)
+         (local-time:format-timestring
+          nil value :format '(:year "-" (:month 2) "-" (:day 2)))
+         (local-time:format-timestring
+          nil value :format '(:year "-" (:month 2) "-" (:day 2) "T"
+                              (:hour 2) ":" (:min 2) ":" (:sec 2)))))
+    (t (princ-to-string value))))
+
+(defun select-control (field-name value choices)
+  (let ((opts (loop :for (choice-value . choice-label) :in choices
+                    :for val := (string-downcase (symbol-name choice-value))
+                    :for selectedp := (and value
+                                           (string-equal
+                                            val
+                                            (if (keywordp value)
+                                                (symbol-name value)
+                                                (princ-to-string value))))
+                    :collect (if selectedp
+                                 (ah:</> (option :value val :selected t choice-label))
+                                 (ah:</> (option :value val choice-label))))))
+    (ah:</> (select :name field-name :id field-name
+              (ah:</> (option :value "" "---"))
+              opts))))
+
+(ah:define-component ac-field (&key field children)
+  "One form field from a `shiso:field-context' plist. CHILDREN replace the control."
+  (let* ((field-name  (getf field :name-string))
+         (label-text  (getf field :label))
+         (help-text   (getf field :help-text))
+         (errors      (getf field :errors))
+         (value       (getf field :value))
+         (widget      (getf field :widget))
+         (row-id      (concatenate 'string "form-row-" field-name))
+         (wrap-class  (if errors "field has-errors" "field"))
+         (error-block (when errors
+                        (ah:</> (ul :class "field-errors"
+                                  (loop :for e :in errors
+                                        :collect (ah:</> (li e)))))))
+         (help-block  (when help-text
+                        (ah:</> (p :class "help-text" help-text))))
+         (control
+           (or children
+               (case widget
+                 (:textarea
+                  (ah:</> (textarea :name field-name :id field-name
+                            (field-value-string widget value))))
+                 (:checkbox
+                  (ah:</> (input :type "checkbox" :name field-name
+                            :id field-name :checked value)))
+                 (:select
+                  (select-control field-name value (getf field :choices)))
+                 (:password
+                  (ah:</> (input :type "password" :name field-name
+                            :id field-name)))
+                 (:hidden
+                  (ah:</> (input :type "hidden" :name field-name
+                            :id field-name
+                            :value (field-value-string widget value))))
+                 ((:email :url :number :date :datetime-local)
+                  (ah:</> (input :type (string-downcase (symbol-name widget))
+                            :name field-name :id field-name
+                            :value (field-value-string widget value))))
+                 (t
+                  (ah:</> (input :type "text" :name field-name
+                            :id field-name
+                            :value (field-value-string widget value))))))))
+    (case widget
+      (:hidden (if children
+                   (ah:</> (div :class wrap-class :id row-id
+                             control error-block))
+                   control))
+      (:checkbox
+       (let ((labelled (ah:</> (label control " " label-text))))
+         (ah:</> (div :class wrap-class :id row-id
+                   labelled
+                   help-block
+                   error-block))))
+      (t
+       (let ((label-el (ah:</> (label :for field-name label-text))))
+         (ah:</> (div :class wrap-class :id row-id
+                   label-el
+                   control
+                   help-block
+                   error-block)))))))
+
+(ah:define-component ac-fields (&key form children)
+  "Every field of FORM, rendered with `ac-field' in declaration order."
+  (declare (ignore children))
+  (ah:</>
+   (<>
+     (loop :for f :in (s:form-fields form)
+           :collect (ac-field :field (s:field-context form f))))))
+#+end_src
+
+Three components:
+
+| Component       | Role                                              |
+|-----------------+---------------------------------------------------|
+| =ac-csrf-input= | Hidden =_csrf_token= for POST forms               |
+| =ac-field=      | One field from a =field-context= plist            |
+| =ac-fields=     | Loop every field of a form through =ac-field=     |
+
+Pass =:children= to =ac-field= to replace only the control while
+keeping label/error chrome. For fully custom layouts (the compact
+add bar below), read =field-context= yourself and write the HTML.
+
+** Page shell
+
+=src/modules/todos/hypermedia/components.lisp= reexports the form
+components and defines =page=:
+
+#+begin_src lisp
+(uiop:define-package #:todos/hypermedia
+  (:use #:cl)
+  (:use-reexport #:todos/hypermedia/form-components)
   (:local-nicknames (#:ah #:almighty-html))
   (:export #:page))
 
 (in-package #:todos/hypermedia)
 
 (defparameter *style* "
-body { font-family: system-ui, sans-serif; max-width: 560px;
-       margin: 2rem auto; padding: 0 1rem; }
+body { font-family: system-ui, sans-serif; max-width: 560px; margin: 2rem auto; padding: 0 1rem; }
 h1 { margin-bottom: 1rem; }
-form.add { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+form.add { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; align-items: center; }
 form.add input[type=text] { flex: 1; padding: 0.5rem; }
+form.add .field-errors { flex: 1 0 100%; color: #b00020; margin: 0; padding-left: 1.2rem; }
+form.edit .field { margin-bottom: 1rem; }
+form.edit .field label { display: block; margin-bottom: 0.25rem; }
+form.edit .field input[type=text] { width: 100%; padding: 0.5rem; box-sizing: border-box; }
+.field.has-errors input, .field.has-errors textarea { border-color: #b00020; }
+.field-errors { color: #b00020; margin: 0.25rem 0 0; padding-left: 1.2rem; }
+.help-text { color: #666; font-size: 0.85rem; margin: 0.25rem 0 0; }
 ul.todos { list-style: none; padding: 0; }
 ul.todos li { display: flex; align-items: center; gap: 0.5rem;
               padding: 0.4rem 0; border-bottom: 1px solid #eee; }
@@ -151,6 +363,7 @@ ul.todos button.delete { margin-left: auto; }
 ")
 
 (defun page (page-title body)
+  "Render PAGE-TITLE and BODY into a complete HTML page string."
   (ah:render-to-string
    (ah:</>
     (html :lang "en"
@@ -162,9 +375,18 @@ ul.todos button.delete { margin-left: auto; }
       (body body)))))
 #+end_src
 
-* Step 5 — The controllers
+Use =uiop:define-package= (not =cl:defpackage=) so
+=:use-reexport= is available.
 
-=src/modules/todos/controllers.lisp=:
+* Step 6 — The controllers
+
+=src/modules/todos/controllers.lisp= uses three layers:
+
+1. *Form object* — validate, coerce, sticky values, errors.
+2. *field-context* — headless plist for a single field.
+3. *Components / hand markup* — the compact add form keeps its
+   inline design by reading the context and writing its own input;
+   the edit page uses =ac-fields=.
 
 #+begin_src lisp
 (defpackage #:todos/controllers
@@ -172,20 +394,14 @@ ul.todos button.delete { margin-left: auto; }
   (:local-nicknames (#:s #:shiso)
                     (#:ah #:almighty-html)
                     (#:models #:todos/models)
+                    (#:forms #:todos/forms)
                     (#:hy #:todos/hypermedia))
-  (:export #:index #:create #:toggle #:destroy))
+  (:export #:index #:create #:edit #:update #:toggle #:destroy))
 
 (in-package #:todos/controllers)
 
 (defun render (title body)
   (s:http-response (hy:page title body)))
-
-(defun csrf-token-input ()
-  (let* ((env (lack/request:request-env s:*request*))
-         (session (getf env :lack.session))
-         (token (and session (lack/middleware/csrf:csrf-token session))))
-    (when token
-      (ah:</> (input :type "hidden" :name "_csrf_token" :value token)))))
 #+end_src
 
 ** A note on the controller name =destroy=
@@ -195,24 +411,30 @@ because =cl:delete= exists and SBCL would refuse to let you shadow
 it. The /route/ is still =/:id/delete= — only the function name
 changes.
 
-Now the page-rendering helpers:
+** List helpers
+
+Helpers are split out so =if=/=cond= stay outside =</>= (the macro
+walker can't introspect branching):
 
 #+begin_src lisp
 (defun todo-row (todo)
   (let* ((id-str (princ-to-string (mito:object-id todo)))
          (donep (models:done todo))
          (todo-title (models:title todo))
-         (li-class (if donep "done" "")))
+         (li-class (if donep "done" ""))
+         (edit-href (s:url "todos:edit" :id id-str)))
     (ah:</>
      (li :class li-class
+       ;; Toggle form — not a form object; still needs CSRF.
        (form :method "POST" :action (s:url "todos:toggle" :id id-str)
-         (csrf-token-input)
-         (input :type "checkbox" :name "_"
-                :|onChange| "this.form.submit()" :checked donep))
+         (hy:ac-csrf-input)
+         (input :type "checkbox" :name "_" :|onChange| "this.form.submit()"
+           :checked donep))
        (span :class "title" todo-title)
+       (a :href edit-href "Edit")
        (form :class "delete-form" :method "POST"
              :action (s:url "todos:delete" :id id-str)
-         (csrf-token-input)
+         (hy:ac-csrf-input)
          (button :type "submit" :class "delete" "Delete"))))))
 
 (defun empty-state ()
@@ -232,7 +454,7 @@ Now the page-rendering helpers:
         (div :class "session"
           (span (format nil "Signed in as ~A. " (shiso/auth:user-email u)))
           (form :method "POST" :action "/logout"
-            (csrf-token-input)
+            (hy:ac-csrf-input)
             (button :type "submit" "Sign out")))))
       (t
        (ah:</>
@@ -248,37 +470,113 @@ Note again the two =</>= rules from part 2:
 - =todo-title= and =donep= are bound to locals /before/ being
   passed into =</>=. If you wrote =(span :class "title"
   (models:title todo))= directly, the DSL would parse
-  =models:title= as the HTML =<title>= element (it matches by
-  symbol name, ignoring the package) and render the wrong markup.
+  =models:title= as the HTML =<title>= element.
 - =li-class= is computed by a plain =if= /outside/ =</>=. Branching
   inside =</>= crashes the macro walker.
 
-Finally the route handlers:
+** Pages: compact add form vs stacked edit form
 
 #+begin_src lisp
-(defun index ()
+(defun add-form-markup (form)
+  "Compact inline add form. `field-context' supplies sticky value and
+errors without `render-form''s labeled field chrome."
+  (let* ((ctx (s:field-context form 'models:title))
+         (name-str (getf ctx :name-string))
+         (value (or (getf ctx :value) ""))
+         (errors (getf ctx :errors))
+         (error-block (when errors
+                        (ah:</> (ul :class "field-errors"
+                                  (loop :for e :in errors
+                                        :collect (ah:</> (li e))))))))
+    (ah:</>
+     (form :class "add" :method "POST" :action (s:url "todos:create")
+       (hy:ac-csrf-input)
+       (input :type "text" :name name-str :placeholder "Add a task..."
+         :value value :required t :autofocus t)
+       (button :type "submit" "Add")
+       error-block))))
+
+(defun index-page (add-form)
   (let* ((todos (models:all-todos))
          (list-content (cond ((null todos) (empty-state))
-                             (t (todo-list todos)))))
+                             (t (todo-list todos))))
+         (add-markup (add-form-markup add-form)))
     (render
      "Todos"
      (ah:</>
       (div
         (h1 "Todos")
-        (form :class "add" :method "POST" :action (s:url "todos:create")
-          (csrf-token-input)
-          (input :type "text" :name "title" :placeholder "Add a task..."
-            :required t :autofocus t)
-          (button :type "submit" "Add"))
+        add-markup
         list-content
         (session-controls))))))
 
+(defun edit-page (id-str form)
+  "Stacked edit form: app-owned `ac-fields' + CSRF + submit."
+  (let ((form-body
+          (ah:</>
+           (form :class "edit" :method "POST"
+                 :action (s:url "todos:update" :id id-str)
+             (hy:ac-csrf-input)
+             (hy:ac-fields :form form)
+             (button :type "submit" "Save")))))
+    (render
+     "Edit todo"
+     (ah:</>
+      (div
+        (h1 "Edit todo")
+        form-body
+        (a :href (s:url "todos:index") "Back to list"))))))
+#+end_src
+
+This is the point of headless forms:
+
+- *Add bar* — keep the tutorial's compact flex layout; pull sticky
+  value and errors from =field-context=; write the =<input>= yourself.
+- *Edit page* — drop =ac-fields= inside a hand-written =<form>= with
+  CSRF and a submit button. Labels, checkboxes, help text, and errors
+  come from the component.
+
+=shiso:render-form= would also work for edit (and injects CSRF
+itself), but it owns the whole =<form>= chrome. For designed pages,
+=field-context= + components is the usual path; =render-form= is for
+admin and prototypes.
+
+** Route handlers
+
+#+begin_src lisp
+(defun index ()
+  (index-page (forms:make-add-form)))
+
 (defun create ()
-  (let* ((body (s:parse-body-params))
-         (title (cdr (assoc :title body))))
-    (when (and title (plusp (length (string-trim '(#\Space #\Tab) title))))
-      (models:create-todo (string-trim '(#\Space #\Tab) title)))
-    (s:redirect-response (s:url "todos:index"))))
+  (let ((form (forms:make-add-form :data (s:request-form-data))))
+    (cond
+      ((s:validate-form form)
+       (s:save-form form)
+       (s:redirect-response (s:url "todos:index")))
+      (t
+       (index-page form)))))
+
+(defun edit (id-str)
+  (let ((todo (models:find-todo (parse-integer id-str :junk-allowed t))))
+    (cond
+      ((null todo)
+       (s:http-response "Todo not found." :code 404))
+      (t
+       (edit-page id-str (forms:make-edit-form todo))))))
+
+(defun update (id-str)
+  (let ((todo (models:find-todo (parse-integer id-str :junk-allowed t))))
+    (cond
+      ((null todo)
+       (s:http-response "Todo not found." :code 404))
+      (t
+       (let ((form (forms:make-edit-form todo :data (s:request-form-data))))
+         (cond
+           ((s:validate-form form)
+            (s:save-form form)
+            (s:redirect-response (s:url "todos:index")))
+           (t
+            (edit-page id-str form))))))))
 
 (defun toggle (id-str)
   (let* ((id (parse-integer id-str :junk-allowed t))
@@ -293,11 +591,16 @@ Finally the route handlers:
     (s:redirect-response (s:url "todos:index"))))
 #+end_src
 
-Every state-changing handler ends with =redirect-response= back to
-the index — post-redirect-get prevents the "resubmit form?" prompt
+=create= and =update= share the same shape: build form from
+=request-form-data= → =validate-form= → =save-form= + redirect, or
+re-render with the failed form (sticky values + errors already on
+it). Blank titles no longer vanish silently.
+
+Every state-changing handler ends with =redirect-response= on
+success — post-redirect-get prevents the "resubmit form?" prompt
 on refresh.
 
-* Step 6 — The routes
+* Step 7 — The routes
 
 =src/modules/todos/routes.lisp=:
 
@@ -312,6 +615,8 @@ on refresh.
 (s:define-module todos
   (:urls (:GET  "/"            'controllers:index  "index")
          (:POST "/"            'controllers:create "create")
+         (:GET  "/:id/edit"    'controllers:edit   "edit")
+         (:POST "/:id/edit"    'controllers:update "update")
          (:POST "/:id/toggle"  'controllers:toggle "toggle")
          (:POST "/:id/delete"  'controllers:destroy "delete")))
 #+end_src
@@ -322,7 +627,7 @@ returns =/<id>/delete=), but the controller bound to it is
 name is fine — Shiso looks up the controller by symbol designator at
 request time.
 
-* Step 7 — Database wiring
+* Step 8 — Database wiring
 
 Same shape as the polls tutorial. =src/main.lisp=:
 
@@ -350,7 +655,7 @@ Same shape as the polls tutorial. =src/main.lisp=:
 
 And export =start=/=stop= from =src/package.lisp=.
 
-* Step 8 — Run it
+* Step 9 — Run it
 
 #+begin_src bash
 make
@@ -362,20 +667,30 @@ Visit =http://127.0.0.1:5000/=:
 - Empty state: an /add/ form and a "Nothing to do" message.
 - Type a title, hit Enter — the redirect lands you back at the list
   with one item.
+- Click /Edit/ — change the title or the done checkbox, save.
+- Submit a blank title — the page re-renders with a field error
+  instead of silently dropping the row.
 - Click the checkbox — the JavaScript =onChange= auto-submits the
   toggle form, which redirects back, and the row gets the =done=
   class (line-through).
 - Click Delete — gone.
 
-Each form carries a hidden =_csrf_token= input. Without it the
-middleware would 400 every POST.
+Each state-changing form carries a hidden =_csrf_token= input
+(=ac-csrf-input=). Without it the middleware would 400 every POST.
 
 * What you built
 
-Every state-changing route is CSRF-protected. The model is
-auto-registered with the admin, so =GET /admin/todo/= gives you the
-generic list/edit/delete UI for the same table. Total Lisp written:
-~80 lines.
+| Piece              | Role                                              |
+|--------------------+---------------------------------------------------|
+| Model + admin      | Schema, validators, auto-CRUD at =/admin/todo/=   |
+| Form constructors  | Which fields each view exposes                    |
+| =field-context=    | Headless sticky values, errors, widget            |
+| =ac-field= / friends | App-owned markup over that data                 |
+| Controllers        | validate → save → redirect \| re-render           |
+
+Every state-changing route is CSRF-protected. Creates and updates
+run through model forms. Markup for designed pages lives in your
+hypermedia components, not the framework.
 
 * Where to next
 
@@ -386,3 +701,6 @@ generic list/edit/delete UI for the same table. Total Lisp written:
   for relationship patterns.
 - *Read the polls tutorial.* It covers admin customisation, named
   URL helpers, and testing in more depth.
+- *Forms reference.* [[file:../reference/forms.org][Reference: forms]] covers
+  =field-context=, widgets, and style-dispatched rendering.
+- *CSRF how-to.* [[file:../how-to/render-a-form-with-csrf.org][How to render a form with CSRF]].

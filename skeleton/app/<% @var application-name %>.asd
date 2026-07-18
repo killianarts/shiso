@@ -14,9 +14,10 @@
                              (:file "package")))))
 
 (defsystem "<% @var application-name %>/hypermedia"
-  :description "Project-wide hypermedia components shared by every module (page skeleton)."
+  :description "Project-wide hypermedia components shared by every module (page skeleton, form components)."
   :depends-on (:shiso)
   :pathname "src/hypermedia"
   :serial t
   :components ((:file "components")
+               (:file "form-components")
                (:file "package")))

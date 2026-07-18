@@ -92,6 +92,7 @@
          (title (format nil "Create ~A" (string-capitalize model-name))))
     (render-page title
                  (forms:render-form form
+                                    :style :admin
                                     :action (shiso/utils:url "shiso-admin:model-instance-persist"
                                                              :model model-name-str)))))
 
@@ -111,7 +112,7 @@
             (forms:save-form form)
             (mw:redirect-response
              (shiso/utils:url "shiso-admin:model-instance-list" :model model-name-str)))
-          (render-page title (forms:render-form form :action (shiso/utils:url "shiso-admin:model-instance-persist" :model model-name-str)))))))
+          (render-page title (forms:render-form form :style :admin :action (shiso/utils:url "shiso-admin:model-instance-persist" :model model-name-str)))))))
 
 
 (defun model-instance-rebuild (model-name-str id-str)
@@ -132,6 +133,7 @@
                         (string-capitalize (symbol-name model-name)) id)))
     (render-page title
                  (forms:render-form form
+                                    :style :admin
                                     :action (shiso/utils:url "shiso-admin:model-instance-repersist"
                                                              :model model-name-str
                                                              :id id-str)))))
@@ -158,6 +160,7 @@
            (shiso/utils:url "shiso-admin:model-instance-list" :model model-name-str)))
         (render-page title
                      (forms:render-form form
+                                        :style :admin
                                         :action (shiso/utils:url "shiso-admin:model-instance-repersist"
                                                                  :model model-name-str
                                                                  :id id-str))))))

@@ -227,23 +227,22 @@ inside the controller and inspect the result yourself.
 * Forms with CSRF
 
 If you render a form in your own controller, embed the CSRF token so
-the POST passes the middleware:
+the POST passes the middleware. Prefer the scaffolded
+=ac-csrf-input= component, or =shiso:csrf-token-value=:
 
 #+begin_src lisp
-(let* ((env (lack/request:request-env shiso:*request*))
-       (session (getf env :lack.session))
-       (token (lack/middleware/csrf:csrf-token session)))
-  (almighty-html:render-to-string
-    (almighty-html:</>
-     (form :method "POST" :action "/save"
-       (almighty-html:</>
-        (input :type "hidden" :name "_csrf_token" :value token))
-       ;; ... your fields ...
-       (almighty-html:</> (button :type "submit" "Save"))))))
+(almighty-html:render-to-string
+  (almighty-html:</>
+   (form :method "POST" :action "/save"
+     (myapp/hypermedia:ac-csrf-input)
+     ;; ... your fields ...
+     (button :type "submit" "Save"))))
 #+end_src
 
-Safe methods (GET, HEAD, OPTIONS) bypass the CSRF check, so plain
-page rendering needs no token.
+=shiso:render-form= injects the token for non-GET methods on its
+own. Safe methods (GET, HEAD, OPTIONS) bypass the CSRF check, so
+plain page rendering needs no token. See
+[[file:../how-to/render-a-form-with-csrf.org][how-to: render a form with CSRF]].
 
 * Customizing the auth flow
 

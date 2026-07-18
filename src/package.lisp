@@ -78,6 +78,32 @@
                 #:json-response
                 #:html-fragment-response
                 #:ensure-session-table)
+  ;; Forms — the headless core plus rendering. Field classes and the
+  ;; field-* readers stay in shiso/forms (their names collide with the
+  ;; model-metadata readers exported below).
+  (:import-from #:shiso/forms
+                #:form
+                #:form-fields
+                #:form-data
+                #:form-instance
+                #:form-errors
+                #:form-cleaned-data
+                #:form-validp
+                #:validate-form
+                #:clean
+                #:model-form
+                #:make-model-form
+                #:save-form
+                #:field-context
+                #:form-field-by-name
+                #:cleaned-value
+                #:resolve-widget
+                #:request-form-data
+                #:register-widget-field-class
+                #:render-field
+                #:render-fields
+                #:render-form)
+
   (:import-from #:shiso/models
                 ;; Structs
                 #:slot-metadata
@@ -160,6 +186,29 @@
 
    ;; Admin
    #:define-admin
+
+   ;; Forms
+   #:form
+   #:form-fields
+   #:form-data
+   #:form-instance
+   #:form-errors
+   #:form-cleaned-data
+   #:form-validp
+   #:validate-form
+   #:clean
+   #:model-form
+   #:make-model-form
+   #:save-form
+   #:field-context
+   #:form-field-by-name
+   #:cleaned-value
+   #:resolve-widget
+   #:request-form-data
+   #:register-widget-field-class
+   #:render-field
+   #:render-fields
+   #:render-form
 
    ;; Auth
    #:hash-password

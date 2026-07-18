@@ -8,6 +8,8 @@
                (:file "models")
                (:file "forms")
                (:module "hypermedia"
-                :components ((:file "components")))
+                :serial t
+                :components ((:file "form-components")
+                             (:file "components")))
                (:file "controllers")
                (:file "routes")))

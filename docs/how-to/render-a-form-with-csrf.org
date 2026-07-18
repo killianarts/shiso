@@ -8,43 +8,55 @@ with =400 Bad Request=.
 GET/HEAD/OPTIONS bypass the check, so plain page rendering needs no
 token.
 
-* The pattern
+* Prefer the scaffolded component
 
-Add this helper to your controllers package:
+New applications stamped by =shiso new-application= include
+=ac-csrf-input= in =src/hypermedia/form-components.lisp=. Drop it
+inside every state-changing =<form>=:
+
+#+begin_src lisp
+(almighty-html:</>
+ (form :method "POST" :action "/articles/save"
+   (myapp/hypermedia:ac-csrf-input)
+   (input :type "text" :name "title" :value title)
+   (button :type "submit" "Save")))
+#+end_src
+
+* Or use the framework helper
+
+=shiso:csrf-token-value= returns the session token (minting one on
+first read). A one-liner helper:
 
 #+begin_src lisp
 (defun csrf-token-input ()
-  "Render a hidden CSRF token input for the current request's session."
-  (let* ((env (lack/request:request-env shiso:*request*))
-         (session (getf env :lack.session))
-         (token (and session (lack/middleware/csrf:csrf-token session))))
+  (let ((token (and shiso:*request* (shiso:csrf-token-value))))
     (when token
       (almighty-html:</>
        (input :type "hidden" :name "_csrf_token" :value token)))))
 #+end_src
 
-Then inject it into every state-changing form:
+* Whole-form sugar
+
+=shiso:render-form= injects the CSRF hidden input automatically for
+non-GET methods. Good for admin-style pages and prototypes:
 
 #+begin_src lisp
-(defun edit-form (article)
-  (almighty-html:render-to-string
-   (almighty-html:</>
-    (form :method "POST" :action "/articles/save"
-      (csrf-token-input)
-      (input :type "text" :name "title" :value (article-title article))
-      (textarea :name "body" (article-body article))
-      (button :type "submit" "Save")))))
+(shiso:render-form form
+                   :action "/articles/save"
+                   :submit-label "Save")
 #+end_src
+
+For bespoke layouts, keep the =<form>= tag yourself, call
+=render-fields= (or your own =ac-fields=) for the controls, and
+include =ac-csrf-input= / =csrf-token-input= next to the submit
+button.
 
 * Why it works
 
 - =shiso:*request*= is bound for the duration of every controller
-  invocation. It carries the env plist as =(lack/request:request-env …)=.
-- The session middleware stores the session as a hash table under
-  =:lack.session=.
-- =lack/middleware/csrf:csrf-token= lazily mints a token on first read
-  and stores it on the session. Subsequent calls return the same
-  token.
+  invocation.
+- =shiso:csrf-token-value= reads =:lack.session= from the request
+  env and asks =lack/middleware/csrf:csrf-token= for the token.
 - The middleware's incoming check compares the form's =_csrf_token=
   against the session's. They match by construction.
 
@@ -96,4 +108,6 @@ fetch('/save', {
 
 - [[file:set-up-authentication.org][How to set up authentication]] — the same
   middleware stack also handles sessions.
+- [[file:../reference/forms.org][Reference: forms]] — =field-context=,
+  =render-form=, =render-fields=.
 - [[file:../reference/auth.org][Reference: auth]] — CSRF wiring details.
