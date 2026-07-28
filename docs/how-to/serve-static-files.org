@@ -71,30 +71,87 @@ From a REPL with your app loaded:
 #+begin_src lisp
 (shiso:collectstatic)
 ;; static files are copied to ./static/
+
+(shiso:collectstatic :hash t)
+;; also writes stem.<hash>.ext siblings + staticfiles.json
 #+end_src
 
 The default target is =./static/= under the current working
 directory. Override:
 
 #+begin_src lisp
-(shiso:collectstatic :target #P"/var/www/myapp/static/")
+(shiso:collectstatic :target #P"/var/www/myapp/static/" :hash t)
 #+end_src
 
 The function walks every registered module, copies the contents of
 each module's =static/= directory into =<target>/<module-name>/=,
-and prints one line per module copied.
+and prints one line per module copied. With =:hash t= it also emits
+a fingerprint for each file (see [[*Cache-busting with =cached-static=][cache-busting]]).
 
 Run =collectstatic= as part of your deploy script — after building
 the binary and before booting it.
+
+* Cache-busting with =cached-static=
+
+Browsers may invent a freshness lifetime for assets that only send
+=Last-Modified= (RFC 9111 §4.2.2). That leaves returning visitors
+with **new HTML and days-old CSS**. Use =shiso:cached-static= when
+you need the URL to change when the file changes.
+
+** Development (no manifest)
+
+#+begin_src lisp
+(shiso:cached-static "blog/blog.css")
+;; => "/static/blog/blog.css?v=3912345678"
+#+end_src
+
+The query string is the file's mtime. Editing the file in place
+makes the next page render a new URL so the browser refetches.
+
+** Production (after hashed collectstatic)
+
+#+begin_src lisp
+(shiso:collectstatic :hash t)
+;; copies unhashed + hashed siblings, writes static/staticfiles.json
+
+(shiso:cached-static "blog/blog.css")
+;; => "/static/blog/blog.a3f19c2b4d5e.css"
+#+end_src
+
+The hashed file is a real file on disk under the collected tree —
+required when a reverse proxy serves =/static= without Lisp. Leave
+=shiso:static= as-is for callers that do not need busting; both keep
+working.
+
+Unknown paths fall back to the unversioned URL and warn once; they
+never signal an error. After re-running =collectstatic= in a live
+image, call =(shiso/static:reload-manifest)= so =cached-static= sees
+the new map.
+
+** What this does / does not do
+
+- =:hash t= keeps unhashed names (literal paths still work) and
+  *accumulates* old hashed siblings (safe for rolling deploys).
+- Nested CSS =url()= references are **not** rewritten. If your CSS
+  loads fonts or images via =url(...)=, those stay unhashed for now;
+  either in-line them, host them with long-cache unversioned
+  =no-cache=, or wait for a later release.
+- If your deploy Makefile reimplements =collectstatic= (e.g. a shell
+  =tar= mirror so the build never boots Lisp), that path must also
+  write hashed siblings and =staticfiles.json= or the app and the
+  files on disk will disagree. Prefer calling =(shiso:collectstatic
+  :hash t)= from the build.
+
+Reverse-proxy =Cache-Control= for hashed vs unversioned paths is
+documented in [[file:deploy.org][how-to: deploy]].
 
 * MIME types and caching
 
 The handler uses Lack's =lack-app-file= internally, which picks
 content types from filename extensions. Cache headers come from
-Lack's defaults; if you need long-cache headers for fingerprinted
-assets you'll currently have to front the app with a CDN or
-reverse-proxy and set headers there. There's no built-in
-fingerprinting yet — open an issue if you need it.
+Lack's defaults. For long-lived hashed assets, set =Cache-Control=
+on the reverse proxy (see [[file:deploy.org][how-to: deploy]]); the Lisp
+dev middleware does not emit =immutable=.
 
 * Sample structure for a project static dir
 

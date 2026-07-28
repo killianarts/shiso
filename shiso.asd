@@ -3,7 +3,7 @@
   :maintainer "Micah Killian <micah@killianarts.online>"
   :description "An Almighty web framework for Almighty Lisp web developers."
   :license "MIT"
-  :version "0.2"
+  :version "0.3"
   :build-operation "program-op"
   :build-pathname "shiso"
   :entry-point "shiso/cli:main"
@@ -29,6 +29,8 @@
                :trivia
                ;; Auth
                :cl-pass
+               ;; Content hashing for cached-static / collectstatic :hash
+               :ironclad
                ;; CLI
                :clingon
                )
@@ -102,7 +104,8 @@
                  (:file "validators")
                  (:file "forms")
                  (:file "admin")
-                 (:file "auth"))))
+                 (:file "auth")
+                 (:file "static"))))
   :perform (test-op (o s)
                     (uiop:symbol-call :lisp-unit2 :run-tests
                                       :package :shiso/t/routes)
@@ -117,5 +120,7 @@
                     (uiop:symbol-call :lisp-unit2 :run-tests
                                       :package :shiso/t/admin)
                     (uiop:symbol-call :lisp-unit2 :run-tests
-                                      :package :shiso/t/auth)))
+                                      :package :shiso/t/auth)
+                    (uiop:symbol-call :lisp-unit2 :run-tests
+                                      :package :shiso/t/static)))
 

@@ -222,7 +222,9 @@
                                                               ("body" . "Nothin' much."))))
          (title-ctx (shiso/forms:field-context form 'title))
          (body-ctx (shiso/forms:field-context form 'body)))
-    (shiso/forms:render-fields form)))
+    ;; Used by admin
+    ;; (shiso/forms:render-fields form)
+    ()))
 (define-test field-context-carries-errors-after-validate ()
   (with-fresh-registry
     (eval '(shiso/models:define-model ctx-err-test

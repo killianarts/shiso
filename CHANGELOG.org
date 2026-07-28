@@ -7,10 +7,44 @@ The format is inspired by [[https://keepachangelog.com/][Keep a Changelog]].
 Versions match the =:version= in =shiso.asd= when set; otherwise
 entries are dated by release milestone.
 
-* Unreleased
+* 0.3
 
 ** Added
 
+- =shiso:cached-static= — cache-busting static URLs. With a
+  =staticfiles.json= manifest (production), returns content-hashed
+  paths; without one (development), appends =?v=<mtime>=. Unknown
+  paths fall back to =static= and warn once.
+- =(shiso:collectstatic :hash t)= — writes =stem.<12-hex>.ext=
+  siblings next to unhashed copies and emits
+  =<target>/staticfiles.json=. Old hashed files accumulate (rolling
+  deploy safe). Nested CSS =url()= references are not rewritten.
+- =shiso/static:reload-manifest= — force-reload the manifest from
+  the REPL after a live collectstatic.
+- Dev static middleware resolves hashed names by stripping a
+  =.<hex>= segment before the extension so manifest URLs work
+  against module =static/= trees.
+- Direct =:ironclad= dependency (SHA-256 for fingerprints).
+- Static-file unit tests in =t/static.lisp=.
+- Headless forms API in =shiso/forms/context=:
+  =field-context=, =form-field-by-name=, =cleaned-value=,
+  =resolve-widget=, =request-form-data=. Form objects keep validation,
+  coercion, sticky values, and errors as plain data; markup is optional.
+- Style-dispatched =render-field= / =render-fields= (STYLE first, then
+  field). Default style =t=; admin always passes =:admin= so app
+  specialisations cannot clobber admin pages.
+- =register-widget-field-class= / =widget-field-class=: map a model
+  =:widget= keyword to a form-field class during =make-model-form=
+  (built-in: =:email= → =email-field=).
+- Scaffolded =src/hypermedia/form-components.lisp= with app-owned
+  =ac-csrf-input=, =ac-field=, and =ac-fields= (consume =field-context=;
+  restyle by editing the stamped file).
+- Forms re-exported from the top-level =shiso= package for app authors.
+- Todo example: model-forms for create/update, module form components,
+  compact add form via =field-context=, edit route, CSRF via
+  =ac-csrf-input=.
+- Form tests for field-context, widgets (password/email), date parse,
+  =render-fields= row ids, and =cleaned-value=.
 - App skeleton =src/config.lisp=: env-backed =host=, =port=, =debugp=,
   and =database-path= (absolute XDG data-home default, =DATABASE_PATH=
   override).
@@ -24,6 +58,17 @@ entries are dated by release milestone.
 
 ** Changed
 
+- =render-form= injects a CSRF hidden input for non-GET methods, honours
+  field =:widget= (including =:password= / =:hidden=), and accepts
+  =:style=. Prefer =field-context= + components for designed pages;
+  =render-form= remains for admin and prototypes.
+- Auth login/signup pages use =render-form= (password widgets work);
+  body data via =request-form-data=; cleaned values via =cleaned-value=.
+- Admin CRUD forms pass =:style :admin= to =render-form=.
+- =date-field= parse accepts HTML =date= (=YYYY-MM-DD=) and
+  =datetime-local= (seconds optional); blank → =NIL=.
+- Docs: forms reference (headless API, style dispatch), CSRF how-to,
+  todo tutorial (05), auth tutorial (06), polls part 2 CSRF helper.
 - Scaffolder template bindings:
   - =new-application= substitutes =application-name=
   - =new-module= substitutes =module-name=

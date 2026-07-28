@@ -14,15 +14,14 @@ lookup strategy:
   directly. In production, =collectstatic= copies them into the project's
   =static/<module-name>/= directory so everything is served from one place.
 
-This mirrors Django's =STATICFILES_DIRS= + =collectstatic= pattern: develop with
-files next to your module code, deploy with everything collected into one
-directory.
+=cached-static= optionally returns content-hashed URLs (production manifest)
+or mtime query strings (development) so browsers do not keep stale CSS/JS.
 
 * Package Definition
 
 The =shiso/static= package depends on =shiso/modules= for the module class and
 registry. The load order =modules= → =static= → =routing= avoids any circular
-dependency.
+dependency. =ironclad= provides SHA-256 for content fingerprints.
 
 #+begin_src common-lisp
 (defpackage #:shiso/static
@@ -34,10 +33,16 @@ dependency.
   (:export
    #:collectstatic
    #:make-static-middleware
-   #:module-static-roots))
+   #:module-static-roots
+   #:cached-static
+   #:reload-manifest))
 
 (in-package #:shiso/static)
 #+end_src
+
+See =src/static.lisp= for the full implementation: content hashing,
+=staticfiles.json= manifest I/O, =collectstatic :hash t=, =cached-static=,
+and middleware resolution of hashed filenames.
 
 * Module Static Roots
 
@@ -45,138 +50,23 @@ Build an alist mapping module names to their source =static/= directories by
 traversing the module registry. This is called once at application construction
 time (inside =define-application=) and passed to the middleware.
 
-#+begin_src common-lisp
-(defun module-static-roots ()
-  "Build an alist of (module-name . static-root-path) from registered modules.
-Each module's static/ dir is served under /static/<module-name>/."
-  (let (roots)
-    (maphash
-     (lambda (name module)
-       (let ((src (shiso/modules:module-static-root module)))
-         (when src
-           (push (cons (string-downcase (string name))
-                       (pathname src))
-                 roots))))
-     shiso/modules:*module-registry*)
-    roots))
-#+end_src
-
 * File Lookup
 
-The core of the two-tier strategy. Given a relative path (already stripped of the
-=/static/= prefix), search for the file in this order:
+Given a relative path (already stripped of the =/static/= prefix), search:
 
-1. *Project root*: Check =static/<relative-path>= directly. This handles both
-   project-wide assets and files placed there by =collectstatic=.
-2. *Module roots*: Parse the first path segment as a module name. If a matching
-   module is registered and has a =static/= directory, look for the remaining
-   path inside it. This handles development without running =collectstatic=.
-
-This means =collectstatic= is optional during development — module files are
-found at step 2. In production, step 1 finds everything because =collectstatic=
-has already copied module files into the project =static/= directory.
-
-#+begin_src common-lisp
-(defun locate-in-roots (relative-path project-root module-roots)
-  "Search for RELATIVE-PATH in PROJECT-ROOT first, then in module roots.
-For module roots, if RELATIVE-PATH starts with a module name, strip it
-and look in that module's static dir.
-Returns the resolved pathname or NIL."
-  ;; 1. Try project-wide static/ directory first
-  (let ((project-file (merge-pathnames relative-path project-root)))
-    (when (and (uiop:file-exists-p project-file)
-               (not (uiop:directory-pathname-p project-file)))
-      (return-from locate-in-roots project-file)))
-  ;; 2. Try module roots: relative-path = "<module-name>/rest/of/path"
-  (let ((slash-pos (position #\/ relative-path)))
-    (when slash-pos
-      (let* ((prefix (subseq relative-path 0 slash-pos))
-             (rest (subseq relative-path (1+ slash-pos)))
-             (entry (assoc prefix module-roots :test #'string=)))
-        (when entry
-          (let ((file (merge-pathnames rest (cdr entry))))
-            (when (and (uiop:file-exists-p file)
-                       (not (uiop:directory-pathname-p file)))
-              file)))))))
-#+end_src
-
-* Middleware
-
-Standard Lack middleware pattern: takes an inner app, returns a lambda that
-intercepts requests matching the =/static/= prefix. For matching requests, it
-strips the prefix and delegates to =locate-in-roots=. If a file is found, it's
-served using Lack's =serve-path= which handles MIME type detection,
-=Last-Modified= headers, and =304 Not Modified= responses. If not found, the
-request passes through to the inner app.
-
-#+begin_src common-lisp
-(defun make-static-middleware (app &key (path "/static/") project-root module-roots)
-  "Lack middleware that searches multiple roots for static files.
-PROJECT-ROOT is the project-wide static/ directory.
-MODULE-ROOTS is an alist of (module-name . pathname) from module-static-roots.
-
-Request flow for /static/books/cover.png:
-  1. Strip /static/ prefix → 'books/cover.png'
-  2. Check project-root/books/cover.png (handles collectstatic case)
-  3. Check module 'books' static dir for cover.png (handles dev case)
-  4. Not found → pass to inner app"
-  (let ((prefix-len (length path)))
-    (lambda (env)
-      (let ((request-path (getf env :path-info)))
-        (if (and (>= (length request-path) prefix-len)
-                 (string= path request-path :end2 prefix-len))
-            (let* ((relative (subseq request-path prefix-len))
-                   (file (locate-in-roots relative project-root module-roots)))
-              (if file
-                  ;; Use Lack's file serving with proper MIME types + caching
-                  (let ((file-app (make-instance 'lack-app-file
-                                                 :file file
-                                                 :root (uiop:pathname-directory-pathname file))))
-                    (serve-path file-app env file "utf-8"))
-                  (funcall app env)))
-            (funcall app env))))))
-#+end_src
+1. *Project root*: =static/<relative-path>=
+2. *Module roots*: first path segment as module name
+3. *Hashed fallback*: if the basename looks like =stem.<8–12 hex>.ext=, strip
+   the hex segment and retry (dev middleware serving manifest URLs)
 
 * collectstatic
 
-The production workflow: copy every registered module's =static/= directory into
-=static/<module-name>/= under the project root. After running this, the
-project-wide =static/= directory contains everything and no module-root fallback
-is needed — every file is found at step 1 of =locate-in-roots=.
+Copy every registered module's =static/= into =TARGET/<module-name>/=.
+With =:hash t=, also write =stem.<hash>.ext= siblings and
+=TARGET/staticfiles.json=. Unhashed names remain; old hashes accumulate.
 
-Subdirectories are copied recursively, preserving the structure within each
-module's =static/= directory.
+* cached-static
 
-#+begin_src common-lisp
-(defun collectstatic (&key (target (merge-pathnames "static/" (uiop:getcwd))))
-  "Copy each registered module's static/ directory into TARGET/<module-name>/.
-After running this, the project-wide static/ directory contains everything
-and no module-root fallback is needed (production mode)."
-  (maphash
-   (lambda (name module)
-     (let ((src (shiso/modules:module-static-root module)))
-       (when src
-         (let* ((mod-name (string-downcase (string name)))
-                (src-path (pathname src))
-                (dest (merge-pathnames
-                       (make-pathname :directory `(:relative ,mod-name))
-                       target)))
-           (ensure-directories-exist dest)
-           (dolist (file (uiop:directory-files src-path))
-             (let ((target-file (merge-pathnames (file-namestring file) dest)))
-               (uiop:copy-file file target-file)))
-           ;; Also copy subdirectories recursively
-           (uiop:collect-sub*directories
-            src-path t t
-            (lambda (subdir)
-              (unless (equal subdir src-path)
-                (let* ((rel (uiop:enough-pathname subdir src-path))
-                       (target-subdir (merge-pathnames rel dest)))
-                  (ensure-directories-exist target-subdir)
-                  (dolist (file (uiop:directory-files subdir))
-                    (let ((tf (merge-pathnames (file-namestring file) target-subdir)))
-                      (uiop:copy-file file tf)))))))
-           (format t "~A → ~A~%" mod-name dest)))))
-   shiso/modules:*module-registry*)
-  (format t "Done.~%"))
-#+end_src
+Opt-in URL helper. Manifest hit → hashed path; no manifest → =?v=<mtime>=;
+unknown path → unversioned =/static/…= with a one-time warning.
+)

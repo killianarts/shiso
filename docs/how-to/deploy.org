@@ -45,29 +45,45 @@ anything except =true=, or pass =:debugp nil= explicitly.
 
 * Static files
 
-Run =collectstatic= as part of the build:
+Run =collectstatic= as part of the build. Pass =:hash t= when the
+app uses =shiso:cached-static= so fingerprinted filenames and
+=staticfiles.json= land on disk (the reverse proxy reads files
+directly — hashed URLs must be real paths):
 
 #+begin_src bash
 sbcl --non-interactive --load build.lisp \
      --eval '(asdf:load-system :myapp)' \
      --eval '(myapp:setup-database)' \
-     --eval '(shiso:collectstatic)' \
+     --eval '(shiso:collectstatic :hash t)' \
      --eval '(uiop:quit)'
 #+end_src
 
+Without hashing, =(shiso:collectstatic)= still works as before.
+
 Now =./static/= contains everything — ship it alongside the binary.
 A reverse proxy can serve it directly, skipping the Lisp server
-entirely:
+entirely.
+
+** Cache-Control
+
+Hashed names (=stem.<8–12 hex>.ext=) are immutable content
+addresses; unversioned paths should revalidate:
 
 #+begin_src caddy
 example.com {
-  handle /static/* {
-    root * /var/www/myapp
+  handle_path /static/* {
+    root * /var/www/myapp/static
+    @hashed path_regexp \.[0-9a-f]{8,12}\.(css|js|png|jpe?g|svg|woff2?)$
+    header @hashed Cache-Control "public, max-age=31536000, immutable"
+    header Cache-Control "no-cache"
     file_server
   }
   reverse_proxy 127.0.0.1:5000
 }
 #+end_src
+
+If you sit behind Cloudflare (or another edge cache), verify edge
+behaviour after deploy — origin headers alone are not enough.
 
 Or with nginx:
 
@@ -78,6 +94,8 @@ server {
 
   location /static/ {
     alias /var/www/myapp/static/;
+    # Hashed assets: long cache. Unversioned: revalidate.
+    # Match stem.<hex>.ext with a map or separate location if needed.
   }
 
   location / {

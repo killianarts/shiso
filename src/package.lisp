@@ -28,7 +28,8 @@
                 #:stop)
 
   (:import-from #:shiso/static
-                #:collectstatic)
+                #:collectstatic
+                #:cached-static)
 
   (:import-from #:shiso/management
                 #:run-cli
@@ -173,6 +174,7 @@
    #:url
    #:current-path
    #:static
+   #:cached-static
    #:absolute-url
    #:collectstatic
 

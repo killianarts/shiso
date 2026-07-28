@@ -91,6 +91,33 @@ Build a static-file URL. Always prefer this over hard-coding
 (shiso:static "blog/cover.jpg")     ; => "/static/blog/cover.jpg"
 #+end_src
 
+* =cached-static=  /function/
+
+#+begin_src lisp
+(shiso:cached-static PATH) => "/static/<path>" | "/static/<hashed>" | "/static/<path>?v=<mtime>"
+#+end_src
+
+Like =static=, but returns a URL that changes when the asset
+changes. Use this for CSS/JS (and other long-lived files) so
+browsers do not serve stale copies against new HTML.
+
+| Situation | Result |
+|-----------|--------|
+| =static/staticfiles.json= present and PATH is listed | =/static/<hashed path>= |
+| Manifest present, PATH missing | =/static/<path>= + one-time warning |
+| No manifest, file found | =/static/<path>?v=<mtime>= |
+| No manifest, file missing | =/static/<path>= + one-time warning |
+
+Production workflow: =(shiso:collectstatic :hash t)= writes hashed
+files and the manifest. Development needs no setup — mtime query
+strings are enough. See [[../how-to/serve-static-files.org][how-to: serve static files]].
+
+Reload after a live =collectstatic=:
+
+#+begin_src lisp
+(shiso/static:reload-manifest)
+#+end_src
+
 * =absolute-url=  /function/
 
 #+begin_src lisp
