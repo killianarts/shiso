@@ -63,9 +63,10 @@ Imagine =GET /polls/3=:
    pass.
 
 5. *Trailing-slash middleware*: =/polls/3= doesn't end with =/=;
-   pass.
+   pass. (If the path were =/polls/3/=, this layer would 301 to
+   =/polls/3= — including any query string — and never reach mounts.)
 
-6. *Module mount #1* (=/admin/=): prefix doesn't match; pass.
+6. *Module mount #1* (=/admin=): prefix doesn't match; pass.
 
 7. *Module mount #2* (=""=): prefix matches (it always does). Sets
    the =shiso-auth= module's =module-prefix= to =""= and dispatches:
@@ -77,11 +78,12 @@ Imagine =GET /polls/3=:
 8. The =shiso-auth= module's mapper has only =/login=, =/logout=,
    =/signup=. =/polls/3= doesn't match. The module returns a 404
    /with =handledp= = =NIL=/. The mount sees =handledp= = =NIL=,
-   restores the original =path-info=, and falls through.
+   restores the original =path-info= / =script-name=, and falls through.
 
-9. *Module mount #3* (=/polls=): prefix matches. The middleware
-   strips =/polls= from =path-info= (it's now =/3=) and dispatches
-   to the =polls= module.
+9. *Module mount #3* (=/polls=): prefix matches. The middleware moves
+   =/polls= into =:script-name= and leaves =:path-info= as =/3=, then
+   dispatches to the =polls= module. Guards that need the original URL
+   (login =?next==) recombine =script-name= + =path-info=.
 
 10. The polls module's =lack/component:call=:
     - Binds =shiso:*request*= to =(lack/request:make-request env)=.
@@ -139,6 +141,7 @@ either.
     (handledp response)
     (t
      (setf (getf env :path-info) saved-path-info)
+     ;; also restore :script-name
      (funcall app env))))      ; fall through to next mount
 #+end_src
 

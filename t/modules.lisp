@@ -269,8 +269,9 @@
     (eval '(shiso:define-module articles
              (:urls (:GET "/" (lambda () (shiso:http-response "index")) "index"))))
     (setf (shiso:module-prefix (shiso:get-module :articles)) "/articles")
-    (assert-string= "/articles/" (shiso:url "articles:index")
-                    "url should return prefixed path for namespaced route")))
+    ;; Index of a mount is the prefix without a trailing slash (canonical).
+    (assert-string= "/articles" (shiso:url "articles:index")
+                    "url should return prefixed path for namespaced route without trailing slash")))
 
 (define-test url-returns-prefixed-path-with-params ()
   (with-fresh-routes
@@ -295,3 +296,118 @@
     (setf (shiso:module-prefix (shiso:get-module :pages)) "")
     (assert-string= "/about" (shiso:url "pages:about")
                     "Root-mounted module should generate URLs without a prefix")))
+
+;;; ----------------------------------------------------------------------
+;;; Trailing-slash canonicalization and mount script-name.
+
+(define-test canonicalize-path-strips-trailing-slash ()
+  (assert-string= "/" (shiso:canonicalize-path "/"))
+  (assert-string= "/" (shiso:canonicalize-path "///"))
+  (assert-string= "/staff" (shiso:canonicalize-path "/staff/"))
+  (assert-string= "/staff" (shiso:canonicalize-path "/staff"))
+  (assert-string= "/staff/crm" (shiso:canonicalize-path "/staff/crm/")))
+
+(define-test canonicalize-redirect-url-preserves-query ()
+  (assert-string= "/staff" (shiso:canonicalize-redirect-url "/staff/"))
+  (assert-string= "/login?next=%2Fstaff"
+                  (shiso:canonicalize-redirect-url "/login?next=%2Fstaff"))
+  (assert-string= "/staff?x=1"
+                  (shiso:canonicalize-redirect-url "/staff/?x=1"))
+  (assert-string= "https://example.com/foo/"
+                  (shiso:canonicalize-redirect-url "https://example.com/foo/")
+                  "Absolute external URLs are left alone"))
+
+(define-test redirect-response-strips-trailing-slash ()
+  (let ((response (shiso:redirect-response "/staff/")))
+    (assert-eql 302 (first response))
+    (assert-string= "/staff" (getf (second response) :location)
+                    "redirect-response must not re-add a trailing slash")))
+
+(define-test trailing-slash-middleware-301s-to-canonical ()
+  (let* ((inner (lambda (env)
+                  (declare (ignore env))
+                  '(200 () ("ok"))))
+         (app (shiso/routing:strip-trailing-slash-middleware inner))
+         (response (funcall app (make-test-env "/staff/"))))
+    (assert-eql 301 (first response))
+    (assert-string= "/staff" (getf (second response) :location))))
+
+(define-test trailing-slash-middleware-preserves-query-string ()
+  (let* ((inner (lambda (env)
+                  (declare (ignore env))
+                  '(200 () ("ok"))))
+         (app (shiso/routing:strip-trailing-slash-middleware inner))
+         (env (make-test-env "/staff/"))
+         (_ (setf (getf env :query-string) "tab=1"))
+         (response (funcall app env)))
+    (declare (ignore _))
+    (assert-eql 301 (first response))
+    (assert-string= "/staff?tab=1" (getf (second response) :location))))
+
+(define-test trailing-slash-middleware-passes-canonical-paths ()
+  (let* ((seen nil)
+         (inner (lambda (env)
+                  (setf seen (getf env :path-info))
+                  '(200 () ("ok"))))
+         (app (shiso/routing:strip-trailing-slash-middleware inner))
+         (response (funcall app (make-test-env "/staff"))))
+    (assert-eql 200 (first response))
+    (assert-string= "/staff" seen)))
+
+(define-test mount-sets-script-name-for-full-path ()
+  "After mount, path-info is stripped but script-name holds the prefix so
+   full-path-from-env (and login next=) recover the original URL."
+  (with-fresh-routes
+    (eval '(shiso:define-module script-name-test
+             (:urls (:GET "/" (lambda ()
+                                (let ((env (lack/request:request-env shiso:*request*)))
+                                  (shiso:http-response
+                                   (format nil "~A|~A|~A"
+                                           (getf env :script-name)
+                                           (getf env :path-info)
+                                           (shiso/routing:full-path-from-env env)))))
+                      "index"))))
+    (eval '(shiso:define-application script-name-app ()
+             (:modules ("/staff" script-name-test))))
+    (let* ((app (symbol-value (intern "SCRIPT-NAME-APP" :cl-user)))
+           (response (funcall app (make-test-env "/staff")))
+           (body (first (third response))))
+      (assert-eql 200 (first response))
+      (assert-string= "/staff|/|/staff" body
+                      "script-name=/staff, path-info=/, full=/staff"))))
+
+(define-test mount-full-path-for-nested-route ()
+  (with-fresh-routes
+    (eval '(shiso:define-module nested-full-path
+             (:urls (:GET "/profile" (lambda ()
+                                       (shiso:http-response
+                                        (shiso/routing:full-path-from-env
+                                         (lack/request:request-env shiso:*request*))))
+                       "profile"))))
+    (eval '(shiso:define-application nested-full-path-app ()
+             (:modules ("/staff" nested-full-path))))
+    (let* ((app (symbol-value (intern "NESTED-FULL-PATH-APP" :cl-user)))
+           (response (funcall app (make-test-env "/staff/profile")))
+           (body (first (third response))))
+      (assert-eql 200 (first response))
+      (assert-string= "/staff/profile" body))))
+
+(define-test redirect-loop-cannot-form-via-redirect-response ()
+  "App redirects to a slash form must be normalized; combined with the 301
+   stripper this means at most one hop slash→canonical, never a loop."
+  (with-fresh-routes
+    (eval '(shiso:define-module loop-test
+             (:urls (:GET "/" (lambda () (shiso:redirect-response "/staff/")) "index"))))
+    (eval '(shiso:define-application loop-app ()
+             (:modules ("/staff" loop-test))))
+    (let* ((app (symbol-value (intern "LOOP-APP" :cl-user)))
+           ;; Canonical request (no trailing slash) hits the controller.
+           (response (funcall app (make-test-env "/staff")))
+           (location (getf (second response) :location)))
+      (assert-eql 302 (first response))
+      (assert-string= "/staff" location
+                      "Controller redirect to /staff/ must become /staff")
+      ;; Slash form is a single 301, not a 302 back to slash.
+      (let ((slash-response (funcall app (make-test-env "/staff/"))))
+        (assert-eql 301 (first slash-response))
+        (assert-string= "/staff" (getf (second slash-response) :location))))))

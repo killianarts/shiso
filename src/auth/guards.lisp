@@ -38,7 +38,12 @@ hit an :anonymous-only page.")
   (quri:url-encode (or s "") :encoding :utf-8))
 
 (defun redirect-to-login (env)
-  (let* ((path (and env (or (getf env :path-info) "/")))
+  "302 to *login-url* with next= set to the original (pre-mount) path.
+
+   Module mounts put the prefix in :script-name and the remainder in
+   :path-info. Using path-info alone would make next=/ inside a /staff
+   mount. full-path-from-env rebuilds /staff (or /staff/crm?…)."
+  (let* ((path (when env (shiso/routing:full-path-from-env env)))
          (qs (and env (getf env :query-string)))
          (full (cond ((null path) nil)
                      ((and qs (plusp (length qs)))

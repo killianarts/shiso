@@ -50,14 +50,31 @@ construct the response list by hand.
 (shiso:redirect-response URL &key (code 302)) => clack-response
 #+end_src
 
-Build a redirect:
+Build a redirect. Local path =Location= values are *canonicalized*:
+trailing slashes are stripped (except bare =/=) so a 302 cannot
+re-introduce a slash that =define-application='s trailing-slash 301
+just removed (infinite redirect loop).
 
 #+begin_src lisp
 (shiso:redirect-response "/dashboard")
 ;; => (302 (:location "/dashboard") (""))
+
+(shiso:redirect-response "/staff/")
+;; => (302 (:location "/staff") (""))
 #+end_src
 
-Use 301 (=:code 301=) for permanent redirects.
+Use 301 (=:code 301=) for permanent redirects. Absolute =http(s)://=
+URLs are left unchanged.
+
+* =canonicalize-path= / =canonicalize-redirect-url=  /functions/
+
+#+begin_src lisp
+(shiso:canonicalize-path "/staff/")              ; => "/staff"
+(shiso:canonicalize-redirect-url "/staff/?x=1")  ; => "/staff?x=1"
+#+end_src
+
+Helpers used by =redirect-response= and the trailing-slash middleware.
+Prefer letting those entry points normalize for you.
 
 * =url=  /function/
 
@@ -74,9 +91,11 @@ string. Reproduced here because it's used everywhere:
 (shiso:current-path) => string
 #+end_src
 
-The path-info of the current request. Equivalent to
-=(lack/request:request-path-info shiso:*request*)=. Useful in nav
-components that highlight the current page.
+Full request path including the module mount prefix (=:script-name= +
+=:path-info=), with no trailing slash. Prefer this over raw
+=path-info= for nav active state: after a mount at =/staff=, the
+module sees =path-info= =="/"= while =(shiso:current-path)= returns
+="/staff"=.
 
 * =static=  /function/
 

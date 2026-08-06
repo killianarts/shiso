@@ -65,12 +65,22 @@ That means a module at =src/modules/blog/= with a
 directory, and the same URL serves it from there. See [[file:serve-static-files.org][serve static
 files]] for the production flow.
 
-* Trailing slashes
+* Trailing slashes (canonical form)
 
-The dispatcher emits a 301 redirect from =/blog/= to =/blog= for any
-path longer than =/= that ends in a slash. Most browsers follow it;
-=curl= without =-L= will see the 301 directly. Don't write routes
-with trailing slashes — they'll never match.
+Canonical URLs never end with =/= except for the site root =/=.
+
+1. *Middleware* — =define-application= installs a 301 that strips
+   trailing slashes *before* module mounts:
+   =/blog/= → =301= → =/blog= (query string is preserved).
+2. *redirect-response* — local =Location= paths are canonicalized
+   the same way, so a controller cannot do =302= → =/blog/= and
+   fight the stripper (that was the infinite-loop bug).
+3. *url reverse* — joining a mount prefix with a module index route
+   =/= yields =/blog=, not =/blog/=.
+
+Do not write module routes as absolute slash-terminated paths
+(e.g. ="/staff/"= on a root mount). Prefer mount ="/staff"= +
+module route ="/"=.
 
 * Where the prefix shows up later
 
@@ -97,6 +107,27 @@ If you need to know where a module is mounted at runtime:
 
 The prefix is a writable accessor (the application sets it during
 dispatch). For configuration purposes, treat it as read-only.
+
+* Full request path vs module path-info
+
+On a mount match, Shiso follows the Lack convention:
+
+- =:script-name= gets the mount prefix (e.g. =/staff=)
+- =:path-info= is the remainder (e.g. =/= or =/profile=)
+
+Module routing uses the stripped =path-info=. For anything user-facing
+— nav active state, login =?next==, absolute links — use the *full*
+path:
+
+#+begin_src lisp
+(shiso:current-path)
+;; GET /staff/profile  →  "/staff/profile"
+;; (not "/" or "/profile")
+#+end_src
+
+Auth guards build =next= from =script-name= + =path-info= automatically,
+so an anonymous hit on =/staff= redirects to =/login?next=%2Fstaff=
+rather than =next=%2F=.
 
 * See also
 

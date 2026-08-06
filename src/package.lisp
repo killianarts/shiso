@@ -78,7 +78,9 @@
                 #:text-response
                 #:json-response
                 #:html-fragment-response
-                #:ensure-session-table)
+                #:ensure-session-table
+                #:canonicalize-path
+                #:canonicalize-redirect-url)
   ;; Forms — the headless core plus rendering. Field classes and the
   ;; field-* readers stay in shiso/forms (their names collide with the
   ;; model-metadata readers exported below).
@@ -185,6 +187,8 @@
    #:post-request-p
    #:parse-body-params
    #:redirect-response
+   #:canonicalize-path
+   #:canonicalize-redirect-url
 
    ;; Admin
    #:define-admin
@@ -283,6 +287,8 @@
    #:post-request-p
    #:parse-body-params
    #:redirect-response
+   #:canonicalize-path
+   #:canonicalize-redirect-url
    #:current-session-hash
    #:csrf-token-value
    #:text-response

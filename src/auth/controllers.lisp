@@ -22,14 +22,21 @@
     (cdr (assoc name qs :test #'string=))))
 
 (defun safe-next-url (raw)
-  "Only honour 'next' values that are local paths. Prevents open-redirect."
+  "Only honour 'next' values that are local paths. Prevents open-redirect.
+   Canonicalizes trailing slashes so post-login cannot land on PATH/ and
+   fight the application trailing-slash 301 stripper."
   (cond
     ((null raw) nil)
     ((and (stringp raw)
           (plusp (length raw))
           (char= (char raw 0) #\/)
           (not (and (> (length raw) 1) (char= (char raw 1) #\/))))
-     raw)
+     ;; Split path from query; canonicalize path only.
+     (let* ((qpos (position #\? raw))
+            (path (if qpos (subseq raw 0 qpos) raw))
+            (qs (if qpos (subseq raw qpos) ""))
+            (clean (shiso/routing:canonicalize-path path)))
+       (concatenate 'string clean qs)))
     (t nil)))
 
 (defun non-field-errors (form)

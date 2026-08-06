@@ -7,6 +7,26 @@ The format is inspired by [[https://keepachangelog.com/][Keep a Changelog]].
 Versions match the =:version= in =shiso.asd= when set; otherwise
 entries are dated by release milestone.
 
+* Unreleased
+
+** Fixed
+
+- Trailing-slash redirect loops: local =redirect-response= Locations
+  and =url= reverses no longer re-add a trailing slash that
+  =define-application='s 301 stripper removes. Module index reverse
+  is =/prefix= not =/prefix/=.
+- Login =?next== after a prefix mount: mounts set Lack
+  =:script-name= to the prefix; guards rebuild the full path so
+  =next=/staff= (not =next=/= when =path-info= is =/= inside the
+  mount).
+- Trailing-slash 301 preserves the query string on =Location=.
+
+** Changed
+
+- =shiso:current-path= returns the full request path (=script-name= +
+  =path-info=), not the post-mount =path-info= alone.
+- Exported =canonicalize-path= / =canonicalize-redirect-url=.
+
 * 0.3
 
 ** Added

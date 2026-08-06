@@ -97,6 +97,32 @@
     (assert-true (search "page%3D2" location)
                  "next= should URL-encode the query string")))
 
+(define-test guard-redirect-next-uses-script-name-after-mount ()
+  "When a module is mounted at /staff, path-info alone is /; next= must
+   still be the full original path /staff (not /)."
+  (let* ((env '(:script-name "/staff" :path-info "/" :query-string ""))
+         (response (guards:evaluate-guard '(:require :staff) nil env))
+         (location (getf (second response) :location)))
+    (assert-eql 302 (first response))
+    (assert-true (search "next=" location))
+    (assert-true (search "next=%2Fstaff" location)
+                 "next= should be URL-encoded /staff from script-name + path-info")
+    ;; Bare next=/ would be next=%2F with nothing after (or end of string).
+    (assert-false (or (search "next=%2F&" location)
+                      (and (>= (length location) 8)
+                           (string= "next=%2F"
+                                    location
+                                    :start2 (- (length location) 8))))
+                  "next= must not be bare / when script-name holds the mount")))
+
+(define-test guard-redirect-next-joins-script-name-and-nested-path ()
+  (let* ((env '(:script-name "/staff" :path-info "/crm/tickets" :query-string "q=1"))
+         (response (guards:evaluate-guard '(:require :login) nil env))
+         (location (getf (second response) :location)))
+    (assert-true (search "%2Fstaff%2Fcrm%2Ftickets" location)
+                 "next= should be /staff/crm/tickets")
+    (assert-true (search "q%3D1" location))))
+
 (define-test guard-predicate-runs-on-user ()
   (let ((predicate-symbol (gensym "PRED")))
     (setf (fdefinition predicate-symbol)

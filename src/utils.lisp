@@ -19,7 +19,9 @@
    #:text-response
    #:json-response
    #:html-fragment-response
-   #:ensure-session-table))
+   #:ensure-session-table
+   #:canonicalize-path
+   #:canonicalize-redirect-url))
 
 (in-package #:shiso/utils)
 
@@ -40,9 +42,24 @@ alist of (keyword . string)."
                     (cdr pair)))
             body-params)))
 
+(defun canonicalize-path (path)
+  "Strip trailing slashes from PATH except bare \"/\". See routing."
+  (routing:canonicalize-path path))
+
+(defun canonicalize-redirect-url (url)
+  "Normalize a redirect Location so it cannot re-add a trailing slash
+   that the application trailing-slash middleware strips (redirect loop)."
+  (routing:canonicalize-redirect-url url))
+
 (defun redirect-response (url &key (code 302))
-  "Return a Clack-style redirect response to URL."
-  (list code (list :location url) '("")))
+  "Return a Clack-style redirect response to URL.
+
+   Local path Locations are canonicalized: trailing slashes are stripped
+   (except bare \"/\") so a 302 cannot fight the 301 trailing-slash stripper
+   installed by define-application."
+  (list code
+        (list :location (canonicalize-redirect-url url))
+        '("")))
 
 (defun current-session-hash ()
   (getf (req:request-env requests:*request*) :lack.session))
@@ -72,9 +89,8 @@ no such module is registered — used by legacy `define-routes')."
            (let ((route (myway:find-route-by-name mapper name-kw)))
              (when route
                (let ((base (myway:url-for route params)))
-                 (if (and prefix (plusp (length prefix)))
-                     (concatenate 'string prefix base)
-                     base))))))
+                 ;; join-url-path: "/staff" + "/" → "/staff" (not "/staff/")
+                 (routing:join-url-path (or prefix "") base))))))
     (let ((name-str (etypecase name
                       (string name)
                       (symbol (string-downcase (symbol-name name))))))
@@ -94,8 +110,14 @@ no such module is registered — used by legacy `define-routes')."
                       (routing:coerce-route-name name-str))))))
 
 (defun current-path ()
-  "Get the path to the current page."
-  (lack/request:request-path-info requests:*request*))
+  "Full path of the current request, including the module mount prefix.
+
+   After a mount at \"/staff\", :path-info alone may be \"/\" or \"/profile\";
+   this returns \"/staff\" or \"/staff/profile\". Prefer this for nav active
+   state and post-login redirects. Canonical form has no trailing slash."
+  (if requests:*request*
+      (routing:full-path-from-env (req:request-env requests:*request*))
+      ""))
 
 (defun params ()
   ())

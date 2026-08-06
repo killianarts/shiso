@@ -25,8 +25,12 @@
             body-params)))
 
 (defun redirect-response (url)
-  "Return a 302 redirect response."
-  (list 302 (list :location url) '("")))
+  "Return a 302 redirect response.
+   Canonicalizes local path Locations (no trailing slash) so admin
+   redirects cannot fight the application trailing-slash 301 stripper."
+  (list 302
+        (list :location (shiso/utils:canonicalize-redirect-url url))
+        '("")))
 
 (defun http-response (body &key (status 200) (content-type "text/html; charset=utf-8"))
   "Return an HTTP response with the given body string."
