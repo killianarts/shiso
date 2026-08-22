@@ -13,4 +13,5 @@
 
 (s:define-application application ()
   (:modules
+   ("/i18n" shiso-i18n)
    ("" home)))

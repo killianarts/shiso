@@ -34,11 +34,16 @@ list means all passed.
 ** =not-blank=  /function/
 
 #+begin_src lisp
-(shiso/validators:not-blank VALUE) => "This field is required." or NIL
+(shiso/validators:not-blank VALUE) => error-string or NIL
 #+end_src
 
 Empty string or =NIL= fails. =0= passes. Used by the form layer's
 auto-required logic.
+
+The returned string goes through =shiso:translate= (id
+=validators-not-blank=) with the English sentence as =:default=.
+Under =with-locale= a catalog can replace it. See
+[[file:i18n.org][i18n]].
 
 ** =max-length=  /factory/
 

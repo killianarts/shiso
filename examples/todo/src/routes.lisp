@@ -8,5 +8,6 @@
 (s:define-application application ()
   (:modules
    ("/admin" shiso-admin)
+   ("/i18n"  shiso-i18n)
    (""       shiso-auth)
    (""       todos)))

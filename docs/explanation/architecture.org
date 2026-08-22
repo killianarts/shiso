@@ -25,6 +25,7 @@ individual subsystems.
 │   ├── admin         — auto-CRUD on registered models │
 │   ├── auth          — user, session, guards          │
 │   ├── validators    — pure validation functions      │
+│   ├── i18n          — Fluent wrap, request locale    │
 │   └── cli           — `shiso new-…` scaffolder       │
 ├──────────────────────────────────────────────────────┤
 │  Stack libraries (vendored)                          │
@@ -35,7 +36,8 @@ individual subsystems.
 │   ├── almighty-html — HTML DSL                       │
 │   ├── cl-pass       — password hashing               │
 │   ├── lack-middleware-session, -csrf — security      │
-│   └── lack-session-store-dbi — DB-backed session     │
+│   ├── lack-session-store-dbi — DB-backed session     │
+│   └── fluent + plurals — FTL catalogs, CLDR plurals  │
 ├──────────────────────────────────────────────────────┤
 │  SBCL                                                │
 └──────────────────────────────────────────────────────┘
@@ -97,7 +99,8 @@ admin doesn't reach into your =models.lisp= — it reads
 
 A request hits Woo, gets parsed into a Clack env plist, walks the
 Lack-builder pipeline. The session middleware reads the cookie and
-loads/creates the session hash table; the CSRF middleware checks
+loads/creates the session hash table; the locale middleware binds
+=*locale*= from cookie or =Accept-Language=; the CSRF middleware checks
 the token for unsafe methods. The application's module-mount
 wrappers find the matching mount, strip its prefix, and call the
 module. The module's =lack/component:call= method binds
@@ -107,7 +110,8 @@ BODY)= which the middlewares finalize (CSRF rotates session-id if
 flagged, session middleware writes the row back) and Woo serializes
 to the wire.
 
-Full pictures: [[file:request-lifecycle.org][the request lifecycle]].
+Full pictures: [[file:request-lifecycle.org][the request lifecycle]],
+[[file:i18n.org][how translations work]].
 
 * The model path, in one paragraph
 

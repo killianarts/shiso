@@ -216,7 +216,11 @@ for the recognized specs (e.g. (:require :staff))."
          (static-dir (when module-dir
                        (merge-pathnames "static/" module-dir)))
          (static-root (when (and static-dir (uiop:directory-exists-p static-dir))
-                        (namestring static-dir))))
+                        (namestring static-dir)))
+         (locale-dir (when module-dir
+                       (merge-pathnames "locale/" module-dir)))
+         (locale-root (when (and locale-dir (uiop:directory-exists-p locale-dir))
+                        (namestring locale-dir))))
     `(progn
        (let ((,module-routes-var (make-instance 'routes :mapper (myway:make-mapper))))
          ,@(loop for url-spec in urls
@@ -233,6 +237,7 @@ for the recognized specs (e.g. (:require :staff))."
                           (make-instance 'modules:module
                                          :routes ,module-routes-var
                                          :static-root ,static-root
+                                         :locale-root ,locale-root
                                          :guard ',guard)))
        ',name)))
 

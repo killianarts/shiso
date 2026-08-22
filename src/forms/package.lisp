@@ -4,7 +4,9 @@
                 #:form-field
                 #:field-name
                 #:field-label
+                #:field-label-id
                 #:field-help-text
+                #:field-help-id
                 #:field-requiredp
                 #:field-validators
                 #:field-initial
@@ -52,7 +54,9 @@
    #:form-field
    #:field-name
    #:field-label
+   #:field-label-id
    #:field-help-text
+   #:field-help-id
    #:field-requiredp
    #:field-validators
    #:field-initial

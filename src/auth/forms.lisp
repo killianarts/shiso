@@ -4,7 +4,8 @@
                     (#:form #:shiso/forms/form)
                     (#:val #:shiso/validators)
                     (#:user #:shiso/auth/user)
-                    (#:session #:shiso/auth/session))
+                    (#:session #:shiso/auth/session)
+                    (#:i18n #:shiso/i18n))
   (:export
    #:login-form
    #:make-login-form
@@ -27,11 +28,13 @@
                           (make-instance 'fields:email-field
                                          :name 'email
                                          :label "Email"
+                                         :label-id "auth-email"
                                          :max-length 254
                                          :validators (list 'val:valid-email))
                           (make-instance 'fields:char-field
                                          :name 'password
                                          :label "Password"
+                                         :label-id "auth-password"
                                          :widget :password
                                          :validators (list (list 'val:min-length 1))))
                  :data data))
@@ -44,7 +47,8 @@
       (let ((u (session:authenticate email password)))
         (cond
           (u (setf (login-form-user form) u) nil)
-          (t (list "Invalid email or password.")))))))
+          (t (list (i18n:translate "auth-invalid-credentials"
+                                   :default "Invalid email or password."))))))))
 
 ;;; ----------------------------------------------------------------------
 ;;; Signup form.
@@ -58,16 +62,19 @@
                           (make-instance 'fields:email-field
                                          :name 'email
                                          :label "Email"
+                                         :label-id "auth-email"
                                          :max-length 254
                                          :validators (list 'val:valid-email))
                           (make-instance 'fields:char-field
                                          :name 'password
                                          :label "Password"
+                                         :label-id "auth-password"
                                          :widget :password
                                          :validators (list (list 'val:min-length 8)))
                           (make-instance 'fields:char-field
                                          :name 'password-confirm
                                          :label "Confirm password"
+                                         :label-id "auth-password-confirm"
                                          :widget :password))
                  :data data))
 
@@ -78,7 +85,11 @@
         (p2 (gethash 'password-confirm cleaned-data))
         (email (gethash 'email cleaned-data)))
     (when (and p1 p2 (not (string= p1 p2)))
-      (push "Passwords do not match." errors))
+      (push (i18n:translate "auth-passwords-mismatch"
+                            :default "Passwords do not match.")
+            errors))
     (when (and email (user:find-user-by-email email))
-      (push "A user with that email already exists." errors))
+      (push (i18n:translate "auth-email-taken"
+                            :default "A user with that email already exists.")
+            errors))
     (nreverse errors)))

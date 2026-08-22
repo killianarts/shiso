@@ -64,6 +64,19 @@
                 #:*login-url*
                 #:*post-login-redirect*)
 
+  (:import-from #:shiso/i18n
+                #:translate
+                #:with-locale
+                #:current-locale
+                #:load-localisations
+                #:ensure-localisations
+                #:available-locales
+                #:message-id
+                #:locale-html-lang
+                #:*locale*
+                #:*default-locale*
+                #:*fallback-locale*)
+
   (:import-from #:shiso/utils
                 #:http-response
                 #:url
@@ -171,6 +184,18 @@
 
    #:start
    #:stop
+
+   #:translate
+   #:with-locale
+   #:current-locale
+   #:load-localisations
+   #:ensure-localisations
+   #:available-locales
+   #:message-id
+   #:locale-html-lang
+   #:*locale*
+   #:*default-locale*
+   #:*fallback-locale*
 
    #:http-response
    #:url

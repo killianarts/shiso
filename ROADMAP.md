@@ -64,4 +64,5 @@
 - Key-value cache with in-memory and Redis backends
 
 ### Internationalization
-- Translation keys for form labels and help text
+- Fluent wrap: `translate`, request locale, `.ftl` catalogs (done)
+- Parked: locale-aware date display (`shiso:l`)

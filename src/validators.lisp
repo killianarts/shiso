@@ -1,5 +1,6 @@
 (defpackage #:shiso/validators
   (:use #:cl)
+  (:local-nicknames (#:i18n #:shiso/i18n))
   (:export
    ;; Resolver and runner
    #:resolve-validator
@@ -35,47 +36,60 @@ VALIDATORS is a list of validator designators."
   "Validate that VALUE is not empty."
   (when (or (null value)
             (and (stringp value) (string= value "")))
-    "This field is required."))
+    (i18n:translate "validators-not-blank"
+                    :default "This field is required.")))
 
 (defun max-length (n)
   "Return a validator that checks string length <= N."
   (lambda (value)
     (when (and (stringp value) (> (length value) n))
-      (format nil "Must be ~D characters or fewer." n))))
+      (i18n:translate "validators-max-length"
+                      :n n
+                      :default (format nil "Must be ~D characters or fewer." n)))))
 
 (defun min-length (n)
   "Return a validator that checks string length >= N."
   (lambda (value)
     (when (and (stringp value) (< (length value) n))
-      (format nil "Must be at least ~D characters." n))))
+      (i18n:translate "validators-min-length"
+                      :n n
+                      :default (format nil "Must be at least ~D characters." n)))))
 
 (defun min-value (n)
   "Return a validator that checks numeric value >= N."
   (lambda (value)
     (when (and (numberp value) (< value n))
-      (format nil "Must be at least ~D." n))))
+      (i18n:translate "validators-min-value"
+                      :n n
+                      :default (format nil "Must be at least ~D." n)))))
 
 (defun max-value (n)
   "Return a validator that checks numeric value <= N."
   (lambda (value)
     (when (and (numberp value) (> value n))
-      (format nil "Must be at most ~D." n))))
+      (i18n:translate "validators-max-value"
+                      :n n
+                      :default (format nil "Must be at most ~D." n)))))
 
 (defun matches-pattern (regex)
   "Return a validator that checks a string matches REGEX (CL-PPCRE)."
   (lambda (value)
     (when (and (stringp value)
                (not (cl-ppcre:scan regex value)))
-      (format nil "Does not match the expected pattern."))))
+      (i18n:translate "validators-matches-pattern"
+                      :default "Does not match the expected pattern."))))
 
 (defun valid-email (value)
   "Basic email format validation."
   (when (and (stringp value)
              (not (cl-ppcre:scan "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$" value)))
-    "Enter a valid email address."))
+    (i18n:translate "validators-valid-email"
+                    :default "Enter a valid email address.")))
 
 (defun one-of (choices)
   "Return a validator that checks value is a member of CHOICES."
   (lambda (value)
     (unless (member value choices :test #'equal)
-      (format nil "Must be one of: ~{~A~^, ~}." choices))))
+      (i18n:translate "validators-one-of"
+                      :choices (format nil "~{~A~^, ~}" choices)
+                      :default (format nil "Must be one of: ~{~A~^, ~}." choices)))))

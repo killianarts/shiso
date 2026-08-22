@@ -9,6 +9,20 @@ entries are dated by release milestone.
 
 * Unreleased
 
+** Added
+
+- Internationalization via a Fluent wrap (=shiso:translate=,
+  =with-locale=, =load-localisations=). Catalogs are =.ftl= files
+  under =locale/<locale>/=. Locale middleware reads the
+  =shiso_language= cookie then =Accept-Language=. =POST
+  /i18n/set-language= (module =shiso-i18n=) persists the choice.
+  Framework strings (validators, auth, admin) go through =translate=
+  with English =:default=. Model field labels use derived ids
+  ={model}-{field}=. Vendored =fluent=, =parcom=, =plurals=,
+  =filepaths= (Fluent is MPL-2.0). Date *display* localization is
+  not included; =local-time= still owns instants and widgets.
+  Docs: tutorial 7, how-to, reference, and explanation chapters.
+
 ** Fixed
 
 - Trailing-slash redirect loops: local =redirect-response= Locations

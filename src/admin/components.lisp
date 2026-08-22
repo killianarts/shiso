@@ -1,7 +1,8 @@
 (defpackage #:shiso/admin/components
   (:use #:cl)
   (:local-nicknames (#:ah #:almighty-html)
-                    (#:models #:shiso/models))
+                    (#:models #:shiso/models)
+                    (#:i18n #:shiso/i18n))
   (:export
    #:ac-admin-page
    #:ac-admin-table
@@ -15,7 +16,7 @@
    (nav :class "admin-nav"
      (div :class "admin-nav-header"
        (a :href (shiso/utils:url "shiso-admin:index")
-         (strong "Admin")))
+         (strong (i18n:translate "admin-nav-title" :default "Admin"))))
      (ul :class "admin-nav-list"
        (loop :for name :in model-names
              :for href := (shiso/utils:url "shiso-admin:model-instance-list"
@@ -26,12 +27,14 @@
 (ah:define-component ac-admin-page (&key title model-names children)
   (let ((names (or model-names nil)))
     (ah:</>
-     (html :lang "en"
+     (html :lang (i18n:locale-html-lang (i18n:current-locale))
        (head
          (meta :charset "utf-8")
          (meta :name "viewport"
            :content "width=device-width, initial-scale=1")
-         (title (format nil "~A — Admin" title))
+         (title (i18n:translate "admin-page-title"
+                                :title title
+                                :default (format nil "~A — Admin" title)))
          (style "
 body { font-family: system-ui, sans-serif; margin: 0; display: flex; min-height: 100vh; }
 .admin-nav { width: 220px; background: #1a1a2e; color: #eee; padding: 1rem; flex-shrink: 0; }
@@ -72,7 +75,12 @@ table.admin-table { width: 100%; border-collapse: collapse; }
              (h1 title))
            children))))))
 
-(ah:define-component ac-admin-table-column-headers (&key columns children)
+(defun humanize-symbol (sym)
+  (string-capitalize
+   (substitute #\Space #\-
+               (string-downcase (symbol-name sym)))))
+
+(ah:define-component ac-admin-table-column-headers (&key columns model-name children)
   (ah:</>
    ;; Important! We are returning multiple ths collected in a list. If we don't
    ;; have this nesting function then we get spurious parentheses rendered in
@@ -81,11 +89,11 @@ table.admin-table { width: 100%; border-collapse: collapse; }
    ;; * TODO See if we can prevent this without a nesting function.
    (<>
      (loop :for col :in columns
-           ;; TODO Make a convenience function for making labels.
-           :for label := (string-capitalize
-                          (substitute #\Space #\-
-                                      (string-downcase
-                                       (symbol-name col))))
+           :for fallback := (humanize-symbol col)
+           :for label := (if model-name
+                             (i18n:translate (i18n:message-id model-name col)
+                                             :default fallback)
+                             fallback)
            :collect (ah:</> (th label))))))
 
 (defun format-datetime-local (timestamp)
@@ -116,13 +124,15 @@ table.admin-table { width: 100%; border-collapse: collapse; }
            ;; the object-id of a dao as a string for easy interop with myway.
            :for edit-href := (shiso/utils:url "shiso-admin:model-instance-rebuild" :model model-name :id (princ-to-string id)) 
            :collect (ah:</>
-                     (tr cells (td (a :href edit-href :class "btn btn-primary" "REBUILD"))))))))
+                     (tr cells (td (a :href edit-href :class "btn btn-primary"
+                                     (i18n:translate "admin-edit" :default "REBUILD")))))))))
 
 (ah:define-component ac-admin-table (&key columns items model-name children)
   (ah:</>
    (<>
      (table :class "admin-table"
-       (thead (tr (ac-admin-table-column-headers :columns columns) (th "Actions")))
+       (thead (tr (ac-admin-table-column-headers :columns columns :model-name model-name)
+                  (th (i18n:translate "admin-actions" :default "Actions"))))
        (tbody (ac-admin-table-rows :columns columns :items items :model-name model-name))))))
 
 (ah:define-component ac-admin-flash (&key message type)

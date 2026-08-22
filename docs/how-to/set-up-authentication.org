@@ -50,6 +50,7 @@ In your routes file, define your application and include the
 (shiso:define-application my-app ()
   (:modules
     (""       myapp-pages)
+    ("/i18n"  shiso-i18n)        ; POST /i18n/set-language
     (""       shiso-auth)        ; /login, /logout, /signup
     ("/admin" shiso-admin)))     ; already :staff-guarded
 #+end_src

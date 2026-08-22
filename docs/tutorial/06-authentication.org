@@ -352,3 +352,7 @@ Stripe doesn't authenticate end users -- you do. The framework's
 None of those changes affect the auth layer described in this
 tutorial. The =email= field on =shiso/auth:user= is what Stripe will
 use for receipts and Customer Portal access.
+
+* Next
+
+[[file:07-translations.org][7. Adding translations]] — Fluent catalogs and a language switcher.

@@ -33,6 +33,8 @@
                :ironclad
                ;; CLI
                :clingon
+               ;; i18n (fosskers/fluent + parcom, plurals, filepaths)
+               :fluent
                )
   :components ((:module "src"
                 :serial t
@@ -42,6 +44,16 @@
                  (:file "routing")
                  (:file "requests")
                  (:file "utils")
+                 ;; i18n before validators so they can call TRANSLATE
+                 (:module "i18n" :serial t
+                  :components ((:file "package")
+                               (:file "locale")
+                               (:file "catalog")
+                               (:file "translate")
+                               (:file "negotiate")
+                               (:file "middleware")
+                               (:file "controllers")
+                               (:file "routes")))
                  ;; Validators (no dependencies on models)
                  (:file "validators")
                  ;; CLI / scaffolding
@@ -101,6 +113,7 @@
                 ((:file "routes")
                  (:file "modules")
                  (:file "models")
+                 (:file "i18n")
                  (:file "validators")
                  (:file "forms")
                  (:file "admin")
@@ -113,6 +126,8 @@
                                       :package :shiso/t/modules)
                     (uiop:symbol-call :lisp-unit2 :run-tests
                                       :package :shiso/t/models)
+                    (uiop:symbol-call :lisp-unit2 :run-tests
+                                      :package :shiso/t/i18n)
                     (uiop:symbol-call :lisp-unit2 :run-tests
                                       :package :shiso/t/validators)
                     (uiop:symbol-call :lisp-unit2 :run-tests

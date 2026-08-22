@@ -3,7 +3,8 @@
   (:local-nicknames (#:fields #:shiso/forms/fields)
                     (#:form #:shiso/forms/form)
                     (#:models #:shiso/models)
-                    (#:val #:shiso/validators))
+                    (#:val #:shiso/validators)
+                    (#:i18n #:shiso/i18n))
   (:export
    #:make-model-form
    #:save-form
@@ -31,7 +32,8 @@ DATA       -- submitted form data (alist of (name . string-value))."
                                (member (models:field-name m) fields))
                            (not (member (models:field-name m) exclude))))
                     all-meta))
-         (form-fields (mapcar (lambda (m) (metadata-to-form-field m instance))
+         (form-fields (mapcar (lambda (m)
+                                (metadata-to-form-field m instance model-name))
                               filtered)))
     (make-instance 'model-form
                    :model-name model-name
@@ -39,7 +41,7 @@ DATA       -- submitted form data (alist of (name . string-value))."
                    :instance instance
                    :data data)))
 
-(defun metadata-to-form-field (meta instance)
+(defun metadata-to-form-field (meta instance model-name)
   "Convert a slot-metadata struct to a form-field instance."
   (let* ((name (models:field-name meta))
          (col-type (models:field-col-type meta))
@@ -51,7 +53,10 @@ DATA       -- submitted form data (alist of (name . string-value))."
                   (t (fields:col-type-to-field-class col-type))))
          (initargs (list :name name
                          :label (models:field-verbose-name meta)
+                         :label-id (i18n:message-id model-name name)
                          :help-text (models:field-help-text meta)
+                         :help-id (when (models:field-help-text meta)
+                                    (i18n:message-id model-name name "help"))
                          :requiredp (not (models:field-blankp meta))
                          :validators (models:field-validators meta)
                          :widget (models:field-widget meta))))

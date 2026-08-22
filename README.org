@@ -3,8 +3,8 @@
 #+author: Micah Killian
 
 A web framework for Common Lisp. Django-shaped: modular apps,
-ORM-backed models, an auto-generated admin, session+CSRF auth, and
-a scaffolder that stamps both.
+ORM-backed models, an auto-generated admin, session+CSRF auth,
+Fluent-based translations, and a scaffolder that stamps both.
 
 * Quickstart
 
@@ -37,7 +37,7 @@ Full documentation lives under [[file:docs/][docs/]] and follows the
   [[file:docs/tutorial/05-todo-app.org][TODO app]] are the two worked examples.
 - *How-to guides* ([[file:docs/how-to/][docs/how-to/]]) — task-oriented
   recipes: define a model, register it in the admin, render a form
-  with CSRF, deploy, etc.
+  with CSRF, add translations, deploy, etc.
 - *Reference* ([[file:docs/reference/][docs/reference/]]) — every exported
   symbol grouped by subsystem.
 - *Explanation* ([[file:docs/explanation/][docs/explanation/]]) — the

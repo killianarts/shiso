@@ -6,7 +6,8 @@
                     (#:forms #:shiso/forms)
                     (#:auth-forms #:shiso/auth/forms)
                     (#:session #:shiso/auth/session)
-                    (#:guards #:shiso/auth/guards))
+                    (#:guards #:shiso/auth/guards)
+                    (#:i18n #:shiso/i18n))
   (:export
    #:login-view
    #:logout-view
@@ -50,7 +51,7 @@
 (defun page (title body)
   (let ((html (ah:render-to-string
                (ah:</>
-                (html
+                (html :lang (i18n:locale-html-lang (i18n:current-locale))
                   (ah:</>
                    (head
                      (ah:</> (meta :charset "utf-8"))
@@ -72,24 +73,25 @@
                     (format nil "/login?next=~A" (quri:url-encode next :encoding :utf-8))
                     "/login"))
         (top-errors (errors-block (non-field-errors form)))
-        (heading (ah:</> (h1 "Sign in"))))
-    (page "Sign in"
+        (heading (ah:</> (h1 (i18n:translate "auth-sign-in" :default "Sign in")))))
+    (page (i18n:translate "auth-sign-in" :default "Sign in")
           (ah:</>
            (div :class "auth-form"
              heading
              top-errors
-             (forms:render-form form :action action :submit-label "Sign in"))))))
+             (forms:render-form form :action action
+                                     :submit-label "auth-sign-in"))))))
 
 (defun render-signup-page (form)
   (let ((top-errors (errors-block (non-field-errors form)))
-        (heading (ah:</> (h1 "Create account"))))
-    (page "Create account"
+        (heading (ah:</> (h1 (i18n:translate "auth-create-account" :default "Create account")))))
+    (page (i18n:translate "auth-create-account" :default "Create account")
           (ah:</>
            (div :class "auth-form"
              heading
              top-errors
              (forms:render-form form :action "/signup"
-                                     :submit-label "Create account"))))))
+                                     :submit-label "auth-create-account"))))))
 
 ;;; ----------------------------------------------------------------------
 ;;; Controllers.

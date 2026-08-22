@@ -5,6 +5,7 @@
    #:module-routes
    #:module-prefix
    #:module-static-root
+   #:module-locale-root
    #:module-guard
    #:*module-registry*
    #:register-module
@@ -16,6 +17,7 @@
   ((routes :initarg :routes :accessor module-routes)
    (prefix :initarg :prefix :accessor module-prefix :initform "")
    (static-root :initarg :static-root :accessor module-static-root :initform nil)
+   (locale-root :initarg :locale-root :accessor module-locale-root :initform nil)
    (guard :initarg :guard :accessor module-guard :initform nil)))
 
 (defvar *module-registry* (make-hash-table :test 'eq)

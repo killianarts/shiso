@@ -1,6 +1,7 @@
 (defpackage #:shiso/server
   (:use #:cl)
-  (:local-nicknames (#:session #:shiso/auth/session))
+  (:local-nicknames (#:session #:shiso/auth/session)
+                    (#:i18n #:shiso/i18n))
   (:export
    #:*server-connection*
    #:start
@@ -54,8 +55,9 @@ middleware must precede CSRF so that the CSRF middleware can find the
 session in env."
   (wrap-error-logging
    (funcall lack/middleware/session:*lack-middleware-session*
-            (funcall lack/middleware/csrf:*lack-middleware-csrf*
-                     inner-app)
+            (i18n:wrap-locale
+             (funcall lack/middleware/csrf:*lack-middleware-csrf*
+                      inner-app))
             :store (session:make-store))))
 
 (defmacro start (app &rest args &key (host "127.0.0.1") (port 5000) (debugp t))
@@ -69,6 +71,7 @@ session in env."
       (restart-server ()
         :report "Restart the server"
         (stop))))
+  (i18n:ensure-localisations)
   (let ((wrapped (wrap-app (symbol-value app-symbol))))
     (setf *server-connection*
           (clack:clackup (lambda (env) (funcall wrapped env))

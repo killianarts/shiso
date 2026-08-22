@@ -5,7 +5,8 @@
                     (#:comp #:shiso/admin/components)
                     (#:mw #:shiso/admin/middleware)
                     (#:models #:shiso/models)
-                    (#:forms #:shiso/forms))
+                    (#:forms #:shiso/forms)
+                    (#:i18n #:shiso/i18n))
   (:import-from #:shiso/admin/components
                 #:ac-admin-page
                 #:ac-admin-table
@@ -48,7 +49,7 @@
 (defun index ()
   "Render the admin dashboard with links to all registered models."
   (render-page
-   "Dashboard"
+   (i18n:translate "admin-dashboard" :default "Dashboard")
    (ah:</> (ul :class "admin-model-list"
              (loop :for name :in (reg:all-registered-admins)
                    :for href := (shiso/utils:url "shiso-admin:model-instance-list" :model (string-downcase name))
@@ -69,12 +70,15 @@
          (items (mito:select-dao model-class))
          (columns (display-columns model-name config))
          (create-href (shiso/utils:url "shiso-admin:model-instance-build" :model model-name-str))
-         (title (format nil "~A List" (string-capitalize model-name-str))))
+         (title (i18n:translate "admin-list-title"
+                                :model (string-capitalize model-name-str)
+                                :default (format nil "~A List" (string-capitalize model-name-str)))))
     (render-page title
                  (ah:</>
                   (div
                     (div :class "admin-actions"
-                      (a :href create-href :class "btn btn-primary" "Add New"))
+                      (a :href create-href :class "btn btn-primary"
+                        (i18n:translate "admin-add-new" :default "Add New")))
                     (ac-admin-table :columns columns
                       :items items
                       :model-name model-name-str))))))
@@ -89,7 +93,9 @@
                                       :fields (reg:admin-fields config)
                                       :exclude (reg:admin-exclude config)
                                       :data data))
-         (title (format nil "Create ~A" (string-capitalize model-name))))
+         (title (i18n:translate "admin-create-title"
+                                :model (string-capitalize (string model-name))
+                                :default (format nil "Create ~A" (string-capitalize (string model-name))))))
     (render-page title
                  (forms:render-form form
                                     :style :admin
@@ -101,7 +107,9 @@
   (let* ((model-name (models:get-model-name model-name-str))
          (config (reg:get-admin model-name))
          (data (mw:parse-body-params))
-         (title (format nil "Create ~A" (string-capitalize model-name-str))))
+         (title (i18n:translate "admin-create-title"
+                                :model (string-capitalize model-name-str)
+                                :default (format nil "Create ~A" (string-capitalize model-name-str)))))
     (let ((form (forms:make-model-form model-name
                                        :fields (reg:admin-fields config)
                                        :exclude (reg:admin-exclude config)
@@ -129,8 +137,12 @@
                                       :exclude (reg:admin-exclude config)
                                       :instance instance
                                       :data data))
-         (title (format nil "Edit ~A #~A"
-                        (string-capitalize (symbol-name model-name)) id)))
+         (title (i18n:translate "admin-edit-title"
+                                :model (string-capitalize (symbol-name model-name))
+                                :id id
+                                :default (format nil "Edit ~A #~A"
+                                                 (string-capitalize (symbol-name model-name))
+                                                 id))))
     (render-page title
                  (forms:render-form form
                                     :style :admin
@@ -151,8 +163,12 @@
                                       :exclude (reg:admin-exclude config)
                                       :instance instance
                                       :data data))
-         (title (format nil "Edit ~A #~A"
-                        (string-capitalize (symbol-name model-name)) id)))
+         (title (i18n:translate "admin-edit-title"
+                                :model (string-capitalize (symbol-name model-name))
+                                :id id
+                                :default (format nil "Edit ~A #~A"
+                                                 (string-capitalize (symbol-name model-name))
+                                                 id))))
     (if (forms:validate-form form)
         (progn
           (forms:save-form form)

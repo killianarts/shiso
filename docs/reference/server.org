@@ -23,7 +23,8 @@ the application parameter (the thing =define-application= produced).
 
 ** Side effects
 
-- Installs the session + CSRF middleware stack (see =wrap-app=).
+- Installs the session + locale + CSRF middleware stack (see =wrap-app=).
+- Calls =shiso:ensure-localisations= so catalogs are loaded.
 - Calls =clack:clackup= with =:server :woo=.
 - Stores the connection handle in =*server-connection*=.
 
@@ -69,15 +70,20 @@ Wrap =INNER-APP= with Shiso's standard middleware stack:
 
 #+begin_example
 session middleware (DBI-backed via Mito's connection)
-  └─ CSRF middleware
-       └─ INNER-APP
+  └─ locale middleware (cookie / Accept-Language → *locale*)
+       └─ CSRF middleware
+            └─ INNER-APP
 #+end_example
 
 The session middleware must precede CSRF so the CSRF layer can
-read the session from the env. Both are invoked through
-=lack/middleware/session:*lack-middleware-session*= and
-=lack/middleware/csrf:*lack-middleware-csrf*= — the standard Lack
-parameters, exposed for monkey-patching.
+read the session from the env. Locale sits between them so a
+future session-stored locale could be read without reordering;
+v1 uses the =shiso_language= cookie. Session and CSRF are invoked
+through Lack's =*lack-middleware-session*= /
+=*lack-middleware-csrf*=. Locale is =shiso/i18n:wrap-locale=.
+
+See [[file:i18n.org][i18n]] for negotiation order and the
+=shiso-i18n= module.
 
 The session store is built by =shiso/auth/session:make-store= and
 shares Mito's current DBI connection. That means =mito:connect-toplevel=

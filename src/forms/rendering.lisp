@@ -3,6 +3,7 @@
   (:local-nicknames (#:fields #:shiso/forms/fields)
                     (#:form #:shiso/forms/form)
                     (#:context #:shiso/forms/context)
+                    (#:i18n #:shiso/i18n)
                     (#:ah #:almighty-html))
   (:export
    #:render-field
@@ -32,9 +33,31 @@
                          errors)))
       (ah:</> (ul :class "field-errors" items)))))
 
+(defun localized-label (field)
+  "Translate FIELD's label using a label-id, a Fluent-shaped label, or
+the raw string as :default."
+  (let ((label (fields:field-label field))
+        (id (fields:field-label-id field)))
+    (cond
+      (id (i18n:translate id :default (or label id)))
+      ((i18n:fluent-id-p label) (i18n:translate label :default label))
+      (t label))))
+
+(defun localized-help (field)
+  (let ((text (fields:field-help-text field))
+        (id (fields:field-help-id field)))
+    (cond
+      ((null text) nil)
+      (id (i18n:translate id :default text))
+      ((i18n:fluent-id-p text) (i18n:translate text :default text))
+      (t text))))
+
+(defun localized-choice-label (display)
+  (i18n:translate display :default display))
+
 (defun render-help-text (field)
   "Render field help text if present."
-  (let ((text (fields:field-help-text field)))
+  (let ((text (localized-help field)))
     (when text
       (ah:</> (p :class "help-text" text)))))
 
@@ -75,7 +98,7 @@
   (let ((option-elements
           (mapcar (lambda (choice)
                     (let* ((val (string-downcase (symbol-name (car choice))))
-                           (display (cdr choice))
+                           (display (localized-choice-label (cdr choice)))
                            (selectedp (and value
                                            (string-equal
                                             val
@@ -133,13 +156,13 @@ admin pages."))
       (:hidden control)
       ;; Checkboxes wrap the control inside the label, after it.
       (:checkbox
-       (let ((labelled (ah:</> (label control (fields:field-label field)))))
+       (let ((labelled (ah:</> (label control (localized-label field)))))
          (ah:</> (div :class css-class :id row-id
                    labelled
                    help
                    errs))))
       (t
-       (let ((label-el (ah:</> (label :for name-str (fields:field-label field)))))
+       (let ((label-el (ah:</> (label :for name-str (localized-label field)))))
          (ah:</> (div :class css-class :id row-id
                    label-el
                    control
@@ -181,4 +204,6 @@ the Lack CSRF middleware accepts the submission."
      (form :action action :method method
        csrf-input
        field-elements
-       (ah:</> (button :type "submit" submit-label))))))
+       (ah:</> (button :type "submit"
+                       (i18n:translate submit-label
+                                       :default submit-label)))))))

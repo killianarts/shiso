@@ -13,27 +13,31 @@ Woo (HTTP I/O)
   │
   └─ session middleware                (installed by shiso/server:wrap-app)
        │
-       └─ CSRF middleware              (installed by shiso/server:wrap-app)
+       └─ locale middleware            (cookie / Accept-Language → *locale*)
             │
-            └─ static-files mw         (installed by shiso/define-application)
+            └─ CSRF middleware         (installed by shiso/server:wrap-app)
                  │
-                 └─ trailing-slash mw  (installed by shiso/define-application)
+                 └─ static-files mw    (installed by shiso/define-application)
                       │
-                      └─ mount #1: /admin → shiso-admin
-                      └─ mount #2:   ""   → shiso-auth
-                      └─ mount #3:   ""   → pages
-                      └─ final 404 fallback
+                      └─ trailing-slash mw (installed by shiso/define-application)
+                           │
+                           └─ mount #1: /admin → shiso-admin
+                           └─ mount #2:   ""   → shiso-auth
+                           └─ mount #3:   ""   → pages
+                           └─ final 404 fallback
 #+end_example
 
 The two halves (=wrap-app= vs =define-application=) compose at
 =start= time: =start= passes the application's Lack value through
-=wrap-app=, which installs the security middlewares on top.
+=wrap-app=, which installs the session, locale, and CSRF
+middlewares on top.
 
 That layering matters. The session middleware runs first because
-the CSRF middleware needs to find the session in env. The static-
-file middleware runs before the module mounts because static
-assets are higher-traffic than routes and shouldn't pay the cost of
-walking the module list.
+the CSRF middleware needs to find the session in env. Locale sits
+between them so =*locale*= is bound before any controller (or
+validator) runs. The static-file middleware runs before the module
+mounts because static assets are higher-traffic than routes and
+shouldn't pay the cost of walking the module list.
 
 * A request, step by step
 
@@ -56,36 +60,41 @@ Imagine =GET /polls/3=:
    - =:lack.session= → a hash table (the session state).
    - =:lack.session.options= → a plist for change-id / expire flags.
 
-3. *CSRF middleware*: =GET= is a safe method; it just lets the
+3. *Locale middleware*: reads the =shiso_language= cookie, else
+   =Accept-Language=, else =*default-locale*=, and binds
+   =shiso:*locale*= for the rest of the request. Catalogs are
+   loaded on first use if =start= hasn't already.
+
+4. *CSRF middleware*: =GET= is a safe method; it just lets the
    request pass.
 
-4. *Static-files middleware*: the path doesn't start with =/static/=;
+5. *Static-files middleware*: the path doesn't start with =/static/=;
    pass.
 
-5. *Trailing-slash middleware*: =/polls/3= doesn't end with =/=;
+6. *Trailing-slash middleware*: =/polls/3= doesn't end with =/=;
    pass. (If the path were =/polls/3/=, this layer would 301 to
    =/polls/3= — including any query string — and never reach mounts.)
 
-6. *Module mount #1* (=/admin=): prefix doesn't match; pass.
+7. *Module mount #1* (=/admin=): prefix doesn't match; pass.
 
-7. *Module mount #2* (=""=): prefix matches (it always does). Sets
+8. *Module mount #2* (=""=): prefix matches (it always does). Sets
    the =shiso-auth= module's =module-prefix= to =""= and dispatches:
 
    #+begin_src lisp
    (lack/component:call (get-module :shiso-auth) env)
    #+end_src
 
-8. The =shiso-auth= module's mapper has only =/login=, =/logout=,
+9. The =shiso-auth= module's mapper has only =/login=, =/logout=,
    =/signup=. =/polls/3= doesn't match. The module returns a 404
    /with =handledp= = =NIL=/. The mount sees =handledp= = =NIL=,
    restores the original =path-info= / =script-name=, and falls through.
 
-9. *Module mount #3* (=/polls=): prefix matches. The middleware moves
-   =/polls= into =:script-name= and leaves =:path-info= as =/3=, then
-   dispatches to the =polls= module. Guards that need the original URL
-   (login =?next==) recombine =script-name= + =path-info=.
+10. *Module mount #3* (=/polls=): prefix matches. The middleware moves
+    =/polls= into =:script-name= and leaves =:path-info= as =/3=, then
+    dispatches to the =polls= module. Guards that need the original URL
+    (login =?next==) recombine =script-name= + =path-info=.
 
-10. The polls module's =lack/component:call=:
+11. The polls module's =lack/component:call=:
     - Binds =shiso:*request*= to =(lack/request:make-request env)=.
     - Runs the guard (none here, so =:allow=).
     - Calls =myway:dispatch= on its mapper with path =/3=. The
@@ -94,21 +103,21 @@ Imagine =GET /polls/3=:
     - The endpoint's closure calls =(funcall controller params)=
       which becomes =(controllers:detail "3")=.
 
-11. The controller runs, builds an =almighty-html= tree, renders it
+12. The controller runs, builds an =almighty-html= tree, renders it
     to a string via =render-to-string=, and returns
     =(200 (:content-type "text/html; charset=utf-8") ("<!DOCTYPE …"))=.
 
-12. The dispatcher passes the response back up. =res:finalize-response=
+13. The dispatcher passes the response back up. =res:finalize-response=
     is called on the inner =(STATUS HEADERS BODY)= shape (turning it
     into a proper Lack response object).
 
-13. *On the way out*, CSRF middleware finalizes its work (mints a
+14. *On the way out*, CSRF middleware finalizes its work (mints a
     token if the response sets a session). Session middleware
     writes the (possibly modified) session back to
     =shiso_session=, sets the cookie, applies =:change-id= /
     =:expire= flags.
 
-14. *Woo* serialises the response and sends it.
+15. *Woo* serialises the response and sends it.
 
 * The =shiso:*request*= binding
 
@@ -118,6 +127,10 @@ in =shiso/requests:lack/component:call=. That means:
 - Reading =shiso:*request*= from anywhere in the call tree works.
 - Helpers like =shiso:current-path=, =shiso:parse-body-params=, and
   =shiso/auth:current-user= use this implicit binding.
+- =shiso:*locale*= is bound earlier, by the locale middleware, for
+  the whole request — including validators that run before HTML
+  render. Tests that skip the middleware should wrap
+  =shiso:with-locale=.
 - Threading the request through your call tree is unnecessary —
   Lisp's special variables do it for you.
 

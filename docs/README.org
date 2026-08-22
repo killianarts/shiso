@@ -2,8 +2,8 @@
 #+OPTIONS: toc:2 num:nil
 
 Shiso is a Django-shaped web framework for Common Lisp: modular apps,
-ORM-backed models, an auto-generated admin, session+CSRF auth, and a
-scaffolder that stamps both.
+ORM-backed models, an auto-generated admin, session+CSRF auth,
+Fluent-based translations, and a scaffolder that stamps both.
 
 This documentation follows the [[https://diataxis.fr/][Diátaxis]] model. It splits into four
 quadrants — pick the one that matches what you're trying to do right
@@ -25,6 +25,8 @@ Read these in order; later parts assume earlier setup.
   covering a single CRUD resource end-to-end.
 - [[file:tutorial/06-authentication.org][6. Adding authentication]] — wiring =shiso-auth= into an app, login
   / signup, and guarding modules behind =:require :login=.
+- [[file:tutorial/07-translations.org][7. Adding translations]] — Fluent catalogs, request locale, and a
+  language switcher.
 
 * How-to guides — /task-oriented/
 
@@ -36,6 +38,7 @@ Goal-driven recipes. Skim by title until one matches your problem.
 - [[file:how-to/mount-a-module-under-a-prefix.org][Mount a module under a URL prefix]]
 - [[file:how-to/serve-static-files.org][Serve static files]]
 - [[file:how-to/set-up-authentication.org][Set up authentication in a new project]]
+- [[file:how-to/add-translations.org][Add translations]]
 - [[file:how-to/customize-the-scaffolder-templates.org][Customize the scaffolder templates]]
 - [[file:how-to/run-from-a-repl.org][Run a Shiso app from a REPL]]
 - [[file:how-to/deploy.org][Deploy a Shiso app]]
@@ -53,6 +56,7 @@ parameter shapes, return values, and one-line examples.
 - [[file:reference/forms.org][forms]] — fields, validation, =make-model-form=, rendering
 - [[file:reference/admin.org][admin]] — =define-admin=, customisation options
 - [[file:reference/auth.org][auth]] — users, sessions, guards, login/logout/signup
+- [[file:reference/i18n.org][i18n]] — =translate=, catalogs, locale middleware
 - [[file:reference/validators.org][validators]] — built-in validators and the resolver protocol
 - [[file:reference/cli.org][cli]] — the =shiso= scaffolder binary
 
@@ -67,6 +71,7 @@ mental model, not a step-by-step.
 - [[file:explanation/model-metadata.org][Model metadata and the registry]]
 - [[file:explanation/admin-design.org][How the admin is built]]
 - [[file:explanation/auth-architecture.org][The authentication architecture]]
+- [[file:explanation/i18n.org][How translations work]]
 
 * Working examples
 

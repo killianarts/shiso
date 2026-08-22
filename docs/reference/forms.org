@@ -23,8 +23,10 @@ All inherit from =form-field=.
 ** Common initargs
 
 | =:name=       | symbol — used as the form field name             |
-| =:label=      | string                                           |
+| =:label=      | string — English fallback; translated at render  |
+| =:label-id=   | optional Fluent id; model forms set this         |
 | =:help-text=  | string or =NIL=                                  |
+| =:help-id=    | optional Fluent id for help text                 |
 | =:requiredp=  | =T= (default) — empty values are rejected        |
 | =:validators= | list of validator designators                    |
 | =:initial=    | initial value, shown when no submitted data      |
@@ -38,9 +40,13 @@ All inherit from =form-field=.
 ** Accessors
 
 For each initarg there's a same-named reader: =field-name=,
-=field-label=, =field-help-text=, =field-requiredp=,
-=field-validators=, =field-initial=, =field-widget=,
-=field-max-length=, =field-choices=.
+=field-label=, =field-label-id=, =field-help-text=, =field-help-id=,
+=field-requiredp=, =field-validators=, =field-initial=,
+=field-widget=, =field-max-length=, =field-choices=.
+
+=make-model-form= sets =:label-id= to =(message-id MODEL FIELD)=
+and =:help-id= when help text is present. =render-field= translates
+those ids at render time; see [[file:i18n.org][i18n]].
 
 * =parse-field-value=  /generic function/
 

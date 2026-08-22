@@ -5,7 +5,9 @@
    #:form-field
    #:field-name
    #:field-label
+   #:field-label-id
    #:field-help-text
+   #:field-help-id
    #:field-requiredp
    #:field-validators
    #:field-initial
@@ -32,7 +34,9 @@
 (defclass form-field ()
   ((name       :initarg :name       :reader field-name)
    (label      :initarg :label      :reader field-label)
+   (label-id   :initarg :label-id   :reader field-label-id   :initform nil)
    (help-text  :initarg :help-text  :reader field-help-text  :initform nil)
+   (help-id    :initarg :help-id    :reader field-help-id    :initform nil)
    (requiredp  :initarg :requiredp  :reader field-requiredp  :initform t)
    (validators :initarg :validators :reader field-validators  :initform nil)
    (initial    :initarg :initial    :reader field-initial     :initform nil)

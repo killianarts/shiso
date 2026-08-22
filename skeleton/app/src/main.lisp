@@ -20,6 +20,8 @@
                           (port (config:port))
                           (debugp (config:debugp)))
   (setup-database)
+  (shiso:load-localisations
+   :root (asdf:system-relative-pathname :<% @var application-name %> "locale/"))
   (shiso:start routes:application :host host :port port :debugp debugp))
 
 (defun stop-server ()

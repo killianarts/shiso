@@ -490,27 +490,13 @@ Backends:
 
 ---
 
-## Phase 17: Internationalization
+## Phase 17: Internationalization — DONE
 
-### Goal
+Fluent wrap (`shiso/i18n`). See `docs/how-to/add-translations.org` and
+`docs/reference/i18n.org`.
 
-Support translated strings in templates and form labels.
-
-### Design
-
-Evaluate CL i18n libraries:
-- `cl-locale` — locale-based string lookup
-- `cl-i18n` — gettext-style translation
-
-Integration with forms: `field-verbose-name` and `field-help-text` become
-translation keys when i18n is enabled.
-
-### Dependencies
-- `cl-locale` or `cl-i18n` (evaluate and pick)
-
-### Files
-- `vendored/shiso/src/i18n.lisp` (new)
-- `vendored/shiso/org/src/i18n.org` (new)
+Parked for a later phase: locale-aware date *display* (`shiso:l`,
+CLDR patterns, Fluent `DATETIME`).
 
 ---
 
@@ -580,7 +566,7 @@ The admin module is copied (not referenced) into the project — users own it.
 | **MED** | 14 | File uploads | http-body (vendored) |
 | **LOW** | 15 | Email | cl-smtp (new dep) |
 | **LOW** | 16 | Caching | cl-redis (new dep, optional) |
-| **LOW** | 17 | Internationalization | cl-locale or cl-i18n (new dep) |
+| **DONE** | 17 | Internationalization | fluent wrap |
 | **LOW** | 18 | Project scaffolding | Phase 9 (admin to vendor) |
 
 Phases 5-10 form the core of a production-capable framework.
@@ -605,7 +591,7 @@ Phases 15-18 are nice-to-haves that round out Django parity.
 | clingon or adopt | 13 | CLI command framework |
 | cl-smtp | 15 | Email delivery |
 | cl-redis | 16 | Redis cache backend (optional) |
-| cl-locale or cl-i18n | 17 | Internationalization |
+| fluent, parcom, plurals, filepaths | 17 | Internationalization |
 
 ---
 
