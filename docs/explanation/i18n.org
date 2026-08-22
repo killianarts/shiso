@@ -1,0 +1,140 @@
+#+TITLE: How translations work
+#+OPTIONS: toc:2 num:nil
+
+Shiso does not invent a catalog format. It wraps
+[[https://projectfluent.org/][Project Fluent]] and owns the pieces a
+web framework actually has to get right: when a locale is chosen, when
+a string is looked up, and what happens when the catalog misses.
+
+This chapter is the /why/. For the recipe, see
+[[file:../how-to/add-translations.org][how to add translations]];
+for signatures, [[file:../reference/i18n.org][the i18n reference]].
+
+* Two jobs, two owners
+
+#+begin_example
+┌─────────────────────────────────────────────────────────┐
+│  Shiso                                                  │
+│    *locale*          request-scoped special             │
+│    wrap-locale       cookie / Accept-Language / default │
+│    translate         missing-key policy, named args     │
+│    load-localisations  merge locale trees               │
+│    shiso-i18n        POST /i18n/set-language            │
+├─────────────────────────────────────────────────────────┤
+│  fluent (vendored)                                      │
+│    .ftl parse        key + { $name } + plural select    │
+│    resolve-with      one locale, one message            │
+│    plurals           CLDR cardinal categories           │
+└─────────────────────────────────────────────────────────┘
+#+end_example
+
+Apps never call =fluent:resolve=. Woo is multithreaded; mutating the
+Fluent struct's locale slot would leak across requests. =translate=
+always passes the current =*locale*= into =resolve-with=.
+
+Datetime /display/ (CLDR patterns, translated month names) is a
+different product. =local-time= still owns instants, timezones, and
+HTML =date= / =datetime-local= values. A future =shiso:l= can format a
+timestamp and pass it into =translate= as =:when=. Fluent's
+=DATETIME= builtin is not implemented in the Lisp runtime we wrap.
+
+* The source string is not the key
+
+GNU gettext (and =cl-locale=) use the English sentence as the lookup
+key: =(_ "This field is required.")=. Fluent ids are identifiers:
+
+#+begin_example
+[a-zA-Z][a-zA-Z0-9_-]*
+#+end_example
+
+="This field is required."= cannot be an id. That is why framework
+code uses explicit ids (=validators-not-blank=) and ships English in
+=locale/en-US/*.ftl=, and why model fields use a /derived/ id rather
+than slugifying =:verbose-name=.
+
+** Derived field ids
+
+Model =question=, slot =question-text=, =:verbose-name "Question text"=:
+
+| Piece | Value |
+|-------+-------|
+| Derived id | =question-question-text= |
+| English fallback (Lisp) | ="Question text"= |
+| =locale/ja-JP/polls.ftl= | =question-question-text = 質問= |
+
+The id comes from the *model name and the slot name*. Renaming the
+verbose-name to ="The poll prompt"= does not change the id.
+Translators still target =question-question-text=. If the catalog has
+no entry, renderers show the Lisp verbose-name.
+
+Help text uses the same id with a =-help= suffix:
+=question-question-text-help=.
+
+That is the Lisp-shaped version of Django's lazy labels: store a
+stable msgid at =define-model= time, look it up when the form is
+/rendered/, when =*locale*= is bound.
+
+* When translation happens
+
+=define-model= and =make-login-form= store strings. They do not call
+=translate=. The call sites that /do/ are:
+
+- Form rendering (=field-label=, help text, choice labels, submit).
+- Validators, at validation time (the request locale is already bound).
+- Admin chrome and auth page titles.
+
+Calling =translate= in a =defparameter= or at macro-expansion of
+=define-model= freezes the string in whatever locale the image had at
+load. Don't.
+
+* Catalog merge
+
+Three trees, later wins on a clashing id:
+
+1. Shiso's own =locale/= (validators, auth, admin).
+2. Each registered module's sibling =locale/= (detected at
+   =define-module= the same way =static/= is).
+3. The application overlay passed to =load-localisations :root=.
+
+Several =.ftl= files in one locale directory are fused. An English-only
+app can omit every catalog except Shiso's; missing ids fall through to
+=:default= or the id itself and the page still renders.
+
+=load-localisations= is idempotent. Re-evaluate it at the REPL after
+editing a =.ftl= file; the next request sees the new strings.
+
+* Locale on the request
+
+=wrap-app= installs, after the session middleware:
+
+#+begin_example
+cookie shiso_language
+  → Accept-Language (q-values, then language parent)
+    → *default-locale*
+#+end_example
+
+Unknown tags are ignored. The cookie is written by
+=POST /i18n/set-language= on the =shiso-i18n= module (CSRF-protected,
+=next= must be a local path — same rule as login).
+
+=*locale*= is bound with =let=, not =setf=, for the dynamic extent of
+the request. Tests and CLI code use =with-locale=.
+
+* Missing keys never 500
+
+Order: current locale → =*fallback-locale*= → =:default= (if supplied)
+→ the id string. Fluent's own fallback-with-args path is not used; it
+mishandles extra arguments. Set
+=shiso/i18n:*warn-missing-translations*= to =T= in development if you
+want a warning.
+
+* What we deliberately skipped
+
+- URL prefixes (=/ja/login=) and translated path segments.
+- GNU gettext / =.po= / =makemessages=.
+- A function named =t= (that is =cl:t=).
+- Translating /user content/ (a blog post title). That is a database
+  problem, not a catalog problem.
+- Gender attributes on Fluent terms (the Lisp runtime does not
+  implement message attributes). Selectors on /arguments/
+  (={ $gender -> … }=) still work.

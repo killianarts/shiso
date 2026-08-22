@@ -1,0 +1,173 @@
+#+TITLE: 7. Adding translations
+#+OPTIONS: toc:2 num:nil
+
+This tutorial takes a running Shiso app and gives it a second
+language. If you just want the checklist, see
+[[file:../how-to/add-translations.org][how to add translations]].
+
+You should already have an application that starts (tutorial 1 is
+enough). Authentication is optional.
+
+* What you get
+
+- =(shiso:translate "some-id")= for UI copy.
+- Per-request locale from a cookie or the =Accept-Language= header.
+- A =POST /i18n/set-language= endpoint that persists the choice.
+- Model field labels that pick up translations from derived ids.
+
+Catalogs are [[https://projectfluent.org/][Fluent]] =.ftl= files, not gettext.
+
+* Step 1 — Load catalogs at start
+
+In =src/main.lisp=, before =shiso:start=:
+
+#+begin_src lisp
+(shiso:load-localisations
+  :root (asdf:system-relative-pathname :hello "locale/")
+  :default-locale :en-us
+  :fallback-locale :en-us)
+#+end_src
+
+Replace =:hello= with your ASDF system name. The scaffolder already
+emits this call. Re-running =load-localisations= at the REPL reloads
+every =.ftl= file.
+
+Env overrides, if you prefer not to hard-code the default:
+=SHISO_LOCALE=, =SHISO_FALLBACK_LOCALE=.
+
+* Step 2 — Mount the switcher
+
+In =src/routes.lisp=:
+
+#+begin_src lisp
+(s:define-application application ()
+  (:modules
+   ("/i18n" shiso-i18n)
+   (""      home)))
+#+end_src
+
+The module's only route is =POST /set-language=, so under this mount
+it lives at =/i18n/set-language=. CSRF applies like any other POST.
+
+* Step 3 — A string in Lisp, a line in Fluent
+
+Pick a controller that currently returns a hardcoded sentence. Change
+it to an id:
+
+#+begin_src lisp
+(defun home ()
+  (s:http-response
+   (s:translate "home-hello" :default "Hello from hello!")))
+#+end_src
+
+=:default= is what English-only visitors see if the catalog has no
+entry. Add the English line anyway, so translators have a file to
+copy:
+
+#+begin_example
+# locale/en-US/app.ftl
+home-hello = Hello from hello!
+#+end_example
+
+Then Japanese:
+
+#+begin_example
+# locale/ja-JP/app.ftl
+home-hello = こんにちは、hello！
+#+end_example
+
+Reload catalogs (restart, or re-evaluate =load-localisations=). Visit
+the page with =Accept-Language: ja-JP= (or set the cookie in the next
+step). You should see the Japanese sentence.
+
+Fluent ids are identifiers, not English sentences:
+=[a-zA-Z][a-zA-Z0-9_-]*=. Placeholders are named:
+
+#+begin_src lisp
+(s:translate "home-welcome" :name "Micah")
+#+end_src
+
+#+begin_example
+home-welcome = Welcome, { $name }.
+#+end_example
+
+Plurals live in the catalog, not in Lisp:
+
+#+begin_example
+item-count = { $count ->
+    [one]    { $count } item
+   *[other]  { $count } items
+}
+#+end_example
+
+#+begin_src lisp
+(s:translate "item-count" :count n)
+#+end_src
+
+Japanese can ignore the plural categories; Polish can add =[few]=.
+The Lisp call does not change.
+
+* Step 4 — A language switcher
+
+The switcher is a POST form. CSRF is required. Drop this into a
+layout component (the =_csrf_token= hidden field is what
+=shiso:csrf-token-value= returns; =render-form= adds it automatically,
+but a hand-written form must include it):
+
+#+begin_src lisp
+(defun language-switcher ()
+  (let ((action (s:url "shiso-i18n:set-language"))
+        (token (s:csrf-token-value))
+        (here (s:current-path)))
+    (ah:</>
+     (form :action action :method "POST"
+       (when token
+         (ah:</> (input :type "hidden" :name "_csrf_token" :value token)))
+       (ah:</> (input :type "hidden" :name "next" :value here))
+       (ah:</> (select :name "language"
+                 (ah:</> (option :value "en-US" "English"))
+                 (ah:</> (option :value "ja-JP" "日本語"))))
+       (ah:</> (button :type "submit"
+                 (s:translate "language-submit" :default "Go")))))))
+#+end_src
+
+=next= must be a local path (=/…=). Off-site URLs are ignored, same as
+login's =next=.
+
+* Step 5 — Model field labels
+
+You do not invent a Fluent id for every slot. Shiso derives one from
+the model name and the slot name. =:verbose-name= stays English and
+is the fallback.
+
+#+begin_src lisp
+(shiso:define-model question
+    ((question-text :field-type :char :max-length 200
+                    :verbose-name "Question text"
+                    :help-text "What goes in the heading.")))
+#+end_src
+
+#+begin_example
+# locale/ja-JP/polls.ftl
+question-question-text = 質問
+question-question-text-help = 見出しに出す文
+#+end_example
+
+The admin column header and the model-form label both use that id.
+No change to =define-model= syntax.
+
+* What not to do
+
+- Do not call =translate= inside =define-model= or a =defparameter=.
+  The locale is not known yet. Store the id; look it up at render.
+- Do not =(setf shiso:*locale* :ja-jp)= on a running Woo server.
+  Bind it with =with-locale= or let the middleware do it.
+- Do not expect HTML =<input type=date>= values to become
+  =21/08/2026=. Widget values stay ISO. Display formatting is a
+  later =shiso:l=, not this tutorial.
+
+* Next
+
+- [[file:../how-to/add-translations.org][How-to: add translations]] — module catalogs, tests, REPL reload.
+- [[file:../reference/i18n.org][Reference: i18n]] — every exported symbol.
+- [[file:../explanation/i18n.org][How translations work]] — why Fluent, why derived ids, why no =t=.

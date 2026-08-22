@@ -1,0 +1,178 @@
+#+TITLE: How to add translations
+#+OPTIONS: toc:2 num:nil
+
+Task-oriented recipe for turning a Shiso app into a multilingual one.
+Shiso wraps [[https://projectfluent.org/][Project Fluent]]; catalogs are =.ftl= files, not gettext.
+
+Walkthrough: [[file:../tutorial/07-translations.org][tutorial 7]].
+Why: [[file:../explanation/i18n.org][how translations work]].
+Signatures: [[file:../reference/i18n.org][i18n reference]].
+
+* Goal
+
+- UI strings resolve through =(shiso:translate "some-id")=.
+- Locale is chosen per request (cookie, then =Accept-Language=, then default).
+- Model field labels pick up translations from derived ids without renaming slots.
+
+* 1 — Load catalogs at start
+
+In =main.lisp=, before =shiso:start=:
+
+#+begin_src lisp
+(shiso:load-localisations
+  :root (asdf:system-relative-pathname :myapp "locale/")
+  :default-locale :en-us
+  :fallback-locale :en-us)
+#+end_src
+
+Merge order (later wins on clashing ids): Shiso's own =locale/=, each
+module's =locale/=, then =:root=.
+
+Env overrides: =SHISO_LOCALE=, =SHISO_FALLBACK_LOCALE=.
+
+After editing a =.ftl= at the REPL, re-evaluate =load-localisations=
+with the same arguments. The next request sees the new strings.
+
+* 2 — Mount the language switcher
+
+#+begin_src lisp
+(shiso:define-application my-app ()
+  (:modules
+    ("/i18n"  shiso-i18n)   ; POST /i18n/set-language
+    (""       shiso-auth)
+    ("/admin" shiso-admin)
+    (""       pages)))
+#+end_src
+
+POST =language= (e.g. =ja-JP=) and optional =next= (must be a local
+path). Sets the =shiso_language= cookie. CSRF applies like any other
+POST.
+
+A hand-written switcher (hidden CSRF token required):
+
+#+begin_src lisp
+(defun language-switcher ()
+  (let ((action (shiso:url "shiso-i18n:set-language"))
+        (token (shiso:csrf-token-value))
+        (here (shiso:current-path)))
+    (ah:</>
+     (form :action action :method "POST"
+       (when token
+         (ah:</> (input :type "hidden" :name "_csrf_token" :value token)))
+       (ah:</> (input :type "hidden" :name "next" :value here))
+       (ah:</> (select :name "language"
+                 (ah:</> (option :value "en-US" "English"))
+                 (ah:</> (option :value "ja-JP" "日本語"))))
+       (ah:</> (button :type "submit" "Go"))))))
+#+end_src
+
+* 3 — Write =.ftl= files
+
+Application overlay:
+
+#+begin_example
+locale/
+├── en-US/
+│   └── app.ftl
+└── ja-JP/
+    └── app.ftl
+#+end_example
+
+Module catalogs live next to =routes.lisp=, same as =static/=:
+
+#+begin_example
+src/modules/polls/
+├── routes.lisp
+├── locale/
+│   ├── en-US/polls.ftl
+│   └── ja-JP/polls.ftl
+└── static/
+#+end_example
+
+=define-module= records =locale/= at compile time. Create the
+directory before you compile the module, or recompile after adding it.
+
+Fluent ids are identifiers, not English sentences:
+=[a-zA-Z][a-zA-Z0-9_-]*=.
+
+#+begin_example
+home-welcome = ようこそ、{ $name } さん
+items = { $count ->
+    [one]    { $count } 件
+   *[other]  { $count } 件
+}
+#+end_example
+
+In Lisp:
+
+#+begin_src lisp
+(shiso:translate "home-welcome" :name "Micah")
+(shiso:translate "items" :count n)
+#+end_src
+
+Missing keys never 500: fallback locale, then =:default=, then the id.
+
+To see misses while developing:
+
+#+begin_src lisp
+(setf shiso/i18n:*warn-missing-translations* t)
+#+end_src
+
+* 4 — Model field labels
+
+The lookup key is derived from the *model name + slot name*, not from
+the =:verbose-name= string. =:verbose-name= is the English *fallback
+label* (what you already write for forms/admin). The catalog value for
+that id is the translation of that label.
+
+Example: model =question=, slot =question-text=,
+=:verbose-name "Question text"=.
+
+| Piece | Value |
+|-------+-------|
+| Derived id | =question-question-text= |
+| English fallback (Lisp) | ="Question text"= |
+| =locale/ja-JP/polls.ftl= | =question-question-text = 質問= |
+
+Help text uses =question-question-text-help= the same way. Renaming
+=:verbose-name= to ="The poll prompt"= does *not* change the id;
+translators still target =question-question-text=. If the catalog has
+no entry, render the Lisp verbose-name (or a humanized slot name if
+verbose-name is nil).
+
+Ad-hoc form fields can pass =:label-id "auth-email"= (auth already
+does). Otherwise a label that looks like a Fluent id is used as the
+id; a label with spaces is shown as-is unless a derived id exists.
+
+* 5 — Request locale in code and tests
+
+#+begin_src lisp
+(shiso:with-locale :ja-jp
+  (shiso:translate "home-welcome" :name "Micah"))
+#+end_src
+
+Do not call =translate= in a =defparameter= or inside =define-model=.
+Store the id (or English fallback); translate at render / validation
+time, when =*locale*= is bound.
+
+Do not =(setf shiso:*locale* :ja-jp)= on a running Woo server.
+
+#+begin_src lisp
+(define-test japanese-required-message ()
+  (shiso:with-locale :ja-jp
+    (assert-equal "このフィールドは必須です。"
+                  (shiso/validators:not-blank nil))))
+#+end_src
+
+That test only passes if a =ja-JP= catalog actually defines
+=validators-not-blank=. Without it, =:default= English is returned.
+
+* Out of scope here
+
+Date *display* formatting (CLDR patterns, translated month names) is
+not Fluent's job in this wrap. Keep =local-time= for instants and HTML
+=datetime-local= values. A future =shiso:l= can format a timestamp and
+pass it into =translate= as =:when=.
+
+URL prefixes (=/ja/login=) and translating user-generated content
+(blog post titles) are also out of scope.

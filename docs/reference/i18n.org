@@ -1,0 +1,292 @@
+#+TITLE: Reference: i18n
+#+OPTIONS: toc:2 num:nil
+
+Package: =shiso/i18n= (re-exported from =shiso=). Catalog engine:
+vendored [[https://projectfluent.org/][fluent]] (Mozilla Project Fluent).
+
+Recipe: [[file:../how-to/add-translations.org][how to add translations]].
+Why: [[file:../explanation/i18n.org][how translations work]].
+
+* Lookup
+
+** =translate=  /function/
+
+#+begin_src lisp
+(shiso:translate ID &rest ARGS) => string
+#+end_src
+
+=ID= is a string or a symbol (downcased). Keyword arguments other
+than =:default= are Fluent placeholders (={ $name }=, ={ $count }=,
+…).
+
+Lookup order:
+
+1. =*locale*=
+2. =*fallback-locale*= (skipped if it equals the current locale)
+3. =:default=, if that keyword was supplied
+4. The id string itself
+
+Never signals for a missing message or unknown locale. Fluent's own
+fallback-with-args path is not used.
+
+#+begin_src lisp
+(shiso:translate "home-welcome" :name "Micah")
+(shiso:translate "validators-max-length" :n 200
+                 :default "Must be 200 characters or fewer.")
+#+end_src
+
+** =message-id=  /function/
+
+#+begin_src lisp
+(shiso:message-id MODEL FIELD &optional SUFFIX) => string
+#+end_src
+
+Derived Fluent id for a model field. =MODEL= and =FIELD= are symbols
+or strings.
+
+#+begin_src lisp
+(shiso:message-id 'question 'question-text)
+;; => "question-question-text"
+
+(shiso:message-id 'question 'question-text "help")
+;; => "question-question-text-help"
+#+end_src
+
+Form rendering uses this for =:verbose-name= / =:help-text= unless
+the field already has an explicit =:label-id= / =:help-id=.
+
+** =fluent-id-p=  /function/
+
+#+begin_src lisp
+(shiso/i18n:fluent-id-p STRING) => boolean
+#+end_src
+
+True if =STRING= matches =[A-Za-z][A-Za-z0-9_-]*=. Labels that fail
+this test are treated as English fallbacks, not catalog keys.
+
+* Locale binding
+
+** =*locale*=  /special/
+
+The locale in effect for this request (or =with-locale=). Keyword,
+e.g. =:en-us=, =:ja-jp=. Default =:en-us=. Bind it; do not =setf= it
+on a running Woo worker.
+
+** =*default-locale*=, =*fallback-locale*=  /parameters/
+
+Defaults for negotiation and missing-key fallback. Set by
+=load-localisations=, or by =SHISO_LOCALE= / =SHISO_FALLBACK_LOCALE=
+if those env vars are present.
+
+** =with-locale=  /macro/
+
+#+begin_src lisp
+(shiso:with-locale LOCALE &body BODY)
+#+end_src
+
+Bind =*locale*= for the dynamic extent of =BODY=. =LOCALE= may be a
+keyword or a string (="ja-JP"=, ="ja_jp"=).
+
+** =current-locale=  /function/
+
+#+begin_src lisp
+(shiso:current-locale) => keyword
+#+end_src
+
+** =canonicalize-locale=  /function/
+
+#+begin_src lisp
+(shiso/i18n:canonicalize-locale LOCALE) => keyword
+#+end_src
+
+="en-US"=, ="en_us"=, =:en-us= all become =:en-us=.
+
+** =locale-lang=  /function/
+
+#+begin_src lisp
+(shiso/i18n:locale-lang :ja-jp) => :ja
+#+end_src
+
+** =locale-html-lang=  /function/
+
+#+begin_src lisp
+(shiso:locale-html-lang :ja-jp) => "ja"
+#+end_src
+
+For the HTML =lang= attribute. Admin and auth pages already call this.
+
+* Catalogs
+
+** =load-localisations=  /function/
+
+#+begin_src lisp
+(shiso:load-localisations &key root default-locale fallback-locale)
+  => fluent-context
+#+end_src
+
+Read every =.ftl= tree into the process-wide context. Idempotent —
+safe at the REPL after editing files.
+
+=ROOT= is an optional overlay: a pathname, or a list of pathnames.
+
+Merge order, later wins on clashing ids:
+
+1. Shiso's own =locale/= (=asdf:system-relative-pathname :shiso "locale/"=).
+2. Each registered module's =locale/= (sibling of the file that
+   called =define-module=, same detection as =static/=).
+3. =ROOT=.
+
+Call this from the app's =start= / =main= /before/ =shiso:start=. If
+you skip it, the first =translate= or the locale middleware calls
+=ensure-localisations=, which loads Shiso + module trees but not an
+application overlay.
+
+** =ensure-localisations=  /function/
+
+#+begin_src lisp
+(shiso:ensure-localisations) => fluent-context
+#+end_src
+
+Load if =*fluent*= is still =NIL=. =start= and the locale middleware
+call this.
+
+** =available-locales=  /function/
+
+#+begin_src lisp
+(shiso:available-locales) => list-of-keywords
+#+end_src
+
+Locales present in the loaded catalog, plus =*default-locale*=.
+
+* HTTP
+
+** Locale middleware
+
+Installed by =wrap-app= after the session middleware, before CSRF:
+
+#+begin_example
+cookie shiso_language
+  → Accept-Language (q-values; then language parent :ja-jp → :ja)
+    → *default-locale*
+#+end_example
+
+Unknown tags are ignored. Cookie name:
+=shiso/i18n:*language-cookie-name*= (default ="shiso_language"=).
+
+** =shiso-i18n= module
+
+| Method | Path (on the module) | Name | Purpose |
+|--------+----------------------+------+---------|
+| =POST= | =/set-language= | =shiso-i18n:set-language= | persist language, redirect |
+
+Mount at =/i18n=:
+
+#+begin_src lisp
+(shiso:define-application my-app ()
+  (:modules
+    ("/i18n" shiso-i18n)
+    …))
+#+end_src
+
+Body parameters: =language= (required), =next= (optional local path).
+Sets =Set-Cookie: shiso_language=…; Path=/; Max-Age=31536000; SameSite=Lax=.
+Invalid or unavailable languages fall back to the current locale.
+CSRF applies.
+
+Reverse the action with =(shiso:url "shiso-i18n:set-language")=.
+
+** =best-locale=  /function/
+
+#+begin_src lisp
+(shiso/i18n:best-locale ENV &optional AVAILABLE) => keyword
+#+end_src
+
+The negotiation function the middleware uses. =ENV= is a Clack env
+plist. Tests can pass =(:headers <hash-table>)=.
+
+** =parse-accept-language=  /function/
+
+#+begin_src lisp
+(shiso/i18n:parse-accept-language HEADER) => list-of-(locale . q)
+#+end_src
+
+Sorted by =q= descending. =HEADER= may be =NIL=.
+
+* Layout on disk
+
+#+begin_example
+shiso/locale/en-US/validators.ftl
+shiso/locale/en-US/auth.ftl
+shiso/locale/en-US/admin.ftl
+<module>/locale/<locale>/*.ftl     ; next to routes.lisp
+<app>/locale/<locale>/*.ftl        ; load-localisations :root
+#+end_example
+
+Directory names are locales (=en-US=, =ja-JP=). Case is folded to a
+keyword (=:en-us=). Several =.ftl= files in one directory are fused.
+
+Fluent syntax (subset we rely on):
+
+#+begin_example
+plain-id = Just a sentence.
+hello = Hello, { $name }.
+items = { $count ->
+    [one]    { $count } item
+   *[other]  { $count } items
+}
+#+end_example
+
+See the [[https://projectfluent.org/fluent/guide/][Fluent syntax guide]]
+for terms, comments, and selectors. Message /attributes/ (e.g.
+=-brand-name.gender=) are not implemented in the Lisp runtime.
+=DATETIME= is not implemented; format timestamps in Lisp.
+
+* Framework catalog ids
+
+Shiso ships English for these. Override per locale in an app or
+module overlay.
+
+** validators
+
+| Id | Placeholders |
+|----+--------------|
+| =validators-not-blank= | |
+| =validators-max-length= | =$n= |
+| =validators-min-length= | =$n= |
+| =validators-min-value= | =$n= |
+| =validators-max-value= | =$n= |
+| =validators-matches-pattern= | |
+| =validators-valid-email= | |
+| =validators-one-of= | =$choices= (already joined) |
+
+** auth
+
+| Id | Notes |
+|----+-------|
+| =auth-email=, =auth-password=, =auth-password-confirm= | field labels |
+| =auth-invalid-credentials= | login =clean= error |
+| =auth-passwords-mismatch=, =auth-email-taken= | signup =clean= errors |
+| =auth-sign-in=, =auth-create-account= | page title / submit |
+
+** admin
+
+| Id | Placeholders |
+|----+--------------|
+| =admin-nav-title=, =admin-dashboard=, =admin-add-new= | |
+| =admin-edit=, =admin-actions=, =admin-save=, =admin-delete= | |
+| =admin-page-title= | =$title= |
+| =admin-list-title=, =admin-create-title= | =$model= |
+| =admin-edit-title= | =$model=, =$id= |
+
+* Development knobs
+
+| =shiso/i18n:*warn-missing-translations*= | =NIL= by default. =T= to =warn= after fallback misses. |
+| =shiso/i18n:*language-cookie-name*= | ="shiso_language"= |
+
+* What this is not
+
+- Not gettext / =.po= / =makemessages=.
+- Not content translation (rows in the database).
+- Not locale-aware date /display/ (use =local-time=; a future =l=).
+- Not URL prefixes (=/ja/login=).
+- Not a function named =t= (that is =cl:t=).

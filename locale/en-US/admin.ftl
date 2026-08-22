@@ -1,0 +1,11 @@
+admin-nav-title = Admin
+admin-dashboard = Dashboard
+admin-add-new = Add New
+admin-edit = REBUILD
+admin-actions = Actions
+admin-save = Save
+admin-delete = Delete
+admin-page-title = { $title } — Admin
+admin-list-title = { $model } List
+admin-create-title = Create { $model }
+admin-edit-title = Edit { $model } #{ $id }
