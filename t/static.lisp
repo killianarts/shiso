@@ -33,7 +33,7 @@
              shiso/static::*static-manifest-path* nil
              shiso/static::*cached-static-warned* (make-hash-table :test #'equal))
        (clrhash shiso:*module-registry*)
-       (unwind-protect (progn ,@body)
+       (unwind-protect (let ((shiso/static:*project-static-root* nil)) ,@body)
          (setf shiso/static::*static-manifest* ,saved-manifest
                shiso/static::*static-manifest-path* ,saved-path
                shiso/static::*cached-static-warned* ,saved-warned
@@ -199,6 +199,16 @@
               (let ((mtime2 (parse-integer
                              (subseq url2 (+ (search "?v=" url2) 3)))))
                 (assert-true (>= mtime2 mtime1))))))))))
+
+(define-test cached-static-uses-project-static-root ()
+  ;; A deployed binary runs outside the project, so the current directory
+  ;; has no static/; the root DEFINE-APPLICATION found still versions URLs.
+  (with-clean-static-state
+    (with-temp-dir (dir)
+      (write-text (merge-pathnames "static/assets/icon.png" dir) "png")
+      (let ((shiso/static:*project-static-root* (merge-pathnames "static/" dir)))
+        (let ((url (shiso:cached-static "assets/icon.png")))
+          (assert-true (search "/static/assets/icon.png?v=" url) url))))))
 
 (define-test locate-static-file-strips-hash ()
   (with-clean-static-state

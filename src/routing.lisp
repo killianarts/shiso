@@ -271,7 +271,11 @@ the project's static/ directory and per-module static/ directories."
                               when (uiop:directory-exists-p static-dir)
                                 return (namestring static-dir)
                               until (equal dir (uiop:pathname-parent-directory-pathname dir))))))
-    `(defparameter ,app-var
+    `(progn
+      ;; CACHED-STATIC versions URLs from the files the middleware below serves.
+      ,@(when static-root
+          `((setf shiso/static:*project-static-root* ,(pathname static-root))))
+      (defparameter ,app-var
        (lack:builder
         ;; Multi-root static middleware: project static/ + module static/ dirs
         ,@(when static-root
@@ -295,7 +299,7 @@ the project's static/ directory and per-module static/ directories."
                           ,prefix ,mod-kw))
         (lambda (env)
           (declare (ignore env))
-          '(404 (:content-type "text/html") ("Not found")))))))
+          '(404 (:content-type "text/html") ("Not found"))))))))
 
 (defun strip-trailing-slash-middleware (app)
   "Lack middleware: 301-redirect PATH/ → PATH for any path longer than \"/\".

@@ -9,7 +9,8 @@
    #:make-static-middleware
    #:module-static-roots
    #:cached-static
-   #:reload-manifest))
+   #:reload-manifest
+   #:*project-static-root*))
 
 (in-package #:shiso/static)
 
@@ -72,6 +73,16 @@ with the hex segment removed. Otherwise return NIL.
 
 (defvar *cached-static-warned* (make-hash-table :test #'equal)
   "Logical paths that have already triggered a missing-asset warning.")
+
+(defvar *project-static-root* nil
+  "The project's static/ directory, as DEFINE-APPLICATION found it when it was
+compiled: the one its /static/ middleware serves. NIL until then.")
+
+(defun project-static-root ()
+  "*PROJECT-STATIC-ROOT*, or static/ under the current directory without one.
+Not the current directory first: a deployed binary often runs elsewhere."
+  (or *project-static-root*
+      (merge-pathnames "static/" (uiop:getcwd))))
 
 (defun default-manifest-path ()
   (merge-pathnames "static/staticfiles.json" (uiop:getcwd)))
@@ -234,7 +245,7 @@ Returns the resolved pathname or NIL."
               file)))))))
 
 (defun locate-static-file (relative-path &key
-                           (project-root (merge-pathnames "static/" (uiop:getcwd)))
+                           (project-root (project-static-root))
                            (module-roots (module-static-roots)))
   "Locate RELATIVE-PATH for URL building (mtime) and middleware.
 Tries the exact path, then a content-hash-stripped form."
