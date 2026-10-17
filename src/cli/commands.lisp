@@ -19,6 +19,27 @@ Honors $SHISO_HOME if set; otherwise falls back to ~/common-lisp/shiso/."
                    (:module "skeleton/module/"))))
     (merge-pathnames subpath (shiso-home))))
 
+(defparameter *dotenv*
+  "# This machine's settings, for development. Not committed (see .gitignore).
+#
+# SHISO_ENV says what kind of machine this is. It is the one variable read
+# from this file anywhere; the rest only count in development. A server sets
+# its own in its environment, with SHISO_ENV=production.
+SHISO_ENV=development
+
+# PORT=5000
+"
+  "A new application's .env. Written by NEW-APPLICATION, not kept in the
+template: the template's .gitignore, which keeps a project's .env out of
+its repository, would keep it out of Shiso's too.")
+
+(defun write-dotenv (directory)
+  "Write a development .env in DIRECTORY."
+  (with-open-file (out (merge-pathnames ".env" directory)
+                       :direction :output :if-exists nil :if-does-not-exist :create)
+    (when out
+      (write-string *dotenv* out))))
+
 (defun new-application (name)
   "Scaffold a new Shiso application in ./<name>/."
   (let ((source (template-dir :app))
@@ -34,6 +55,7 @@ Honors $SHISO_HOME if set; otherwise falls back to ~/common-lisp/shiso/."
       (format *error-output* "Refusing to overwrite existing directory: ~A~%" target)
       (uiop:quit 1))
     (render:render-template source target `(("application-name" . ,name)))
+    (write-dotenv target)
     (format t "Application scaffolded at ~A~%~%" target)
     (format t "Next steps:~%")
     (format t "  cd ~A~%" name)

@@ -5,11 +5,92 @@ All notable changes to Shiso are documented here.
 
 The format is inspired by [[https://keepachangelog.com/][Keep a Changelog]].
 Versions match the =:version= in =shiso.asd= when set; otherwise
-entries are dated by release milestone.
+entries are dated by release milestone. Each release opens with its
+highlights; the sections after them list every change.
 
 * Unreleased
 
+For running a Shiso site in production with confidence, and for sites
+in more than one language.
+
+- *Settings.* A project configures Shiso and every module in one
+  place, and each machine says what it is in its environment, so
+  projects no longer write their own configuration code. A server
+  with a wrong setting refuses to start and says why, rather than
+  failing later in a request, and a built program assumes production,
+  so nothing meant for development is left on by accident.
+- *Start-up.* =shiso:start= sets up the server and the database
+  itself, leaving less code in each application.
+- *Security.* Secrets stay out of committed files and out of logs.
+- *Internationalization.* A site can be in a language other than
+  English, or in several, Shiso's own text included, and translators
+  work in their own files without touching the Lisp.
+- *Routing fixes.* Redirects and logins behave under modules mounted
+  at a prefix.
+- *HTTP errors.* A controller signals =(s:abort-with 404)= from
+  anywhere and the application designs each error page in one form.
+  JSON and HTMX clients get answers they can use, a wrong method is a
+  405, a failed POST leaves no half-written rows, and in development
+  an error opens the debugger with the request waiting to be retried.
+
 ** Added
+
+- HTTP error handling (=src/errors.lisp=): conditions =http-error=,
+  =bad-request=, =unauthorized=, =forbidden=, =not-found=,
+  =method-not-allowed=, =internal-server-error=; =abort-with=;
+  =define-error-page= for a status, =:4xx=, =:5xx= or =t=;
+  =condition-http-status= to map an application's own conditions to
+  statuses; =get-or-404= and =found-or-404=. JSON clients get RFC 9457
+  =application/problem+json=, HTMX requests a fragment
+  (=*fragment-p*=), =HEAD= an empty body. If an error page fails,
+  =static/errors/<status>.html= is served, then plain text. In debug
+  mode, for requests from this machine only, the debug 500 page and a
+  404 listing the routes tried (=*debug-404*=). =:debugp :repl= (setting
+  =:server/repl-debugger=) opens SLY's or SLIME's debugger on an
+  unexpected error, with =retry-request=, =show-debug-page= and
+  =show-error-page= restarts. Client errors are logged by
+  =*log-client-errors*=. Error pages render with the request's locale
+  and =shiso:*request*= bound, so =translate=, =url= and page
+  components work in them. =reason-phrase= gives a status's standard
+  text. Docs: how-to "Handle HTTP errors"; demo: =examples/errors-demo=.
+- New projects get =static/errors/500.html=, a self-contained page for
+  when the app's own error page fails, and example =define-error-page=
+  forms in =src/routes.lisp=.
+- Typed route parameters: ="/<int:id>"= gives the controller an
+  integer and makes a non-numeric value a 404. Converters =int=,
+  =slug=, =uuid=, =str=, and =define-path-converter= for more. =url=
+  accepts the typed values.
+- 405 with an =Allow= header for a path some route serves with another
+  method; =OPTIONS= for it gets 204 and =Allow= (=*auto-options*=).
+- Atomic requests: POST, PUT, PATCH and DELETE run in one database
+  transaction, rolled back when an error leaves the request
+  (=*atomic-requests*=).
+- Settings, on the =almighty-settei= library: =define-setting= (kinds
+  =boolean-setting=, =integer-setting=, =string-setting=,
+  =pathname-setting=, =choice-setting=, =list-setting=), =setting=,
+  =setting-source=, =per-environment=, =with-settings=,
+  =on-setting-change=, =print-settings=, =redact=. A value comes from
+  the session, its environment variable, =.env= (development only),
+  the project's =configure=, or its default. =load-settings= reports
+  every problem at once in one =shiso:settings-invalid=. Docs:
+  =org/src/settings.org=.
+- =:shiso/environment= (=SHISO_ENV=): =:development=, =:test= or
+  =:production=. Defaults to development in a REPL and production in a
+  built program; =SHISO_ENV= in =.env= is read on any machine.
+- Shiso's own settings: =:shiso/site-origin=, =:server/host=,
+  =:server/port=, =:server/debugp=, =:server/backend=, the
+  =:database/= settings (=:database/password= secret), and
+  =:static/manifest=. The old variables =HOST=, =PORT=, =DEBUGP= and
+  =DATABASE_PATH= still work.
+- =shiso:setup-database= and =shiso:connect-database=: connect from
+  the =:database/= settings, make the session table and each model's
+  missing table. =define-application= takes =:after-database=, a
+  function called once the database is set up.
+- =shiso:site-origin=.
+- =<app> settings [--changed]=: the application's binary lists its
+  settings, sources and documentation, secrets masked.
+- New projects get =src/settings.lisp= and a git-ignored =.env= with
+  =SHISO_ENV=development=.
 
 - Internationalization via a Fluent wrap (=shiso:translate=,
   =with-locale=, =load-localisations=). Catalogs are =.ftl= files
@@ -25,6 +106,13 @@ entries are dated by release milestone.
 
 ** Fixed
 
+- A response with status 428, 429 or 431 reached the client as an
+  empty 500: Woo has no status line for them. =shiso:start= adds the
+  missing ones.
+- =define-route= with =:regexp t= dropped the regex's captures and
+  called the controller with no arguments.
+- The admin answered 500 for a non-numeric ID in its URLs, and showed
+  a blank form for a missing row; both are 404s now.
 - Trailing-slash redirect loops: local =redirect-response= Locations
   and =url= reverses no longer re-add a trailing slash that
   =define-application='s 301 stripper removes. Module index reverse
@@ -35,13 +123,64 @@ entries are dated by release milestone.
   mount).
 - Trailing-slash 301 preserves the query string on =Location=.
 
+** Upgrading
+
+Move a project's =src/config.lisp= values into =shiso:configure= in
+=src/settings.lisp=, and let =shiso:start= set up the database. Debug
+mode is now on in development; =DEBUGP=false= turns it off.
+
+Error responses are pages now: a controller that returned
+=(http-response "Not found" :code 404)= can =(s:abort-with 404)=
+instead, and gets the application's 404 page. Writes made before an
+error in a POST are rolled back; set =shiso:*atomic-requests*= to NIL
+if something relied on them. Copy =static/errors/500.html= from a new
+project into yours.
+
 ** Changed
+
+- Errors in a request are answered by =wrap-http-errors=, which
+  replaces =wrap-error-logging=. In debug mode an unexpected error
+  shows the debug page rather than entering the debugger; =:debugp
+  :repl= enters it, with a restart to retry the request.
+- 404, 400 and 403 responses (unknown paths, unparsable requests, a
+  bad CSRF token, guards) render through the error-page registry
+  instead of fixed text. A wrong method on an existing path is a 405,
+  not a 404.
+- Unexpected errors' backtraces are logged without the frames of the
+  error handling itself.
+- =shiso:start= loads the settings, sets up the database, and serves
+  from =:server/= settings; its =:host=, =:port= and =:debugp= set
+  those settings for the run. An application no longer connects to
+  the database or reads the environment itself.
+- =:server/debugp= is true in development, so an error in a request
+  shows the debug page (or, with =:debugp :repl=, opens the debugger).
+  =DEBUGP=false= turns it off.
+- Unhandled errors are logged once, secrets masked, never the cookies.
+  Shiso always answers the 500 itself, so the error is never printed
+  unmasked.
+- =shiso:absolute-url= starts with =:shiso/site-origin=, or with the
+  request's own scheme and host when it is for another host.
+- =run-cli= loads the settings first; =setup-db= uses
+  =setup-database=.
+- The project template's =src/config.lisp= is replaced by
+  =src/settings.lisp=.
 
 - =shiso:current-path= returns the full request path (=script-name= +
   =path-info=), not the post-mount =path-info= alone.
 - Exported =canonicalize-path= / =canonicalize-redirect-url=.
 
 * 0.3
+
+For sites that look and load the way their authors want.
+
+- *Static files.* Browsers get new stylesheets and scripts as soon as
+  a site is deployed, while unchanged files stay cached.
+- *Forms.* A form can match a site's own design. Shiso still does the
+  tedious parts (validation, error messages, keeping what the visitor
+  typed, CSRF protection) without fighting generated markup, and the
+  admin is unaffected.
+- *Scaffolding.* New projects start with their own page skeleton and
+  form components, ready to restyle.
 
 ** Added
 
@@ -122,8 +261,19 @@ entries are dated by release milestone.
 
 * 0.2 — 2026-07-17
 
-Scaffolding and ops-facing maturity (includes work landed through
-the =Updated scaffolding= line of development).
+For starting and running real projects.
+
+- *Scaffolding.* A new project or module works from a single command,
+  not by copying an example.
+- *Authentication.* Sites can have users and logins without building
+  them.
+- *Application binaries.* A built site runs maintenance tasks, such as
+  creating an administrator, from the command line.
+- *Documentation.* Shiso can be learned from first tutorial to full
+  reference.
+
+This release includes the work landed through the =Updated
+scaffolding= line of development.
 
 ** Added
 
@@ -151,7 +301,8 @@ the =Updated scaffolding= line of development).
 
 * 0.1 — 2026-02 … 2026-03
 
-Initial framework shape.
+The first release: a site built from reusable modules, with database
+models, forms, and an admin for managing the data from the first day.
 
 ** Added
 

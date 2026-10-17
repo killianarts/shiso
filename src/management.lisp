@@ -1,7 +1,9 @@
 (defpackage #:shiso/management
   (:use #:cl)
-  (:local-nicknames (#:clingon #:clingon)
-                    (#:auth    #:shiso/auth))
+  (:local-nicknames (#:clingon  #:clingon)
+                    (#:auth     #:shiso/auth)
+                    (#:settei   #:almighty-settei)
+                    (#:database #:shiso/database))
   (:export
    #:register-command
    #:run-cli
@@ -71,7 +73,7 @@ so the SETUP-DB thunk runs first when the command needs the database."
              *commands*)
     acc))
 
-(defun run-cli (args &key setup-db serve
+(defun run-cli (args &key (setup-db #'database:setup-database) serve
                           (program "app") (version "0.1")
                           (description "Application server and management commands."))
   "Entry point for an application binary's `main'.
@@ -82,9 +84,16 @@ and the process exits (clingon handles exit codes, `--help' and `--version').
 A bare or unrecognized invocation calls SERVE, the app's server entry point;
 SERVE is expected to block, so it never returns.
 
-SETUP-DB and SERVE are thunks supplied by the app, which is what knows its own
-database configuration. Built-in commands (e.g. `createsuperuser') and any the
-app registered via `register-command' are all available."
+The settings are loaded first: every command, and the server, read them.
+SETUP-DB defaults to Shiso's (`shiso:setup-database'), which connects from
+the :database/ settings; SERVE is the app's. Built-in commands (e.g.
+`createsuperuser', `settings') and any the app registered via
+`register-command' are all available."
+  (unless (settei:settings-loaded-p)
+    (handler-case (settei:load-settings)
+      (settei:settings-invalid (condition)
+        (format *error-output* "~&~A~%" condition)
+        (uiop:quit 1))))
   (let ((top (clingon:make-command
               :name program
               :version version
@@ -108,3 +117,14 @@ app registered via `register-command' are all available."
        (uiop:quit 1))))
  :description "Create or promote a staff (admin) user."
  :usage "[EMAIL]")
+
+(register-command
+ "settings"
+ (lambda (cmd)
+   (settei:print-settings :changed (clingon:getopt cmd :changed)))
+ :description "List the settings: each one's value, where it came from, its environment variables and what it does."
+ :options (list (clingon:make-option :flag
+                                     :description "only the settings not at their defaults"
+                                     :long-name "changed"
+                                     :key :changed))
+ :needs-db nil)

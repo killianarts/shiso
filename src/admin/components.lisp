@@ -122,7 +122,7 @@ table.admin-table { width: 100%; border-collapse: collapse; }
                                :collect (ah:</> (td (princ-to-string val))))
            ;; TODO Consider making a convenience function for mito that returns
            ;; the object-id of a dao as a string for easy interop with myway.
-           :for edit-href := (shiso/utils:url "shiso-admin:model-instance-rebuild" :model model-name :id (princ-to-string id)) 
+           :for edit-href := (shiso/utils:url "shiso-admin:model-instance-rebuild" :model model-name :id id) 
            :collect (ah:</>
                      (tr cells (td (a :href edit-href :class "btn btn-primary"
                                      (i18n:translate "admin-edit" :default "REBUILD")))))))))

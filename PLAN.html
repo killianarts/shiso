@@ -1,0 +1,665 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+	"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+
+<html xmlns="http://www.w3.org/1999/xhtml">
+
+<head>
+<title>PLAN.html</title>
+<meta http-equiv="Content-Type" content="application/xhtml+xml;charset=utf-8"/>
+<link rel="stylesheet" type="text/css" media="all" href="https://cdn.jsdelivr.net/npm/github-markdown-css/github-markdown.min.css"  />
+<link rel="stylesheet" type="text/css" media="all" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/styles/github.min.css"  /><meta name='viewport' content='width=device-width, initial-scale=1, shrink-to-fit=no'><style> body { box-sizing: border-box; max-width: 740px; width: 100%; margin: 40px auto; padding: 0 10px; } </style><script id='MathJax-script' async src='https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js'></script><script src='https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/highlight.min.js'></script><script>document.addEventListener('DOMContentLoaded', () => { document.body.classList.add('markdown-body'); document.querySelectorAll('pre[lang] > code').forEach((code) => { code.classList.add(code.parentElement.lang); }); document.querySelectorAll('pre > code').forEach((code) => { hljs.highlightBlock(code); }); });</script>
+</head>
+
+<body>
+
+[WARNING] Deprecated: --highlight-style. Use --syntax-highlighting instead.
+<h1 id="shiso-framework-complete-roadmap">Shiso Framework — Complete
+Roadmap</h1>
+<h2 id="context">Context</h2>
+<p>This plan updates <code>vendored/shiso/PLAN.md</code>. The original
+plan covered Models, Validators, Forms, and Admin (Phases 1-4). All four
+are implemented and tested (96+ test cases), but forms haven’t been
+exercised in a real application yet and the admin templates need rework.
+This update adds solidification work and new phases to build toward a
+complete Django-inspired framework.</p>
+<h2 id="vision">Vision</h2>
+<p>Shiso is a Django-inspired Common Lisp web framework where models are
+the central abstraction. A single <code>define-model</code> form
+propagates through the entire stack: database schema, form generation,
+input validation, and admin CRUD views.</p>
+<p><strong>Philosophy:</strong> Prefer simplicity over complexity,
+direct over indirect. Modules (including the admin) are designed to be
+vendored and specialized rather than extended through override
+mechanisms. See <code>ADMIN-PLAN.org</code> for the rationale.</p>
+<h2 id="whats-built-phases-1-4-complete">What’s Built (Phases 1-4 —
+COMPLETE)</h2>
+<ul>
+<li><strong>Phase 1: Models</strong> — <code>define-model</code>,
+metadata registry, introspection API</li>
+<li><strong>Phase 2: Validators</strong> — composable validators,
+auto-derivation from metadata</li>
+<li><strong>Phase 3: Forms</strong> — field classes, model-form
+generation, validation, rendering</li>
+<li><strong>Phase 4: Admin</strong> — registry, CRUD views, components,
+routing, module wrapper</li>
+</ul>
+<p>All tested. What follows is solidification of this work plus new
+capabilities.</p>
+<hr />
+<h2 id="phase-5-solidify-forms-admin">Phase 5: Solidify Forms &amp;
+Admin</h2>
+<h3 id="goal">Goal</h3>
+<p>Exercise the forms system in a real application, fix rendering
+issues, and make the admin templates production-quality.</p>
+<h3 id="forms-testing-fixes">5.1 Forms Testing &amp; Fixes</h3>
+<p>Test forms end-to-end in the almightylisp.com application: - Create a
+model with <code>define-model</code>, generate a form with
+<code>make-model-form</code> - Submit via browser, verify
+<code>parse-body-params</code> → <code>validate-form</code> →
+<code>save-form</code> - Test edit flow: load instance into form, submit
+changes, verify update - Verify error display: submit invalid data,
+confirm per-field errors render - Test each field type renders correctly
+(char, text, integer, boolean, choice, date, email)</p>
+<p>Fix any issues discovered. Known areas to check: - Form data key
+format (keyword vs string vs symbol) through the pipeline - Boolean
+field parsing (checkbox sends no value when unchecked) - Choice field
+rendering with pre-selected values - Date field parsing and display
+format</p>
+<h3 id="admin-template-rework">5.2 Admin Template Rework</h3>
+<p>The current admin components (<code>ac-admin-page</code>,
+<code>ac-admin-table</code>, etc.) need rework for usability: - Improve
+layout: proper responsive design, better typography - Table: sortable
+columns, row actions (edit/delete), empty state - Forms: fieldset
+grouping (use <code>admin-fieldsets</code> config), proper error styling
+- Flash messages: success/error after create/edit/delete operations -
+Navigation: highlight current section, breadcrumbs</p>
+<h3 id="wire-up-unused-admin-config">5.3 Wire Up Unused Admin
+Config</h3>
+<p>Several <code>admin-config</code> slots exist but aren’t used in
+views: - <code>list-filter</code> — add filter dropdowns to list view -
+<code>search-fields</code> — add search box to list view -
+<code>ordering</code> — apply default ordering to list queries -
+<code>readonly</code> — render fields as read-only in edit forms -
+<code>per-page</code> + pagination — add pagination to list view -
+<code>fieldsets</code> — group fields in create/edit forms</p>
+<h3 id="files">Files</h3>
+<ul>
+<li><code>vendored/shiso/src/admin/components.lisp</code></li>
+<li><code>vendored/shiso/src/admin/views.lisp</code></li>
+<li><code>vendored/shiso/src/forms/rendering.lisp</code></li>
+<li>Corresponding <code>org/</code> files</li>
+</ul>
+<hr />
+<h2 id="phase-6-settings-configuration">Phase 6: Settings &amp;
+Configuration</h2>
+<h3 id="goal-1">Goal</h3>
+<p>A centralized configuration system so applications don’t scatter
+<code>get-env</code> calls everywhere.</p>
+<h3 id="design">Design</h3>
+<p>A <code>shiso/settings</code> package with a settings hash table
+populated from environment variables and/or a settings form:</p>
+<div class="sourceCode" id="cb1"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb1-1"><a href="#cb1-1" aria-hidden="true" tabindex="-1"></a>(shiso:configure</span>
+<span id="cb1-2"><a href="#cb1-2" aria-hidden="true" tabindex="-1"></a>  :database-url (<span class="kw">or</span> (uiop:getenv <span class="st">&quot;DATABASE_URL&quot;</span>) <span class="st">&quot;sqlite3:///db.sqlite3&quot;</span>)</span>
+<span id="cb1-3"><a href="#cb1-3" aria-hidden="true" tabindex="-1"></a>  :secret-key (uiop:getenv <span class="st">&quot;SECRET_KEY&quot;</span>)</span>
+<span id="cb1-4"><a href="#cb1-4" aria-hidden="true" tabindex="-1"></a>  :debug <span class="kw">t</span></span>
+<span id="cb1-5"><a href="#cb1-5" aria-hidden="true" tabindex="-1"></a>  :allowed-hosts &#39;(<span class="st">&quot;localhost&quot;</span> <span class="st">&quot;almightylisp.com&quot;</span>)</span>
+<span id="cb1-6"><a href="#cb1-6" aria-hidden="true" tabindex="-1"></a>  :static-url <span class="st">&quot;/static/&quot;</span></span>
+<span id="cb1-7"><a href="#cb1-7" aria-hidden="true" tabindex="-1"></a>  :timezone <span class="st">&quot;UTC&quot;</span>)</span></code></pre></div>
+<p>Access via <code>(shiso:setting :database-url)</code>. Unknown keys
+signal an error in non-debug mode.</p>
+<h3 id="database-connection">Database Connection</h3>
+<p>Currently Mito connection is manual. <code>shiso:configure</code>
+should establish the connection automatically from
+<code>:database-url</code>, parsing the URL into
+<code>mito:connect-toplevel</code> arguments.</p>
+<h3 id="files-1">Files</h3>
+<ul>
+<li><code>vendored/shiso/src/settings.lisp</code> (new)</li>
+<li><code>vendored/shiso/org/src/settings.org</code> (new)</li>
+<li>Update <code>shiso.asd</code>, <code>package.lisp</code></li>
+</ul>
+<hr />
+<h2 id="phase-7-middleware-framework">Phase 7: Middleware Framework</h2>
+<h3 id="goal-2">Goal</h3>
+<p>Expose Lack’s middleware system through a clean Shiso API so users
+can compose middleware without understanding Lack internals.</p>
+<h3 id="design-1">Design</h3>
+<p>Lack already provides the middleware infrastructure. Shiso wraps
+it:</p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a>(shiso:define-application my-app ()</span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  (:middleware</span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>    (:session :store (lack.session.store.dbi:make-dbi-store ...))</span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>    (:csrf)</span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a>    (:accesslog))</span>
+<span id="cb2-6"><a href="#cb2-6" aria-hidden="true" tabindex="-1"></a>  (:modules</span>
+<span id="cb2-7"><a href="#cb2-7" aria-hidden="true" tabindex="-1"></a>    (<span class="st">&quot;&quot;</span> pages)</span>
+<span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>    (<span class="st">&quot;/admin&quot;</span> admin)))</span></code></pre></div>
+<p>The <code>:middleware</code> option in
+<code>define-application</code> expands each entry into the appropriate
+Lack middleware wrapper. This is sugar — users can still use raw Lack
+middleware directly.</p>
+<h3 id="already-available-in-lack">Already Available in Lack</h3>
+<ul>
+<li><code>lack-middleware-session</code> — session management (memory,
+DBI, Redis backends)</li>
+<li><code>lack-middleware-csrf</code> — CSRF token validation</li>
+<li><code>lack-middleware-auth-basic</code> — HTTP Basic Auth</li>
+<li><code>lack-middleware-accesslog</code> — request logging</li>
+<li><code>lack-middleware-backtrace</code> — error page with
+backtrace</li>
+<li><code>lack-middleware-deflater</code> — response compression</li>
+<li><code>lack-middleware-dbpool</code> — database connection
+pooling</li>
+</ul>
+<h3 id="files-2">Files</h3>
+<ul>
+<li>Modify <code>vendored/shiso/src/routing.lisp</code> — extend
+<code>define-application</code></li>
+<li><code>vendored/shiso/org/src/routing.org</code></li>
+</ul>
+<hr />
+<h2 id="phase-8-sessions-csrf">Phase 8: Sessions &amp; CSRF</h2>
+<h3 id="goal-3">Goal</h3>
+<p>Integrate Lack’s session and CSRF middleware into Shiso’s API and
+make them easy to use in controllers and templates.</p>
+<h3 id="design-2">Design</h3>
+<h4 id="sessions">Sessions</h4>
+<p>Lack’s <code>lack-middleware-session</code> stores sessions in
+<code>(getf env :lack.session)</code>. Shiso wraps this:</p>
+<div class="sourceCode" id="cb3"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co">;; In a controller:</span></span>
+<span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>(shiso:session-value :user-id)</span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a>(<span class="kw">setf</span> (shiso:session-value :user-id) <span class="dv">42</span>)</span>
+<span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a>(shiso:delete-session)</span></code></pre></div>
+<p>Session storage backends (all provided by Lack): - Memory (default,
+development) - DBI (production, uses existing DB connection) - Redis
+(high-performance, via <code>cl-redis</code>)</p>
+<h4 id="csrf">CSRF</h4>
+<p>Lack’s <code>lack-middleware-csrf</code> provides
+<code>csrf-token</code> and <code>csrf-html-tag</code>. Shiso wraps:</p>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co">;; In a template:</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a>(shiso:csrf-field)  <span class="co">; → &lt;input type=&quot;hidden&quot; name=&quot;_csrf_token&quot; value=&quot;...&quot;&gt;</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb4-4"><a href="#cb4-4" aria-hidden="true" tabindex="-1"></a><span class="co">;; Forms rendering auto-includes CSRF field when method is POST</span></span></code></pre></div>
+<p>The form rendering system (<code>render-form</code>) should
+automatically include the CSRF hidden field.</p>
+<h3 id="dependencies">Dependencies</h3>
+<ul>
+<li><code>lack-middleware-session</code> (vendored)</li>
+<li><code>lack-middleware-csrf</code> (vendored)</li>
+<li><code>lack-session-store-dbi</code> (for production sessions)</li>
+</ul>
+<h3 id="files-3">Files</h3>
+<ul>
+<li><code>vendored/shiso/src/sessions.lisp</code> (new)</li>
+<li><code>vendored/shiso/src/csrf.lisp</code> (new — or combine with
+sessions)</li>
+<li>Modify <code>vendored/shiso/src/forms/rendering.lisp</code> —
+auto-include CSRF</li>
+<li>Modify <code>vendored/shiso/src/requests.lisp</code> — session
+accessors</li>
+<li>Update <code>shiso.asd</code>, <code>package.lisp</code></li>
+</ul>
+<hr />
+<h2 id="phase-9-authentication-authorization">Phase 9: Authentication
+&amp; Authorization</h2>
+<h3 id="goal-4">Goal</h3>
+<p>User model, login/logout, password hashing, and permission checking.
+The admin module requires this to restrict access.</p>
+<h3 id="design-3">Design</h3>
+<h4 id="user-model">User Model</h4>
+<p>A built-in <code>user</code> model (or a
+<code>define-user-model</code> macro that extends any model with auth
+fields):</p>
+<div class="sourceCode" id="cb5"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a>(shiso/auth:define-user-model <span class="kw">user</span></span>
+<span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a>  ((username :col-type (:varchar <span class="dv">150</span>) :unique <span class="kw">t</span>)</span>
+<span id="cb5-3"><a href="#cb5-3" aria-hidden="true" tabindex="-1"></a>   (email    :col-type (:varchar <span class="dv">254</span>))</span>
+<span id="cb5-4"><a href="#cb5-4" aria-hidden="true" tabindex="-1"></a>   (is-staff :col-type :boolean :initform <span class="kw">nil</span>)</span>
+<span id="cb5-5"><a href="#cb5-5" aria-hidden="true" tabindex="-1"></a>   (is-superuser :col-type :boolean :initform <span class="kw">nil</span>)))</span></code></pre></div>
+<p>Password is stored hashed (bcrypt via Ironclad). Not exposed as a
+regular model field.</p>
+<h4 id="password-hashing">Password Hashing</h4>
+<p>Ironclad is already vendored and provides bcrypt:</p>
+<div class="sourceCode" id="cb6"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a>(shiso/auth:make-password <span class="st">&quot;raw-password&quot;</span>)  <span class="co">; → bcrypt hash string</span></span>
+<span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>(shiso/auth:check-password <span class="st">&quot;raw&quot;</span> hash)     <span class="co">; → t or nil</span></span></code></pre></div>
+<h4 id="loginlogout">Login/Logout</h4>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a>(shiso/auth:authenticate :username <span class="st">&quot;foo&quot;</span> :password <span class="st">&quot;bar&quot;</span>)  <span class="co">; → user or nil</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a>(shiso/auth:login request <span class="kw">user</span>)   <span class="co">; stores user-id in session</span></span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a>(shiso/auth:logout request)       <span class="co">; clears session</span></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a>(shiso/auth:current-user)         <span class="co">; → user instance or nil</span></span></code></pre></div>
+<h4 id="permission-guards">Permission Guards</h4>
+<div class="sourceCode" id="cb8"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="co">;; Decorator-style for controllers:</span></span>
+<span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a>(shiso/auth:login-required <span class="dt">&#39;my-controller</span>)</span>
+<span id="cb8-3"><a href="#cb8-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-4"><a href="#cb8-4" aria-hidden="true" tabindex="-1"></a><span class="co">;; In define-module or define-application:</span></span>
+<span id="cb8-5"><a href="#cb8-5" aria-hidden="true" tabindex="-1"></a>(:middleware (:auth :login-url <span class="st">&quot;/login&quot;</span>))</span>
+<span id="cb8-6"><a href="#cb8-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb8-7"><a href="#cb8-7" aria-hidden="true" tabindex="-1"></a><span class="co">;; Staff-only (for admin):</span></span>
+<span id="cb8-8"><a href="#cb8-8" aria-hidden="true" tabindex="-1"></a>(shiso/auth:staff-required <span class="dt">&#39;admin-controller</span>)</span></code></pre></div>
+<h4 id="admin-integration">Admin Integration</h4>
+<p>The admin module wraps all views with <code>staff-required</code>.
+Only users with <code>is-staff = t</code> can access the admin.</p>
+<h3 id="dependencies-1">Dependencies</h3>
+<ul>
+<li><code>ironclad</code> (vendored — bcrypt KDF)</li>
+<li>Sessions (Phase 8)</li>
+</ul>
+<h3 id="files-4">Files</h3>
+<ul>
+<li><code>vendored/shiso/src/auth.lisp</code> (new)</li>
+<li><code>vendored/shiso/org/src/auth.org</code> (new)</li>
+<li>Modify admin views to require staff auth</li>
+<li>Update <code>shiso.asd</code>, <code>package.lisp</code></li>
+</ul>
+<hr />
+<h2 id="phase-10-error-handling">Phase 10: Error Handling</h2>
+<h3 id="goal-5">Goal</h3>
+<p>Structured error pages, condition handling, and debug mode with
+useful error information during development.</p>
+<h3 id="design-4">Design</h3>
+<ul>
+<li>Debug mode (from settings): show backtrace, request info, local
+variables</li>
+<li>Production mode: render custom 404/500 pages</li>
+<li><code>lack-middleware-backtrace</code> provides the debug page —
+integrate it</li>
+<li>Custom error page hook:
+<code>(shiso:define-error-handler 404 ...)</code></li>
+</ul>
+<h3 id="files-5">Files</h3>
+<ul>
+<li><code>vendored/shiso/src/errors.lisp</code> (new)</li>
+<li><code>vendored/shiso/org/src/errors.org</code> (new)</li>
+</ul>
+<hr />
+<h2 id="phase-11-database-migrations">Phase 11: Database Migrations</h2>
+<h3 id="goal-6">Goal</h3>
+<p>Wrap Mito’s migration capabilities so schema changes are easy to
+apply.</p>
+<h3 id="design-5">Design</h3>
+<p>Mito provides migration introspection: -
+<code>mito:migrate-table</code> — auto-migrates a single table -
+<code>mito:ensure-table-exists</code> — creates table if missing -
+<code>mito:migration-expressions</code> — returns SQL for pending
+changes</p>
+<p>Shiso wraps these into convenience functions:</p>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a>(shiso:migrate)           <span class="co">; migrate all registered models</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>(shiso:migrate <span class="dt">&#39;article</span>)  <span class="co">; migrate one model</span></span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a>(shiso:show-migrations)   <span class="co">; show pending SQL without executing</span></span></code></pre></div>
+<p>This is lighter than Django’s migration files approach — Mito
+compares the live schema to the class definition and generates ALTER
+statements on the fly. For v1 this is sufficient. File-based migrations
+can be added later if needed.</p>
+<h3 id="files-6">Files</h3>
+<ul>
+<li><code>vendored/shiso/src/migrations.lisp</code> (new)</li>
+<li><code>vendored/shiso/org/src/migrations.org</code> (new)</li>
+</ul>
+<hr />
+<h2 id="phase-12-testing-utilities">Phase 12: Testing Utilities</h2>
+<h3 id="goal-7">Goal</h3>
+<p>A test client for writing integration tests against Shiso
+applications, plus helpers for test database setup.</p>
+<h3 id="design-6">Design</h3>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a>(shiso/test:with-test-app (app)</span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a>  (<span class="kw">let</span> ((response (shiso/test:get app <span class="st">&quot;/articles&quot;</span>)))</span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a>    (assert-eql <span class="dv">200</span> (response-status response))</span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a>    (assert-search <span class="st">&quot;Articles&quot;</span> (response-body response))))</span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a>(shiso/test:with-test-db ()</span>
+<span id="cb10-7"><a href="#cb10-7" aria-hidden="true" tabindex="-1"></a>  (<span class="kw">let</span> ((article (mito:create-dao <span class="dt">&#39;article</span> :title <span class="st">&quot;Test&quot;</span>)))</span>
+<span id="cb10-8"><a href="#cb10-8" aria-hidden="true" tabindex="-1"></a>    ...))</span></code></pre></div>
+<ul>
+<li>Test client sends requests through the Lack app without starting a
+server</li>
+<li><code>with-test-db</code> creates a temporary SQLite database, runs
+migrations, cleans up</li>
+<li>Response inspection helpers</li>
+</ul>
+<h3 id="dependencies-2">Dependencies</h3>
+<ul>
+<li><code>lisp-unit2</code> (already used)</li>
+</ul>
+<h3 id="files-7">Files</h3>
+<ul>
+<li><code>vendored/shiso/src/test-utils.lisp</code> (new)</li>
+<li><code>vendored/shiso/org/src/test-utils.org</code> (new)</li>
+</ul>
+<hr />
+<h2 id="phase-13-cli-management-commands">Phase 13: CLI / Management
+Commands</h2>
+<h3 id="goal-8">Goal</h3>
+<p>A command-line interface for common tasks: starting the server,
+running migrations, creating users, collecting static files.</p>
+<h3 id="design-7">Design</h3>
+<p>Use an existing CL CLI library. Candidates: -
+<strong>clingon</strong> — modern, well-maintained, subcommand support -
+<strong>adopt</strong> — simpler, by Steve Losh -
+<strong>unix-opts</strong> — lightweight getopt-style</p>
+<p>Evaluate and pick one. Commands to implement:</p>
+<pre><code>shiso start              # start dev server
+shiso migrate            # run migrations
+shiso collectstatic      # collect static files
+shiso createsuperuser    # create admin user
+shiso make-module NAME   # scaffold a new module
+shiso shell              # drop into REPL with app loaded</code></pre>
+<h3 id="files-8">Files</h3>
+<ul>
+<li><code>vendored/shiso/src/cli.lisp</code> (new)</li>
+<li><code>vendored/shiso/org/src/cli.org</code> (new)</li>
+</ul>
+<hr />
+<h2 id="phase-14-file-uploads">Phase 14: File Uploads</h2>
+<h3 id="goal-9">Goal</h3>
+<p>Support file upload fields in forms and models.</p>
+<h3 id="design-8">Design</h3>
+<p>Lack/http-body already parses multipart form data. Shiso needs: - A
+<code>file-field</code> form field class - File storage abstraction
+(local filesystem initially) - Model field type for file references
+(path stored in DB) - Upload size/type validation</p>
+<div class="sourceCode" id="cb12"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a>(define-model document</span>
+<span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a>  ((title :col-type (:varchar <span class="dv">200</span>))</span>
+<span id="cb12-3"><a href="#cb12-3" aria-hidden="true" tabindex="-1"></a>   (file  :col-type (:varchar <span class="dv">500</span>) :widget :file</span>
+<span id="cb12-4"><a href="#cb12-4" aria-hidden="true" tabindex="-1"></a>          :validators ((max-file-size (<span class="op">*</span> <span class="dv">10</span> <span class="dv">1024</span> <span class="dv">1024</span>))))))</span></code></pre></div>
+<h3 id="files-9">Files</h3>
+<ul>
+<li>Modify <code>vendored/shiso/src/forms/fields.lisp</code> — add
+<code>file-field</code></li>
+<li><code>vendored/shiso/src/uploads.lisp</code> (new) — storage
+backend</li>
+<li><code>vendored/shiso/org/src/uploads.org</code> (new)</li>
+</ul>
+<hr />
+<h2 id="phase-15-email">Phase 15: Email</h2>
+<h3 id="goal-10">Goal</h3>
+<p>Send emails from the application (password resets, notifications,
+etc.).</p>
+<h3 id="design-9">Design</h3>
+<p>Use <code>cl-smtp</code> for SMTP delivery. Shiso wraps with
+configuration from settings:</p>
+<div class="sourceCode" id="cb13"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb13-1"><a href="#cb13-1" aria-hidden="true" tabindex="-1"></a>(shiso:configure</span>
+<span id="cb13-2"><a href="#cb13-2" aria-hidden="true" tabindex="-1"></a>  :email-host <span class="st">&quot;smtp.example.com&quot;</span></span>
+<span id="cb13-3"><a href="#cb13-3" aria-hidden="true" tabindex="-1"></a>  :email-port <span class="dv">587</span></span>
+<span id="cb13-4"><a href="#cb13-4" aria-hidden="true" tabindex="-1"></a>  :email-user <span class="st">&quot;...&quot;</span></span>
+<span id="cb13-5"><a href="#cb13-5" aria-hidden="true" tabindex="-1"></a>  :email-password <span class="st">&quot;...&quot;</span>)</span>
+<span id="cb13-6"><a href="#cb13-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb13-7"><a href="#cb13-7" aria-hidden="true" tabindex="-1"></a>(shiso:send-mail</span>
+<span id="cb13-8"><a href="#cb13-8" aria-hidden="true" tabindex="-1"></a>  :to <span class="st">&quot;user@example.com&quot;</span></span>
+<span id="cb13-9"><a href="#cb13-9" aria-hidden="true" tabindex="-1"></a>  :subject <span class="st">&quot;Welcome&quot;</span></span>
+<span id="cb13-10"><a href="#cb13-10" aria-hidden="true" tabindex="-1"></a>  :body (render-email-template ...))</span></code></pre></div>
+<h3 id="dependencies-3">Dependencies</h3>
+<ul>
+<li><code>cl-smtp</code> (add to dependencies)</li>
+</ul>
+<h3 id="files-10">Files</h3>
+<ul>
+<li><code>vendored/shiso/src/email.lisp</code> (new)</li>
+<li><code>vendored/shiso/org/src/email.org</code> (new)</li>
+</ul>
+<hr />
+<h2 id="phase-16-caching">Phase 16: Caching</h2>
+<h3 id="goal-11">Goal</h3>
+<p>Cache expensive computations and database queries.</p>
+<h3 id="design-10">Design</h3>
+<p>Simple key-value cache with pluggable backends:</p>
+<div class="sourceCode" id="cb14"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb14-1"><a href="#cb14-1" aria-hidden="true" tabindex="-1"></a>(shiso:cache-get <span class="st">&quot;key&quot;</span>)</span>
+<span id="cb14-2"><a href="#cb14-2" aria-hidden="true" tabindex="-1"></a>(shiso:cache-set <span class="st">&quot;key&quot;</span> value :ttl <span class="dv">300</span>)</span>
+<span id="cb14-3"><a href="#cb14-3" aria-hidden="true" tabindex="-1"></a>(shiso:with-cache (<span class="st">&quot;expensive-query&quot;</span> :ttl <span class="dv">60</span>)</span>
+<span id="cb14-4"><a href="#cb14-4" aria-hidden="true" tabindex="-1"></a>  (mito:select-dao ...))</span></code></pre></div>
+<p>Backends: - In-memory (development, default) - Redis (production, via
+<code>cl-redis</code>)</p>
+<h3 id="dependencies-4">Dependencies</h3>
+<ul>
+<li><code>cl-redis</code> (optional, for Redis backend)</li>
+</ul>
+<h3 id="files-11">Files</h3>
+<ul>
+<li><code>vendored/shiso/src/cache.lisp</code> (new)</li>
+<li><code>vendored/shiso/org/src/cache.org</code> (new)</li>
+</ul>
+<hr />
+<h2 id="phase-17-internationalization">Phase 17:
+Internationalization</h2>
+<h3 id="goal-12">Goal</h3>
+<p>Support translated strings in templates and form labels.</p>
+<h3 id="design-11">Design</h3>
+<p>Evaluate CL i18n libraries: - <code>cl-locale</code> — locale-based
+string lookup - <code>cl-i18n</code> — gettext-style translation</p>
+<p>Integration with forms: <code>field-verbose-name</code> and
+<code>field-help-text</code> become translation keys when i18n is
+enabled.</p>
+<h3 id="dependencies-5">Dependencies</h3>
+<ul>
+<li><code>cl-locale</code> or <code>cl-i18n</code> (evaluate and
+pick)</li>
+</ul>
+<h3 id="files-12">Files</h3>
+<ul>
+<li><code>vendored/shiso/src/i18n.lisp</code> (new)</li>
+<li><code>vendored/shiso/org/src/i18n.org</code> (new)</li>
+</ul>
+<hr />
+<h2 id="phase-18-project-scaffolding">Phase 18: Project Scaffolding</h2>
+<h3 id="goal-13">Goal</h3>
+<p>A <code>make-shiso-system</code> function that generates a complete
+project skeleton, including the admin module vendored into the user’s
+project.</p>
+<h3 id="design-12">Design</h3>
+<div class="sourceCode" id="cb15"><pre
+class="sourceCode lisp"><code class="sourceCode commonlisp"><span id="cb15-1"><a href="#cb15-1" aria-hidden="true" tabindex="-1"></a>(shiso:make-shiso-system <span class="st">&quot;my-project&quot;</span></span>
+<span id="cb15-2"><a href="#cb15-2" aria-hidden="true" tabindex="-1"></a>  <span class="bu">:directory</span> #p<span class="st">&quot;/path/to/projects/&quot;</span></span>
+<span id="cb15-3"><a href="#cb15-3" aria-hidden="true" tabindex="-1"></a>  :modules &#39;(pages articles)</span>
+<span id="cb15-4"><a href="#cb15-4" aria-hidden="true" tabindex="-1"></a>  :include-admin <span class="kw">t</span>)</span></code></pre></div>
+<p>Generates:</p>
+<pre><code>my-project/
+  my-project.asd
+  src/
+    main.lisp           ; define-application, server start
+    settings.lisp       ; shiso:configure form
+    modules/
+      pages/
+        controllers.lisp
+        routes.lisp
+        templates/
+        static/
+      articles/
+        controllers.lisp
+        models.lisp
+        routes.lisp
+        templates/
+        static/
+      admin/              ; vendored copy of shiso&#39;s admin module
+        ...
+  static/
+  t/
+    ...</code></pre>
+<p>The admin module is copied (not referenced) into the project — users
+own it.</p>
+<h3 id="files-13">Files</h3>
+<ul>
+<li>Modify <code>vendored/shiso/src/scaffold.lisp</code></li>
+<li><code>vendored/shiso/org/src/scaffold.org</code></li>
+</ul>
+<hr />
+<h2 id="implementation-priority">Implementation Priority</h2>
+<table>
+<thead>
+<tr>
+<th>Priority</th>
+<th>Phase</th>
+<th>Description</th>
+<th>Key Dependencies</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>NOW</strong></td>
+<td>5</td>
+<td>Solidify forms &amp; admin</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>HIGH</strong></td>
+<td>6</td>
+<td>Settings &amp; configuration</td>
+<td>—</td>
+</tr>
+<tr>
+<td><strong>HIGH</strong></td>
+<td>7</td>
+<td>Middleware framework</td>
+<td>Lack (vendored)</td>
+</tr>
+<tr>
+<td><strong>HIGH</strong></td>
+<td>8</td>
+<td>Sessions &amp; CSRF</td>
+<td>Lack middleware (vendored)</td>
+</tr>
+<tr>
+<td><strong>HIGH</strong></td>
+<td>9</td>
+<td>Auth &amp; permissions</td>
+<td>Ironclad (vendored), Phase 8</td>
+</tr>
+<tr>
+<td><strong>HIGH</strong></td>
+<td>10</td>
+<td>Error handling</td>
+<td>Phase 6 (debug setting)</td>
+</tr>
+<tr>
+<td><strong>MED</strong></td>
+<td>11</td>
+<td>Database migrations</td>
+<td>Mito</td>
+</tr>
+<tr>
+<td><strong>MED</strong></td>
+<td>12</td>
+<td>Testing utilities</td>
+<td>lisp-unit2</td>
+</tr>
+<tr>
+<td><strong>MED</strong></td>
+<td>13</td>
+<td>CLI commands</td>
+<td>clingon or adopt (new dep)</td>
+</tr>
+<tr>
+<td><strong>MED</strong></td>
+<td>14</td>
+<td>File uploads</td>
+<td>http-body (vendored)</td>
+</tr>
+<tr>
+<td><strong>LOW</strong></td>
+<td>15</td>
+<td>Email</td>
+<td>cl-smtp (new dep)</td>
+</tr>
+<tr>
+<td><strong>LOW</strong></td>
+<td>16</td>
+<td>Caching</td>
+<td>cl-redis (new dep, optional)</td>
+</tr>
+<tr>
+<td><strong>LOW</strong></td>
+<td>17</td>
+<td>Internationalization</td>
+<td>cl-locale or cl-i18n (new dep)</td>
+</tr>
+<tr>
+<td><strong>LOW</strong></td>
+<td>18</td>
+<td>Project scaffolding</td>
+<td>Phase 9 (admin to vendor)</td>
+</tr>
+</tbody>
+</table>
+<p>Phases 5-10 form the core of a production-capable framework. Phases
+11-14 are developer experience improvements. Phases 15-18 are
+nice-to-haves that round out Django parity.</p>
+<hr />
+<h2 id="third-party-dependencies-summary">Third-Party Dependencies
+Summary</h2>
+<h3 id="already-vendored-available">Already Vendored / Available</h3>
+<ul>
+<li><strong>Lack middleware</strong> — sessions, CSRF, basic auth,
+accesslog, backtrace, compression, dbpool</li>
+<li><strong>Ironclad</strong> — bcrypt password hashing, full crypto
+suite</li>
+<li><strong>http-body</strong> — multipart file upload parsing</li>
+<li><strong>Mito</strong> — ORM with built-in migration support</li>
+<li><strong>cl-ppcre</strong> — regex for validators</li>
+<li><strong>lisp-unit2</strong> — testing</li>
+</ul>
+<h3 id="new-dependencies-needed">New Dependencies Needed</h3>
+<table>
+<thead>
+<tr>
+<th>Library</th>
+<th>Phase</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>clingon or adopt</td>
+<td>13</td>
+<td>CLI command framework</td>
+</tr>
+<tr>
+<td>cl-smtp</td>
+<td>15</td>
+<td>Email delivery</td>
+</tr>
+<tr>
+<td>cl-redis</td>
+<td>16</td>
+<td>Redis cache backend (optional)</td>
+</tr>
+<tr>
+<td>cl-locale or cl-i18n</td>
+<td>17</td>
+<td>Internationalization</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="open-questions-carried-forward-new">Open Questions (carried
+forward + new)</h2>
+<ol type="1">
+<li><p><strong>Database configuration</strong> — Settled: Phase 6
+introduces <code>shiso:configure</code> with <code>:database-url</code>
+parsing.</p></li>
+<li><p><strong>Migrations</strong> — Mito handles auto-migration. Phase
+11 wraps it. File-based migration history deferred.</p></li>
+<li><p><strong>Authentication strategy</strong> — Sessions + bcrypt
+(Phase 9). JWT deferred (no good CL library; build later if API auth is
+needed).</p></li>
+<li><p><strong>CSS/Styling</strong> — Admin uses inline CSS currently.
+Consider shipping a default CSS file in admin’s <code>static/</code>
+directory. Tailwind optional.</p></li>
+<li><p><strong>Template system</strong> — Almighty-html (Lisp
+s-expressions) is the template system. No Jinja-style templates planned
+— this is a deliberate divergence from Django where CL’s macro system
+provides equivalent power.</p></li>
+</ol>
+
+</body>
+</html>

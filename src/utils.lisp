@@ -4,11 +4,14 @@
                     (#:modules #:shiso/modules)
                     (#:requests #:shiso/requests)
                     (#:req #:lack/request)
-                    (#:csrf #:lack/middleware/csrf))
+                    (#:csrf #:lack/middleware/csrf)
+                    (#:settei #:almighty-settei)
+                    (#:settings #:shiso/settings))
   (:export
    #:url
    #:current-path
    #:static
+   #:site-origin
    #:absolute-url
    #:http-response
    #:post-request-p
@@ -88,7 +91,8 @@ no such module is registered — used by legacy `define-routes')."
   (flet ((reverse-on (mapper name-kw &optional prefix)
            (let ((route (myway:find-route-by-name mapper name-kw)))
              (when route
-               (let ((base (myway:url-for route params)))
+               ;; Typed parameters (<int:id>) take values, e.g. 42.
+               (let ((base (myway:url-for route (routing:route-url-params route params))))
                  ;; join-url-path: "/staff" + "/" → "/staff" (not "/staff/")
                  (routing:join-url-path (or prefix "") base))))))
     (let ((name-str (etypecase name
@@ -127,13 +131,31 @@ no such module is registered — used by legacy `define-routes')."
    (shiso:static \"css/style.css\") → \"/static/css/style.css\""
   (concatenate 'string "/static/" path))
 
+(defun site-origin ()
+  "The scheme and host absolute URLs start with: :shiso/site-origin, unless
+the request being answered is for another host (this machine, say), whose
+own scheme and host it is then, as a proxy reports them (Host and
+X-Forwarded-Proto). Without a request, :shiso/site-origin."
+  (let ((origin (settei:setting :shiso/site-origin))
+        (request requests:*request*))
+    (or (when request
+          (let* ((headers (req:request-headers request))
+                 (host (and headers (gethash "host" headers))))
+            (when (and host
+                       (not (and origin
+                                 (string-equal host (settings:site-origin-host origin)))))
+              (format nil "~a://~a"
+                      (or (gethash "x-forwarded-proto" headers)
+                          (string-downcase (princ-to-string (req:request-uri-scheme request))))
+                      host))))
+        origin
+        "")))
+
 (defun absolute-url (path)
-  "Prepend the current request's scheme and host to PATH.
+  "PATH, an address on the site, made absolute with SITE-ORIGIN.
    (shiso:absolute-url \"/static/img/preview.png\")
    → \"https://example.com/static/img/preview.png\""
-  (let ((scheme (lack.request:request-uri-scheme requests:*request*))
-        (server-name (lack.request:request-server-name requests:*request*)))
-    (format nil "~a://~a~a" scheme server-name path)))
+  (concatenate 'string (site-origin) path))
 
 (defun ensure-session-table (&key (table-name "shiso_session")
                                (id-column-name "id")
@@ -143,8 +165,8 @@ no such module is registered — used by legacy `define-routes')."
 (typically configured via shiso/auth/session or directly with
 lack.middleware.session).
 
-This must be called during database setup (e.g. in your app's setup-database)
-because the lack dbi store does not automatically create its backing table.
+SHISO:SETUP-DATABASE, which SHISO:START calls, calls it: the lack dbi store
+does not create its backing table itself.
 
 Example:
   (shiso:ensure-session-table)  ; uses default \"shiso_session\"

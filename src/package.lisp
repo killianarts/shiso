@@ -13,6 +13,39 @@
                 #:register-module
                 #:get-module)
 
+  (:import-from #:shiso/errors
+                #:http-error
+                #:http-error-status
+                #:http-error-message
+                #:http-error-headers
+                #:http-error-cause
+                #:http-error-type
+                #:http-client-error
+                #:http-server-error
+                #:bad-request
+                #:unauthorized
+                #:forbidden
+                #:not-found
+                #:method-not-allowed
+                #:allowed-methods
+                #:internal-server-error
+                #:abort-with
+                #:condition-http-status
+                #:define-error-page
+                #:remove-error-page
+                #:find-error-page
+                #:*error-pages*
+                #:default-error-page
+                #:reason-phrase
+                #:*fragment-p*
+                #:*debug-404*
+                #:*log-client-errors*
+                #:*static-error-root*
+                #:*prefer-static-5xx*
+                #:retry-request
+                #:show-debug-page
+                #:show-error-page)
+
   (:import-from #:shiso/routing
                 #:routes
                 #:routes-mapper
@@ -21,11 +54,14 @@
                 #:define-route
                 #:define-routes
                 #:define-module
-                #:define-application)
+                #:define-application
+                #:define-path-converter
+                #:*auto-options*)
 
   (:import-from #:shiso/server
                 #:start
-                #:stop)
+                #:stop
+                #:*atomic-requests*)
 
   (:import-from #:shiso/static
                 #:collectstatic
@@ -77,11 +113,67 @@
                 #:*default-locale*
                 #:*fallback-locale*)
 
+  ;; Settings. The machinery is almighty-settei's; the API is Shiso's.
+  (:import-from #:almighty-settei
+                #:define-setting
+                #:setting
+                #:boolean-setting
+                #:integer-setting
+                #:string-setting
+                #:pathname-setting
+                #:choice-setting
+                #:list-setting
+                #:setting-name
+                #:setting-documentation
+                #:setting-source
+                #:setting-unset
+                #:find-setting
+                #:list-settings
+                #:configure
+                #:per-environment
+                #:current-environment
+                #:development-p
+                #:test-p
+                #:production-p
+                #:load-settings
+                #:reload-settings
+                #:settings-loaded-p
+                #:with-settings
+                #:on-setting-change
+                #:remove-setting-listener
+                #:print-settings
+                #:settings-report
+                #:redact
+                #:coerce-value
+                #:check-value
+                #:reject
+                #:render-value
+                #:settings-invalid-problems
+                #:problem-name
+                #:problem-message
+                #:setting-invalid-name
+                #:setting-invalid-value
+                #:setting-invalid-source
+                #:setting-unknown-name)
+
+  (:import-from #:shiso/settings
+                #:settings-invalid
+                #:setting-invalid
+                #:setting-unknown
+                #:settings-not-loaded
+                #:secret-configured
+                #:unknown-setting-warning)
+
+  (:import-from #:shiso/database
+                #:setup-database
+                #:connect-database)
+
   (:import-from #:shiso/utils
                 #:http-response
                 #:url
                 #:current-path
                 #:static
+                #:site-origin
                 #:absolute-url
                 #:post-request-p
                 #:parse-body-params
@@ -160,9 +252,100 @@
                 #:define-field-type
                 #:expand-field-type
                 ;; Macro
-                #:define-model)
+                #:define-model
+                ;; Shortcuts
+                #:get-or-404
+                #:found-or-404)
 
   (:export
+   ;; HTTP errors
+   #:http-error
+   #:http-error-status
+   #:http-error-message
+   #:http-error-headers
+   #:http-error-cause
+   #:http-error-type
+   #:http-client-error
+   #:http-server-error
+   #:bad-request
+   #:unauthorized
+   #:forbidden
+   #:not-found
+   #:method-not-allowed
+   #:allowed-methods
+   #:internal-server-error
+   #:abort-with
+   #:condition-http-status
+   #:define-error-page
+   #:remove-error-page
+   #:find-error-page
+   #:*error-pages*
+   #:default-error-page
+   #:reason-phrase
+   #:*fragment-p*
+   #:*debug-404*
+   #:*log-client-errors*
+   #:*static-error-root*
+   #:*prefer-static-5xx*
+   #:retry-request
+   #:show-debug-page
+   #:show-error-page
+   #:get-or-404
+   #:found-or-404
+   #:*atomic-requests*
+   ;; Typed route parameters
+   #:define-path-converter
+   #:*auto-options*
+   ;; Settings
+   #:define-setting
+   #:setting
+   #:boolean-setting
+   #:integer-setting
+   #:string-setting
+   #:pathname-setting
+   #:choice-setting
+   #:list-setting
+   #:setting-name
+   #:setting-documentation
+   #:setting-source
+   #:setting-unset
+   #:find-setting
+   #:list-settings
+   #:configure
+   #:per-environment
+   #:current-environment
+   #:development-p
+   #:test-p
+   #:production-p
+   #:load-settings
+   #:reload-settings
+   #:settings-loaded-p
+   #:with-settings
+   #:on-setting-change
+   #:remove-setting-listener
+   #:print-settings
+   #:settings-report
+   #:redact
+   #:coerce-value
+   #:check-value
+   #:reject
+   #:render-value
+   #:settings-invalid-problems
+   #:problem-name
+   #:problem-message
+   #:setting-invalid-name
+   #:setting-invalid-value
+   #:setting-invalid-source
+   #:setting-unknown-name
+   #:settings-invalid
+   #:setting-invalid
+   #:setting-unknown
+   #:settings-not-loaded
+   #:secret-configured
+   #:unknown-setting-warning
+   #:setup-database
+   #:connect-database
+   #:site-origin
 
    #:*request*
 

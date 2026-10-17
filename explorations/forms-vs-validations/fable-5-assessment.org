@@ -1,0 +1,220 @@
+#+TITLE: Forms vs. Validations — an assessment
+#+AUTHOR: Claude (Fable 5)
+#+OPTIONS: toc:2 num:nil
+
+Two rewrites of the TODO tutorial app live next to this file:
+
+- =fable-5-todo-forms.lisp= — uses the shiso Forms feature
+  (=make-model-form= / =validate-form= / =save-form= / =render-form=).
+- =fable-5-todo-validations.lisp= — validation-first, clavier-style:
+  declare validations, run them against request data, render your own
+  HTML. Built on =shiso/validators= (which is already clavier-shaped:
+  designators → closures → error strings), plus one new ~20-line
+  helper, =validate-params=.
+
+Both versions go beyond the published tutorial in the same two ways,
+because the published tutorial sidesteps the question entirely — its
+=create= silently drops invalid input and there is no edit view. Both
+versions validate the add form and re-display errors with sticky
+values, and both add edit/update. Those are the flows where the two
+styles actually diverge.
+
+* The headline numbers
+
+Counting only the code that differs between the versions (form
+construction, validation, error display, and the create/edit/update
+controllers — the model, list rendering, routes, and toggle/destroy
+are near-identical):
+
+| Concern                        | Forms version | Validations version |
+|--------------------------------+---------------+---------------------|
+| Form/validation definitions    | ~12 lines     | ~45 lines           |
+| Error + form HTML              | 0 (generated) | ~45 lines           |
+| create/edit/update controllers | ~35 lines     | ~45 lines           |
+| *Total differing code*         | *~47*         | *~135*              |
+
+The forms version is roughly a third the code — /for these flows/. But
+raw line count is the least interesting part of the comparison; where
+those lines sit matters more.
+
+* The Forms version
+
+** Strengths
+
+- *The controllers are trivial.* Every mutating controller is the same
+  five-line shape: build form → =validate-form= → =save-form= +
+  redirect, or re-render. There is nowhere for a forgotten edge case
+  to hide, because the edge cases live in one place.
+
+- *Coercion is solved once.* The unchecked-checkbox problem (HTML
+  sends /nothing/ for an unchecked box) is handled inside
+  =boolean-field=; the forms version's =update= contains zero code for
+  it. The validations version needed a hand-written =checkbox= coercer
+  and — more importantly — needed the author to /know/ that quirk.
+  Same story for integers and dates on bigger models.
+
+- *Model metadata does double duty.* =:max-length 200= on the model is
+  simultaneously the =VARCHAR(200)= column and the form validator. In
+  the validations version the 200 appears again in
+  =validate-new-todo= with nothing tying it to the column — change the
+  model and the validation silently drifts.
+
+- *Edit forms are nearly free.* =:instance todo= populates initial
+  values; failed validation re-displays submitted values
+  automatically. The validations version wires initial values by hand
+  in =edit= and threads =cleaned= back through =edit-page= by hand —
+  mechanical code that must be re-written, correctly, for every edit
+  view in the app.
+
+- *CSRF is included by the renderer.* =render-form= injects the token
+  input. In the validations version every hand-written form must
+  remember =(csrf-token-input)= — forget it and the middleware 400s
+  you, which is at least loud, but it's per-form vigilance forever.
+
+** Weaknesses
+
+- *Markup lock-in is real and it bit immediately.* The tutorial's
+  compact inline add form (input + button, no label, flex row) cannot
+  be produced by =render-form=, which emits
+  =div.form-group > label + input= per field. The forms version
+  simply loses that design. This is not hypothetical: /shiso's own
+  auth pages already hand-render their HTML/ because the form renderer
+  couldn't do a password input (=auth/controllers.lisp:55=). The
+  framework itself opted out of its own rendering layer at the first
+  real styling requirement.
+
+- *The data flow is opaque.* Params arrive as keyword-keyed alists,
+  are matched to symbol-named fields via =string-equal=, cleaned into
+  a symbol-keyed hash table, then written to slots or re-interned as
+  keywords for =create-dao=. Four key representations. When it works
+  it's invisible; when it doesn't (wrong package, name mismatch) the
+  failure is silent — the field just validates against =NIL=. The
+  ROADMAP's own "fix data pipeline issues (key formats)" entry is
+  this cost, acknowledged.
+
+- *Ceremony floor.* For the one-field add form, the forms machinery
+  (form class, field filtering, metadata→field conversion, validation
+  protocol) is invoked to check "not blank, ≤200 chars". The
+  validations version does that in three visible lines.
+
+- *You maintain the layer.* ~600 lines of framework
+  (fields/form/model-form/rendering) that must grow file uploads,
+  widget dispatch (currently a no-op — =:widget= metadata is ignored
+  by rendering), FK selects, formsets… Each gap either blocks a user
+  or pushes them to hand-rolled HTML, at which point they're paying
+  for the layer and not using half of it.
+
+* The Validations version
+
+** Strengths
+
+- *Everything is visible.* =create= reads top to bottom: parse →
+  validate → =getf= → model helper. There is no protocol to learn and
+  nothing to macroexpand; a reader who knows Lisp and HTTP understands
+  the whole flow on first read. For a framework whose docs lean on
+  "no magic" Lisp values, this is on-brand.
+
+- *Zero markup opinion.* The tutorial's inline add form survives
+  untouched; error placement is exactly where the page design wants
+  it. This style composes perfectly with almighty-html components and
+  with hypermedia/HTMX-style fragment re-rendering — you re-render
+  /your/ component with an errors argument, not a framework's form
+  block.
+
+- *The framework surface is tiny.* =validate-params= is ~20 lines and
+  =shiso/validators= already exists and already serves the model
+  layer. Nothing new to document, test, or keep feature-complete.
+  Every future field type costs the /application/ a coercer, not the
+  /framework/ a field class + parse method + render method.
+
+- *Per-view validation is natural.* The add form validates only
+  =title=; update validates =title= + =done=. No =:fields= /
+  =:exclude= filtering against model metadata — each view just states
+  what it accepts, which is also a mild mass-assignment guard by
+  construction.
+
+** Weaknesses
+
+- *The boilerplate is per-form, forever.* Sticky values, error blocks,
+  CSRF input, initial values from the instance — each is only a few
+  lines, but they recur in every form in every module, and each is
+  skippable. Under deadline pressure the skipped one is error
+  re-display, and the app quietly degrades to the tutorial's original
+  behavior: invalid input vanishes.
+
+- *Coercion knowledge is on the user.* The checkbox quirk, integer
+  parsing, the datetime-local format — the forms layer encodes these
+  once; here every application re-learns them. =trimmed= and
+  =checkbox= took four lines; a date coercer would take ten and a bug
+  or two.
+
+- *Nothing links validations to the model.* The duplicated =200= is
+  the small version of a structural problem: the model already
+  /declares/ validators in its metadata (=:char= auto-attaches
+  =max-length=), and this version just doesn't use them. A fair
+  validation-first shiso would want a
+  =(model-validations 'todo :title)= bridge — at which point you have
+  rebuilt a third of model-forms.
+
+- *The admin still needs forms.* This is the decisive structural
+  point: =shiso/admin= is generic CRUD /because/ =make-model-form= +
+  =render-form= exist. Delete the forms layer and the admin — the
+  framework's flagship feature — must either grow its own private
+  equivalent or stop being generic. The forms layer's cost is sunk
+  the moment you commit to a Django-style admin.
+
+* What the TODO app can't show
+
+This comparison sits at the floor of form complexity: one text field
+and one checkbox. The trade moves with scale, in both directions:
+
+- With /more field types/ (the polls app's datetimes; choices; FKs),
+  the validations version's coercer collection grows and the forms
+  version's advantage widens.
+- With /more design pressure/ (real page layouts, component libraries,
+  fragment updates), =render-form='s one-markup-fits-all becomes
+  untenable and teams bypass it — the forms version's advantage
+  narrows to just parsing/validation, which is exactly the part the
+  validations version already does transparently.
+
+Also worth naming: "modern frameworks don't include forms" is only
+half true. Phoenix has no form /renderer/ to speak of, but changesets
+are precisely a form object — cast (coercion) + validations + errors +
+sticky params — relocated into the data layer. Rails likewise keeps
+strong params + AR validations + =form_with=. What those frameworks
+dropped is the /rendering/ half, not the /coercion-and-errors/ half.
+
+* Recommendation
+
+The comparison splits the forms feature into two parts with very
+different value:
+
+1. *The form object* (parse, coerce, validate, collect errors, carry
+   sticky values, bind an instance) — this is the part the validations
+   version had to start rebuilding within 20 lines, the part that
+   encodes real HTML knowledge (checkboxes, dates), and the part the
+   admin depends on. It earns its complexity. Keep it.
+
+2. *=render-form=* — this is the part that imposes markup, that
+   shiso's own auth pages already bypass, and whose configurability
+   (=:widget=) is currently a no-op. It is the expensive half to make
+   good and the first thing real designs abandon. Its Django analog
+   (=form.as_p=) is likewise something Django users outgrow in week
+   one.
+
+So: don't choose between the two files — split the feature along that
+line.
+
+- Document the *validations style as the default app-facing path*
+  (promote =validate-params= or equivalent into =shiso/utils=; the
+  todo tutorial gets simpler and more honest).
+- Keep *model-forms as the engine of the admin* and as an opt-in for
+  users who want Django ergonomics, and add a
+  *metadata→validations bridge* (=model-validations=) so hand-rolled
+  controllers can reuse the model's declared validators without form
+  objects — that kills the duplicated-constant problem, which is the
+  validations style's worst structural flaw.
+- Treat =render-form= as admin-internal (or as small field-level
+  components users compose) rather than a headline feature to be
+  completed. That converts the weakest 180 lines of the layer from a
+  promise you have to keep into an implementation detail.

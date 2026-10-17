@@ -8,7 +8,7 @@
   :entry-point "<% @var application-name %>:main"
   :components ((:module "src"
                 :serial t
-                :components ((:file "config")
+                :components ((:file "settings")
                              (:file "routes")
                              (:file "main")
                              (:file "package")))))

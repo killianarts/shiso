@@ -37,6 +37,8 @@ Goal-driven recipes. Skim by title until one matches your problem.
 - [[file:how-to/render-a-form-with-csrf.org][Render a form with a CSRF token]]
 - [[file:how-to/mount-a-module-under-a-prefix.org][Mount a module under a URL prefix]]
 - [[file:how-to/serve-static-files.org][Serve static files]]
+- [[file:how-to/handle-http-errors.org][Handle HTTP errors]] — error pages, =abort-with=, =get-or-404=,
+  typed route parameters, debug pages and the REPL debugger
 - [[file:how-to/set-up-authentication.org][Set up authentication in a new project]]
 - [[file:how-to/add-translations.org][Add translations]]
 - [[file:how-to/customize-the-scaffolder-templates.org][Customize the scaffolder templates]]

@@ -1,0 +1,160 @@
+#+title: Settings
+
+A Shiso project's settings, Shiso's own and every module's, are declared
+where they are used, set in one place, and read from the environment when
+the server starts. Source: =src/settings.lisp= (Shiso's settings),
+=src/database.lisp= (the database), and =start= in =src/server.lisp=.
+
+* Declaring a setting
+
+A module declares its settings where it uses them:
+
+#+begin_src lisp
+(shiso:define-setting :magazine/desk-enabled shiso:boolean-setting
+  "Whether the Intel desk answers on this machine."
+  :environment "INTEL_DESK"
+  :default (shiso:per-environment :development t :otherwise nil))
+
+(shiso:define-setting :magazine/github-token shiso:string-setting
+  "Sent with the desk's GitHub searches."
+  :environment "GITHUB_TOKEN"
+  :secret t)
+
+(shiso:setting :magazine/desk-enabled)        ; => T
+(shiso:setting-source :magazine/desk-enabled) ; => :ENVIRONMENT-DEFAULT
+#+end_src
+
+A name is a keyword, =module/name=. The kinds are =boolean-setting=,
+=integer-setting= (=:minimum=, =:maximum=), =string-setting=,
+=pathname-setting=, =choice-setting= (=:options=), =list-setting=, and
+=setting= with a =:type=. The options:
+
+| Option          | Meaning                                                        |
+|-----------------+----------------------------------------------------------------|
+| A string first  | Its documentation                                              |
+| =:default=      | A value; a function of the configuration; or a =per-environment= |
+| =:environment=  | Its environment variable, or a list of them, the first set winning. Without, =SHISO_<MODULE>_<NAME>= |
+| =:secret=       | Only from the environment; masked when shown or logged         |
+| =:required-in=  | Environments where it must have a value                        |
+| =:validator=    | A function of the value and configuration: =NIL=, or why not   |
+
+=(shiso:setting name)= reads one; =(setf (shiso:setting name) value)= sets
+it for this run, checked as any value is. A misspelt name is
+=shiso:setting-unknown= at run time, and a compiler warning when written as
+a constant.
+
+* The project's settings file
+
+What =settings.py= is to Django: one =configure=, in =src/settings.lisp=,
+for Shiso's settings and every module's.
+
+#+begin_src lisp
+(shiso:configure
+  (:shiso    :site-origin (shiso:per-environment :production "https://almightylisp.com"))
+  (:database :name "db/almightylisp2.db")
+  (:magazine :irc-enabled t))
+#+end_src
+
+A group is a module and its settings' short names. A value is evaluated,
+and may be a =per-environment= (an environment it doesn't name keeps the
+setting's default) or a function of the configuration, called when the
+settings load: for a value that depends on the machine, such as a path under
+the user's home.
+
+The file may load before the modules that define the settings it names: the
+names are checked when the server starts. A secret can't be configured; it
+goes in the environment.
+
+* Where a value comes from
+
+The first found:
+
+1. Set in this run: =(setf (shiso:setting ...))=, or =start='s keywords.
+2. Its environment variable.
+3. The same variable in =.env=, in development.
+4. The project's settings file.
+5. Its default.
+
+=shiso:print-settings=, or =<app> settings= from the application's binary
+(=--changed= for those not at their defaults), lists every setting with its
+value, its source, its variables and its documentation, secrets masked.
+
+* Which machine this is
+
+=:shiso/environment= is =:development=, =:test= or =:production=, the first
+found:
+
+1. =SHISO_ENV= in the environment.
+2. =SHISO_ENV= in =.env=. It is the one variable read from =.env= on any
+   machine; the rest count only in development.
+3. =:development= in the REPL, =:production= in a built program.
+
+A development machine says so in =.env= (=SHISO_ENV=development=), so nothing
+is set in the shell, and a server sets =SHISO_ENV=production= in its
+environment, which wins over any file.
+
+* Loading
+
+=shiso:start= loads the settings unless they are, and every problem stops it
+at once, all listed:
+
+#+begin_example
+2 settings are wrong for production:
+
+  :server/port        "50OO" from PORT is not an integer
+  :shiso/site-origin  is required in production, and not set (SHISO_SITE_ORIGIN)
+#+end_example
+
+Nothing reads the environment while code loads: a built program reads the
+machine it runs on. =shiso:reload-settings= reads it again in the REPL,
+keeping what was set there.
+
+* Shiso's settings
+
+| Setting               | Default                                       | Variables                       |
+|-----------------------+-----------------------------------------------+---------------------------------|
+| =:shiso/environment=  | See above                                     | =SHISO_ENV=                     |
+| =:shiso/site-origin=  | development: =http://localhost:<port>=; required in production | =SHISO_SITE_ORIGIN= |
+| =:server/host=        | =127.0.0.1=                                   | =SHISO_SERVER_HOST=, =HOST=     |
+| =:server/port=        | =5000=                                        | =SHISO_SERVER_PORT=, =PORT=     |
+| =:server/debugp=      | development: true; otherwise false            | =SHISO_SERVER_DEBUGP=, =DEBUGP= |
+| =:server/backend=     | =:woo=                                        | =SHISO_SERVER_BACKEND=          |
+| =:database/driver=    | =:sqlite3=                                    | =SHISO_DATABASE_DRIVER=         |
+| =:database/name=      | development: =db/development.db=; test: in memory; required in production | =SHISO_DATABASE_NAME=, =DATABASE_PATH= |
+| =:database/host=, =:database/port=, =:database/user= | not set | =SHISO_DATABASE_HOST= ... |
+| =:database/password=  | not set; secret                               | =SHISO_DATABASE_PASSWORD=       |
+| =:static/manifest=    | =static/staticfiles.json=                     | =SHISO_STATIC_MANIFEST=         |
+
+* The database
+
+=shiso:start= calls =shiso:setup-database=: it connects from the
+=:database/= settings (for SQLite, making the file's directory), makes the
+session table and each registered model's missing table, and then calls the
+application's =:after-database= function, if =define-application= gives one.
+A table that is there isn't changed: a changed model needs a migration.
+
+* Absolute URLs
+
+=shiso:absolute-url= starts a path with =shiso:site-origin=:
+=:shiso/site-origin=, unless the request being answered is for another
+host, whose own scheme and host (=Host=, =X-Forwarded-Proto=) it uses then,
+so a page served on this machine links to this machine.
+
+* Errors and secrets
+
+Shiso logs an unhandled error once, with its backtrace, every secret's value
+masked. Outside debug mode it then answers 500 itself, so nothing else prints
+the error unmasked; in debug mode the error goes on to the debugger.
+
+* Tests
+
+=shiso:with-settings= sets settings for its body, in its own thread:
+
+#+begin_src lisp
+(shiso:with-settings (:magazine/desk-enabled t)
+  (assert-eql 200 (status (request "/intel/desk"))))
+#+end_src
+
+* Acknowledgements
+
+The machinery is almighty-settei's, whose design follows [[https://github.com/lambda-symbolics/setinka][setinka]]'s.

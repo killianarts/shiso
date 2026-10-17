@@ -25,8 +25,7 @@
 (defun set-language ()
   "POST /set-language — persist LANGUAGE in a cookie and redirect."
   (unless (utils:post-request-p)
-    (return-from set-language
-      (utils:http-response "Method not allowed" :code 405)))
+    (errors:abort-with 405 :allowed '(:post)))
   (let* ((params (utils:parse-body-params))
          (raw (cdr (assoc :language params)))
          (available (available-locales))

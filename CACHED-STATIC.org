@@ -1,0 +1,197 @@
+#+TITLE: Handoff: build =shiso:cached-static=
+#+DATE: 2026-07-22
+#+OPTIONS: toc:2 num:nil
+
+* What this is
+
+A work order for whoever picks up the Shiso framework next. Gyokubundo hit a
+real caching bug; the fix belongs in Shiso, not in the app. Read the whole
+thing before writing code — the production topology constrains the design more
+than it first appears.
+
+Shiso lives at =vendored/shiso= (a symlink to =~/common-lisp/almighty/shiso=),
+so edits there are framework edits.
+
+* The problem, concretely
+
+Static assets are served with a =Last-Modified= header but **no
+=Cache-Control=**. Per RFC 9111 §4.2.2 a cache may then invent a freshness
+lifetime, and every browser uses ~10% of the file's age:
+
+| file last changed | browser trusts its copy for |
+|-------------------+-----------------------------|
+| 1 hour ago        | ~6 minutes                  |
+| 1 day ago         | ~2.4 hours                  |
+| 30 days ago       | ~3 days                     |
+
+During that window the browser issues *no request at all* — not even a
+conditional one. Observed live on 2026-07-22: a CSS edit was invisible in the
+browser while =curl= showed the new file. The cache had to be disabled over CDP
+to see it.
+
+The failure mode in production is worse than a stale stylesheet. HTML is
+refetched on navigation (it carries no validator, so no heuristic applies) but
+CSS is not — so a returning visitor gets **new markup with days-old CSS**.
+Gyokubundo's asset URLs are unversioned (=/static/home/bar.css=), so nothing
+tells the browser the file changed.
+
+A stopgap is already deployed in Gyokubundo's =Caddyfile=:
+=header Cache-Control "no-cache"= on the =/static= block. That is correct but
+costs a conditional request per asset per page load. This work order replaces
+it with the real fix.
+
+* What exists today
+
+- =shiso:static= — =src/utils.lisp:103=. Three lines: string-concatenates
+  ~"/static/" + path~. No knowledge of the filesystem.
+- =shiso/static:collectstatic= — =src/static.lisp:76=. Copies each module's
+  =static/= into =<project>/static/<module>/=.
+- =shiso/static:make-static-middleware= — =src/static.lisp:49=. Dev-time
+  serving; searches the project =static/= first, then module roots, then falls
+  through. Delegates to =lack-app-file=.
+- Exports flow through =src/package.lisp= (=:import-from #:shiso/static= at
+  line 31, re-export at 177).
+
+* The constraint that drives the design
+
+**In production the Lisp app never serves =/static=.** Gyokubundo's Caddyfile
+has:
+
+#+begin_src
+handle_path /static/* {
+    root * /var/www/gyokubundo/static
+    file_server
+}
+#+end_src
+
+Caddy reads files straight off disk. It knows nothing about any in-Lisp
+mapping. Therefore a hashed URL like =/static/home/bar.a3f19c.css= **must
+correspond to a real file on disk**, or it 404s.
+
+That rules out "rewrite the URL in Lisp and strip the hash in middleware" —
+that only works in dev. It means =collectstatic= has to write the hashed
+filenames itself. This is the same conclusion Django reached with
+=ManifestStaticFilesStorage=; borrow the design.
+
+* What to build
+
+** =shiso:cached-static= (path) → string
+
+Same contract as =static=, but returns a URL that changes when the file's
+contents change.
+
+- *Production* (a manifest exists): look up =path= in the manifest, return the
+  hashed URL. Unknown path → fall back to =static= and warn once, do not error;
+  a missing asset should not take down a page.
+- *Development* (no manifest): return ~"/static/" + path + "?v=" + mtime~.
+  Not content-hashed, but it makes the developer's own edits appear
+  immediately — which is the bug that started this. Stat cost is acceptable;
+  memoize on (path . mtime) if it shows up in a profile.
+
+Leave =static= untouched and working. =cached-static= is opt-in; existing
+callers must not change behaviour.
+
+** Hashing
+
+SHA-256 of file contents, truncated to 8–12 hex characters. =ironclad= is
+already in the dependency graph (transitively, via =cl-pass=) — add it as a
+direct dependency of =shiso.asd= rather than relying on that.
+
+Name format: =<stem>.<hash>.<ext>= — e.g. =bar.css= → =bar.a3f19c2b.css=.
+Keep the real extension last so MIME sniffing and Caddy's content-type
+detection keep working.
+
+** =collectstatic= changes
+
+Add =:hash t= (default nil, so current behaviour is preserved). When enabled:
+
+1. Copy each file as it does now (keep the unhashed name — it stays useful for
+   anything referencing assets by literal path).
+2. Also write the hashed copy alongside it.
+3. Emit a manifest at =<target>/staticfiles.json= mapping logical → hashed:
+   ={"home/bar.css": "home/bar.a3f19c2b.css", ...}=.
+
+Two open questions to decide, not guess:
+- Whether to rewrite =url()= references *inside* CSS files so nested assets
+  (fonts, background images) are also hashed. Django does. It is a meaningful
+  scope increase. Gyokubundo currently has no =url()= references in its CSS, so
+  shipping without it is defensible — but say so explicitly in the docs rather
+  than leaving it as a silent gap.
+- Whether stale hashed files should be pruned on re-run, or accumulate.
+  Accumulating is safer during a rolling deploy (in-flight HTML may still
+  reference the previous hash) and is what Django does.
+
+** Manifest loading
+
+Load once, lazily, on first =cached-static= call; cache in a special variable.
+Provide a way to force a reload from the REPL (=shiso/static:reload-manifest=
+or similar) so a developer who runs =collectstatic= in a live image is not
+stuck with a stale map.
+
+** Dev middleware
+
+=make-static-middleware= must also resolve hashed names, so a page rendered
+from a manifest still works if someone runs the app in dev with a manifest
+present. Strip a trailing =.<hex>= segment before the extension and retry the
+lookup. Cheap, and it removes a confusing failure.
+
+* Deploy side (document, don't implement)
+
+Once hashed filenames ship, Gyokubundo's Caddyfile should serve them
+=immutable= and keep =no-cache= only for unversioned paths:
+
+#+begin_src
+@hashed path_regexp \.[0-9a-f]{8,12}\.(css|js|png|jpe?g|svg|woff2?)$
+header @hashed Cache-Control "public, max-age=31536000, immutable"
+header Cache-Control "no-cache"
+#+end_src
+
+Note Cloudflare sits in front (=cf-proxied:true= in the zone file), so verify
+edge behaviour after deploying, not just the origin.
+
+* Acceptance criteria
+
+1. =(shiso:static "home/bar.css")= returns =/static/home/bar.css= — unchanged.
+2. With a manifest, =(shiso:cached-static "home/bar.css")= returns the hashed
+   URL, and that URL is a real file on disk under the collected tree.
+3. Editing the source file and re-running =(collectstatic :hash t)= changes the
+   returned URL.
+4. Without a manifest, =cached-static= returns a =?v=<mtime>= URL that changes
+   when the file is touched.
+5. An unknown path degrades to =static= with a warning; no error, no 500.
+6. =collectstatic= without =:hash= behaves exactly as before.
+7. Dev middleware serves both =bar.css= and =bar.a3f19c2b.css=.
+
+Verify end to end by running the Gyokubundo app against the modified Shiso:
+switch a stylesheet in =src/modules/home/hypermedia/components.lisp= from
+=s:static= to =s:cached-static=, load a page, confirm the =<link>= href carries
+a hash and that the asset returns 200.
+
+* Docs to update
+
+Shiso's docs follow Diátaxis under =vendored/shiso/docs/=:
+
+- =how-to/serve-static-files.org= — add a section on cache-busting: when to
+  reach for =cached-static= over =static=, and the =:hash= flag.
+- =reference/utils.org= — document =cached-static= alongside =static=.
+- =how-to/deploy.org= — it already documents running =collectstatic= in the
+  build; update the invocation and add the =Cache-Control= header guidance.
+
+* Notes from the field
+
+- Gyokubundo's =Makefile= reimplements =collectstatic= as a shell =tar= copy
+  ("Mirror shiso:collectstatic") so the build does not need to boot the binary.
+  **Whatever you change here, that Makefile target has to keep producing an
+  identical tree — including the manifest — or the app and the deployed assets
+  will disagree.** Flag it in the docs; ideally make the shell path call the
+  Lisp one.
+- Dev-only, unrelated, worth a separate ticket: the dev static responses set a
+  new =lack.session= cookie on every asset request (session middleware runs for
+  static files). It does not create DB rows — verified, the count held at 5
+  across repeated requests — so it is waste, not a leak.
+- Also dev-only: the =Last-Modified= header is emitted as
+  =Wed, 22-Jul-2026 04:09:08 GMT=. RFC 9110's IMF-fixdate uses spaces, not
+  dashes. The server round-trips its own value (=If-Modified-Since= correctly
+  yields 304), and browsers are lenient, but a stricter intermediary may fail
+  to parse it and refetch. Comes from =lack-app-file=, so it may be an upstream
+  fix.

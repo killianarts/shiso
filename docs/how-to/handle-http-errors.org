@@ -1,0 +1,171 @@
+#+TITLE: How to handle HTTP errors
+#+OPTIONS: toc:2 num:nil
+
+Shiso turns errors into responses in one place, the outermost middleware.
+Code anywhere in a request signals a condition; the application decides
+what each status looks like. To see all of this working, run the demo in
+=examples/errors-demo= (its README has the steps).
+
+* Return an error from a controller
+
+Signal it. Nothing has to be returned or threaded back up:
+
+#+begin_src lisp
+(s:abort-with 404)
+(s:abort-with 403 :message "Members only.")
+(s:abort-with 405 :allowed '(:post))         ; sets the Allow header
+(s:abort-with 429 :headers '(:retry-after "60"))
+(error 's:not-found)                         ; the same as (s:abort-with 404)
+#+end_src
+
+The conditions are =s:bad-request= (400), =s:unauthorized= (401),
+=s:forbidden= (403), =s:not-found= (404), =s:method-not-allowed= (405) and
+=s:internal-server-error= (500), all under =s:http-error=. Any other status
+from 400 to 599 works with =abort-with=. A 4xx's =:message= is shown on the
+default page and in JSON; a 5xx's never is.
+
+A =handler-case= in your own code still sees these conditions first.
+
+* Look up a row or 404
+
+#+begin_src lisp
+(defun show (id)
+  (let ((book (s:get-or-404 'book :id id)))   ; MITO:FIND-DAO, or 404
+    ...))
+
+(s:found-or-404 (find-book-by-slug slug))     ; any lookup: the value, or 404
+#+end_src
+
+Shiso doesn't turn "not found" into a 404 by itself. A lookup with an ID
+your own code got wrong should be a 500, not a quiet 404, so you say at the
+call which lookups come from the URL.
+
+* Type a route parameter
+
+#+begin_src lisp
+(s:define-module books
+  (:urls (:GET "/<int:id>"        'show     "show")
+         (:GET "/by/<slug:author>" 'by-author "by-author")))
+#+end_src
+
+=show= receives the integer =42= for =/42=. For =/abc= the =int= converter
+rejects the value and the route doesn't match, so the request goes on to
+later routes and ends at a 404, never at a =parse-integer= error. Built in:
+=int= (digits), =slug= (=[-A-Za-z0-9_]=), =uuid=, =str=. A plain =:id= is
+still an untyped string.
+
+Define your own; it's looked up per request, so redefining it in the REPL
+takes effect at once:
+
+#+begin_src lisp
+(s:define-path-converter year (string)
+  (if (= 4 (length string))
+      (values (parse-integer string) t)
+      (values nil nil)))
+#+end_src
+
+=s:url= accepts the typed value: =(s:url "books:show" :id 42)=.
+
+* Design the error pages
+
+One form per status, or per class:
+
+#+begin_src lisp
+(s:define-error-page 404 (c)
+  (hy:page "Not found"
+           (ah:</> (p (or (s:http-error-message c) "There's nothing here.")))))
+
+(s:define-error-page :4xx (c)                 ; every other 4xx
+  (format nil "~D ~A" (s:http-error-status c) (s:reason-phrase (s:http-error-status c))))
+
+(s:define-error-page :5xx (c)
+  (declare (ignore c))
+  (hy:page "Sorry" (ah:</> (p "Something went wrong. It has been logged."))))
+#+end_src
+
+Lookup order: the exact status, then =:4xx= or =:5xx=, then =t=, then
+Shiso's built-in page. A page returns an HTML string, an almighty-html node,
+or a whole Clack response (a redirect, say). Pages render with the
+request's locale and =s:*request*= bound, so =s:translate=, =s:url= and your
+page components work.
+
+- HTMX requests (=HX-Request= header): =s:*fragment-p*= is true; return just
+  the part to swap in.
+- JSON clients (=Accept: application/json= or =application/problem+json=)
+  get RFC 9457 problem details instead of your page:
+  ={"type":"about:blank","title":"Not Found","status":404}=, with ="detail"=
+  holding a 4xx's message.
+- =HEAD= requests get the headers with an empty body.
+
+** When the error page itself fails
+
+Put a self-contained page at =static/errors/500.html= (new projects have one).
+If an error page signals, Shiso logs it and serves =static/errors/<status>.html=,
+then =4xx.html= or =5xx.html=, then plain text. Set
+=s:*prefer-static-5xx*= to serve the static file for every 5xx without
+trying the dynamic page.
+
+* Map your own conditions to statuses
+
+An error your application expects needn't be caught in every controller:
+
+#+begin_src lisp
+(defmethod s:condition-http-status ((c billing:quota-exceeded))
+  429)
+#+end_src
+
+The request gets your 429 page. A mapped condition is expected, so it's
+logged as one line, without a backtrace; the page can reach it with
+=(s:http-error-cause c)=. Shiso maps none of other libraries' conditions
+itself.
+
+* 404 and 405
+
+A path no route matches is a 404. A path some route matches with another
+method is a 405 with an =Allow= header; =OPTIONS= for it gets 204 with
+=Allow= (=s:*auto-options*=).
+
+* Debug mode
+
+With =:server/debugp= on (the default in development), and only for requests
+from this machine:
+
+- An unexpected error shows its condition and backtrace instead of the 500
+  page.
+- A 404 lists the URL patterns Shiso tried, in order, instead of your 404
+  page. Set =s:*debug-404*= to =nil= to preview your own.
+
+"This machine" means a loopback address and no =X-Forwarded-For= or
+=Forwarded= header, so a server behind nginx left in debug mode still shows
+the public its normal pages.
+
+** Fix errors from the REPL debugger
+
+Start with =:debugp :repl= (or set =:server/repl-debugger=):
+
+#+begin_src lisp
+(s:start my-app:application :debugp :repl)
+#+end_src
+
+An unexpected error now opens the debugger in SLY or SLIME, with the
+request still waiting. Fix the code, recompile it (=C-c C-c=), and choose
+=RETRY-REQUEST=: the request runs again with the same body, and the browser
+gets the fixed page. =SHOW-DEBUG-PAGE= and =SHOW-ERROR-PAGE= send a page
+instead. The server serves nothing else while the debugger is open. With
+no editor connected, you get the debug page.
+
+* Atomic requests
+
+POST, PUT, PATCH and DELETE requests run in one database transaction. It
+commits when the controller returns a response and rolls back when an error
+leaves it, =abort-with= included, so a request that fails halfway leaves no
+half-written rows. A =dbi:with-transaction= inside a controller becomes a
+savepoint. Turn it off with =(setf s:*atomic-requests* nil)=.
+
+* Logging
+
+Unexpected errors are logged to =*error-output*= with method, URI and
+backtrace, secrets masked, never cookies. Client errors are logged by
+=s:*log-client-errors*=: =:internal-referer= (the default) logs 404s whose
+=Referer= is your own site, broken links of your own; =t= logs every 4xx;
+=nil= none.

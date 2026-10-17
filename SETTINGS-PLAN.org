@@ -1,0 +1,378 @@
+#+title: Settings Plan
+
+This plan replaces =SETTINGS-PLAN.md=. That plan kept every value in one hash
+table of keywords; this one declares each setting, with its type, default,
+documentation and sources.
+
+The machinery is a library of its own, [[file:~/common-lisp/almighty/almighty-settei/README.org][almighty-settei]]
+(=~/common-lisp/almighty/almighty-settei=), built and tested. A Shiso user
+never meets it: the API is Shiso's (=shiso:define-setting=,
+=shiso:configure=, =SHISO_ENV=), and nothing they see names the library
+(see [[*Shiso's API, not the library's][Shiso's API, not the library's]]). What is left is Shiso's part: its own settings, loading them when it starts, the
+=shiso settings= command, and redacting secrets from error pages. See
+[[*What's left][What's left]].
+
+* Why
+
+Configuration is scattered. In almightylisp.com alone:
+
+| Where                           | What                                                        |
+|---------------------------------+-------------------------------------------------------------|
+| =src/main.lisp=                 | =get-env=, =get-env-int=, =envp=: =HOST=, =PORT=, =DEBUGP= parsed by hand |
+| =magazine/intel.lisp=           | =*desk-enabled*=, or =INTEL_DESK=true=                      |
+| =magazine/irc.lisp=             | =INTEL_IRC=true=; =*port*=                                  |
+| =magazine/intel.lisp=           | =GITHUB_TOKEN=, read where it is used                       |
+| =magazine/hypermedia/sheet.lisp= | =*site-origin*=, hard-coded                                |
+| =magazine/controllers.lisp=     | =/og-preview= borrows the desk's switch to mean "dev only"  |
+| Shiso =utils.lisp=              | =absolute-url= trusts the request's scheme, wrong behind a proxy |
+
+Nothing lists them, a misspelt variable name reads as =NIL=, every module
+invents its own way to say "on this machine only", and a =defparameter= that
+calls =getenv= is read when the binary is built, on the build machine, and
+frozen into it.
+
+* What we take from where
+
+| From                    | Lesson                                                                 |
+|-------------------------+------------------------------------------------------------------------|
+| setinka                 | Settings are typed, documented objects in a registry, read with a function; each value knows its source; values are checked when written |
+| Rails, Spring profiles  | One environment setting (development, test, production) that other settings' defaults depend on |
+| Django's =DEBUG=        | The default must be the safe one: a built program assumes production  |
+| Elixir's =runtime.exs=  | Read the environment when the server starts, never when code loads    |
+| Rails credentials, Django =SECRET_KEY= | Secrets are their own kind: from the environment only, never shown, never logged |
+| Phoenix per-app config  | Settings belong to modules, and are named by them                     |
+| Django system checks, Spring fail-fast | Check everything at startup and report every problem at once |
+| =diffsettings=, Spring Actuator =/env= | Show every setting's value and where it came from         |
+| dotenv                  | A =.env= file for development, under the real environment             |
+| django-constance        | Later: settings edited from an admin page, kept in the database       |
+
+* The settings, in short
+
+As a Shiso user writes them; almighty-settei's README is the full account.
+
+#+begin_src lisp
+(shiso:define-setting :magazine/desk-enabled shiso:boolean-setting
+  "Whether the Intel desk answers on this machine."
+  :environment "INTEL_DESK"
+  :default (shiso:per-environment :development t :otherwise nil))
+
+(shiso:define-setting :magazine/github-token shiso:string-setting
+  "Sent with the desk's GitHub searches, for a higher rate limit."
+  :environment "GITHUB_TOKEN"
+  :secret t)
+
+(shiso:setting :magazine/desk-enabled)         ; read
+(setf (shiso:setting :server/port) 5002)       ; set for this run, checked
+(shiso:setting-source :server/port)            ; => :ENVIRONMENT
+#+end_src
+
+- *Kinds*: =boolean-setting=, =integer-setting= (=:minimum=, =:maximum=),
+  =string-setting=, =pathname-setting=, =choice-setting= (=:options=),
+  =list-setting=, and =setting= with =:type=.
+- *Names* are keywords, =module/name=. Without =:environment=, the variable is
+  derived from the name after =*environment-variable-prefix*=.
+- *Sources*, the first found winning: =:session=, =:environment=, =:dotenv=,
+  =:project= (=configure=), =:environment-default= (=per-environment=),
+  =:computed= (a function), =:default=.
+- *The environment* is =:shiso/environment=, from =SHISO_ENV=;
+  =development-p=, =production-p=. It defaults to =:development= in an image
+  loaded from source and =:production= in a saved one, such as a built
+  program.
+- *The project's values*: =configure=, a macro taking names and values or
+  groups, =(:server :host "0.0.0.0" :port 5000)=, values evaluated and
+  possibly =per-environment=. Names are checked by =load-settings=, not when
+  configured, so the file may load before the modules that define them.
+- *Loading*: =load-settings= when the program starts. Nothing is read when
+  code loads; a saved image forgets what it had when it was saved.
+- *Checking*: =load-settings= signals one =settings-invalid= listing every
+  setting that is refused or =:required-in= this environment and not set,
+  with a =continue= restart.
+- *Secrets*: =:secret t= is never taken from =configure=, is masked by
+  =print-settings= and =settings-report=, and =redact= masks it in any text.
+- *Threads*: the program's configuration is =*configuration*='s global value;
+  =with-settings= binds a copy in one thread, for tests.
+- *Listeners*: =on-setting-change=.
+- *Misspelt names*: =setting-unknown= when run, a style warning when compiled.
+
+* Shiso on almighty-settei
+
+** Shiso's API, not the library's
+
+=shiso.asd= depends on =almighty-settei=, but a Shiso user writes only
+=shiso:= and reads only Shiso's documentation:
+
+- *The package.* Shiso's package imports and re-exports the user-facing
+  symbols, and only those:
+
+  | Defining     | =define-setting=, =setting=, =boolean-setting=, =integer-setting=, =string-setting=, =pathname-setting=, =choice-setting=, =list-setting= |
+  | Reading      | =setting= (and its =setf=), =setting-source=, =setting-unset=, =find-setting=, =list-settings= |
+  | The project  | =configure=, =per-environment=                                        |
+  | Environments | =current-environment=, =development-p=, =test-p=, =production-p=      |
+  | Loading      | =load-settings=, =reload-settings=, =settings-loaded-p=               |
+  | Tests        | =with-settings=                                                       |
+  | Listeners    | =on-setting-change=, =remove-setting-listener=                        |
+  | Showing      | =print-settings=, =settings-report=, =redact=                         |
+  | New kinds    | =coerce-value=, =check-value=, =reject=, =render-value=               |
+  | Conditions   | Shiso's own subclasses, below, and the library's readers of them |
+
+  The rest (registries, configurations, =.env= parsing, the builtin
+  machinery) stays the library's, for Shiso's own code and tests.
+- *The environment setting* is Shiso's: =src/settings.lisp= calls
+  =settei:define-environment-setting :shiso/environment= with
+  =:environment "SHISO_ENV"=. =:settei/environment= and =SETTEI_ENV= are then
+  gone from every registry, and =shiso settings= groups it under =shiso=.
+- *Derived variables* are Shiso's: =*environment-variable-prefix*= is
+  ="SHISO_"=, so a setting without =:environment= is set by
+  =SHISO_<MODULE>_<NAME>=.
+- *Documentation* is Shiso's: =org/src/settings.org= explains settings as
+  Shiso's, with Shiso's names; almighty-settei appears in =shiso.asd= and
+  the acknowledgements.
+- *Messages* name no library: the problems =load-settings= reports, the
+  settings list, the errors.
+
+- *Conditions* are Shiso's. Re-exporting a symbol doesn't change its home
+  package, and the debugger names a condition's type with it. So Shiso
+  defines its own subclass of each, in the =shiso= package, and has the
+  library signal them in its place (=settei:use-condition-class=):
+
+  #+begin_src lisp
+  (define-condition settings-invalid (settei:settings-invalid) ())
+  (settei:use-condition-class 'settei:settings-invalid 'settings-invalid)
+  #+end_src
+
+  for =settings-invalid=, =setting-invalid=, =setting-unknown=,
+  =settings-not-loaded=, =secret-configured= and =unknown-setting-warning=.
+  The banner reads "debugger invoked on a SHISO:SETTINGS-INVALID". These
+  names are Shiso's own symbols, so the package doesn't re-export the
+  library's; their readers (=settings-invalid-problems=, =problem-name=,
+  =problem-message=, =setting-invalid-name=, ...) are re-exported.
+
+** Shiso's own settings
+
+| Setting                 | Kind     | Default                                     | Replaces                         |
+|-------------------------+----------+---------------------------------------------+----------------------------------|
+| =:shiso/site-origin=    | string   | development: =http://localhost:5000=; required in production | =absolute-url= guessing from the request |
+| =:server/host=          | string   | ="127.0.0.1"=                               | =HOST=, =start='s keyword        |
+| =:server/port=          | integer  | =5000=                                      | =PORT=                           |
+| =:server/debugp=        | boolean  | development: =t=, otherwise =nil=           | =DEBUGP=                         |
+| =:server/backend=       | choice   | =:woo=                                      | hard-coded in =%start=           |
+| =:database/driver=      | choice   | =:sqlite3=                                  | =setup-database= in each app     |
+| =:database/name=        | string   | ="db/app.db"=                               | the same                         |
+| =:database/host=, =:database/port=, =:database/user= | string, integer, string | not set | — (a server database) |
+| =:database/password=    | string, secret | not set                               | —                                |
+| =:static/manifest=      | pathname | =static/staticfiles.json=                   | =default-manifest-path=          |
+
+=:server/host=, =:server/port= and =:server/debugp= keep =HOST=, =PORT=
+and =DEBUGP= as their variables (=:environment '("SHISO_SERVER_PORT"
+"PORT")=), so a deployment's environment file keeps working.
+
+** The database
+
+Shiso connects to the database, from =:database/driver= and =:database/name=
+(and, for a server database, =:database/host=, =:database/port=,
+=:database/user= and the secret =:database/password=).
+
+An application's =setup-database= today does four things, all of them
+generic: make =db/=, connect with mito, make the session table, and make
+the table of every model in =shiso/models:all-models=. Models register
+themselves with Shiso, so Shiso can make their tables too. =shiso:start=
+calls =shiso:setup-database=:
+
+1. Make the database file's directory, for SQLite.
+2. Connect with mito, from the settings.
+3. Make the session table, when the session store is the database's.
+4. Make each registered model's missing table (=mito:ensure-table-exists=;
+   it doesn't change a table that exists, so changing a model still needs
+   a migration).
+
+An application's =setup-database= is then deleted. For work of its own
+after connecting, such as seeding data, it gives a function:
+
+#+begin_src lisp
+(shiso:define-application *almightylisp-application* ()
+  (:after-database #'seed-defaults)
+  (:modules ...))
+#+end_src
+
+** Starting
+
+- =shiso:start= calls =shiso:load-settings= when the settings aren't
+  loaded, then =shiso:setup-database=, then reads =:server/*=. Its keyword
+  arguments still win: =(shiso:start app :port 3000)= sets =:server/port=
+  for this run, as a session value.
+- An application's =main=, the binary's entry point, calls
+  =load-settings= before =start=. In a built program the environment is
+  =:production= unless =SHISO_ENV= says otherwise.
+
+** Which machine this is
+
+Where the environment comes from, the first found:
+
+1. =SHISO_ENV= in the real environment.
+2. =SHISO_ENV= in the =.env= file in the project's directory.
+3. =:development= in an image loaded from source (the REPL), =:production=
+   in one started from a saved image (a built program, =shiso='s own CLI).
+
+So the safe default stays, and a development machine says what it is in a
+file, not in the shell: the project's =.env= holds =SHISO_ENV=development=,
+and the REPL, the built server run locally and the =shiso= CLI run from
+the project's directory all find it.
+
+The =.env= file's other variables count only in development
+(=settei:*dotenv-environments*=, left at its default): on a server, a stray
+=.env= changes nothing but, at most, the environment. That one risk is
+closed by the server's own =almightylisp.env= setting =SHISO_ENV=production=,
+a real environment variable, which wins over any file.
+- A problem stops the start with =settings-invalid=, listing them all.
+
+** The project's settings file
+
+What =settings.py= is to Django: Shiso's settings and every module's, in
+one place, for values that aren't secret:
+
+#+begin_src lisp
+;; src/settings.lisp, in almightylisp/core
+(in-package #:almightylisp)
+
+(shiso:configure
+  (:shiso    :site-origin "https://almightylisp.com")
+  (:server   :host "0.0.0.0" :port 5000)
+  (:database :driver :sqlite3 :name "db/almightylisp2.db")
+  (:magazine :desk-enabled (shiso:per-environment :development t :otherwise nil)
+             :irc-channel "#commonlisp"))
+#+end_src
+
+It can sit in =almightylisp/core=, which loads before the modules that
+define =:magazine/*=: =configure= keeps the values, and =load-settings=
+checks the names when the server starts, every setting defined by then.
+A misspelt name stops the start, listed with the other problems.
+
+Secrets (=GITHUB_TOKEN=, a database password) stay out of it, in
+=almightylisp.env= on the server and =.env= here. An environment variable
+wins over the file, as a machine's exception to the project's value;
+=shiso settings= shows which won.
+
+** Absolute URLs
+
+=absolute-url= uses =:shiso/site-origin= when the request is for that host,
+and the request's own =Host= and =X-Forwarded-Proto= otherwise, so a page on
+this machine still points at this machine.
+
+** Secrets on error pages
+
+Lack's backtrace middleware prints the request's environment. Shiso's error
+handler passes what it prints through =shiso:redact=, and so does its log.
+
+** =shiso settings=
+
+A CLI command (=src/cli/commands.lisp=) calling =shiso:print-settings=;
+=--changed= passes =:changed t=. Later, a page in Shiso's admin from
+=shiso:settings-report=.
+
+** Later: the store
+
+A durable setting changed while the server runs and kept, in a
+=shiso_setting= table, edited from an admin page. It would be a source
+between =:dotenv= and =:project= in almighty-settei, behind a store protocol
+Shiso implements with mito.
+
+- The environment wins over the store. The admin page shows a setting set
+  by an environment variable as fixed there, so an edit can't seem to save
+  and then come back changed after a restart.
+- A change notifies listeners in this process only. Several server
+  processes would need the store polled or a change signalled between
+  them; one process is enough for now.
+
+* almightylisp.com, after
+
+| Today                                | After                                                      |
+|--------------------------------------+------------------------------------------------------------|
+| =HOST=, =PORT=, =DEBUGP= and the helpers in =main.lisp= | =:server/*=; the helpers deleted            |
+| =*desk-enabled*= / =INTEL_DESK=      | =:magazine/desk-enabled=, on in development                |
+| =INTEL_IRC=                          | =:magazine/irc-enabled=, environment variable kept         |
+| =GITHUB_TOKEN=                       | =:magazine/github-token=, secret                           |
+| =*site-origin*= in =sheet.lisp=      | =:shiso/site-origin=, in =src/settings.lisp=               |
+| =/og-preview= gated on the desk      | =:magazine/og-preview-enabled=, on in development          |
+| =almightylisp.env= (=DEBUGP=false=)  | =SHISO_ENV=production=, explicit; =DEBUGP= can go          |
+| Nothing, in development              | =.env= (git-ignored) with =SHISO_ENV=development=, and any development values |
+| =setup-database= in =main.lisp=      | Deleted: Shiso connects and makes the tables; =:database/name= in =src/settings.lisp= |
+
+Constants that are content, not configuration (=*book-href*=,
+=*ebook-href*=, =*theme-packs*=), stay as they are.
+
+* What changes from SETTINGS-PLAN.md
+
+- No =define-settings= with =:modules= and =:middleware=. An application's
+  structure stays in =define-application=, which keeps expanding at compile
+  time; settings are values that differ between machines. This also removes
+  that plan's problem of =define-application= reading settings while it
+  expands.
+- No single hash table of keywords: settings are declared, typed and
+  documented, and an unknown name is an error.
+- No =SHISO_= prefix rule per server key: every setting derives its variable
+  the same way, and may name its own.
+
+* What's left
+
+Steps 1 to 7 are done (16 October 2026): almighty-settei, Shiso's
+integration, its app template, and almightylisp.com, with tests. Only the
+store and the admin page (step 8) are left.
+
+| Step                    | Where                                                                 |
+|-------------------------+-----------------------------------------------------------------------|
+| The library             | =~/common-lisp/almighty/almighty-settei=, 59 tests                    |
+| 1. The dependency       | =shiso.asd=; =src/settings.lisp= (environment, prefix, conditions); =src/package.lisp= |
+| 2. Shiso's settings     | =src/settings.lisp=                                                   |
+| 3. Starting, database   | =src/server.lisp= (=start=), =src/database.lisp=, =define-application='s =:after-database=, =src/static.lisp= |
+| 4. Absolute URLs        | =src/utils.lisp= (=site-origin=, =absolute-url=)                      |
+| 5. Redaction            | =src/server.lisp= (=wrap-error-logging=)                              |
+| 6. The command          | =src/management.lisp=: =<app> settings=                               |
+| 7. almightylisp.com     | =src/settings.lisp=, =src/main.lisp=, the magazine's settings, =almightylisp.env=, =.env=, =vendored/almighty-settei= |
+| Tests                   | =t/settings.lisp=, 10 tests                                           |
+| Documentation           | =org/src/settings.org=                                                |
+
+Where the work differs from this plan:
+
+- *The command is the application's, not the scaffolder's.* The =shiso=
+  binary scaffolds projects and has no application loaded; =settings= is a
+  management command in =run-cli=, so it is =almightylisp settings=, as
+  =createsuperuser= is. =run-cli= loads the settings first, and its database
+  setup defaults to Shiso's.
+- *Lack's default middleware is off.* =clackup= adds Lack's backtrace
+  printer whatever the debug setting, and it printed every error a second
+  time, unmasked. =wrap-error-logging= logs each error once, masked, and
+  outside debug mode answers the 500 itself, so Woo doesn't print the
+  message either. In debug mode errors go to the debugger, as Woo intends.
+- *=:database/name= has defaults*: =db/development.db= in development, an
+  in-memory database in tests, required in production. Required everywhere,
+  a fresh REPL couldn't read any setting until it was configured.
+- *Shiso's conditions live in =shiso/settings=*, re-exported by =shiso=: the
+  debugger names =SHISO/SETTINGS:SETTINGS-INVALID=.
+- *almighty-settei is vendored as a copy*, like =almighty-html=, not a
+  symlink: the server builds from the git checkout, and the library has no
+  remote to fetch.
+- *The library gained what the integration needed*: a =configure= value may
+  be a function, called when the settings load (the app template's database
+  path, under the user's home); a =per-environment= in =configure= leaves the
+  environments it doesn't name at the default (the site origin, set for
+  production only); a derived variable doesn't repeat the prefix
+  (=SHISO_SITE_ORIGIN=).
+- *The app template* has =src/settings.lisp= in place of =src/config.lisp=,
+  and its =main= no longer sets up the database. =shiso new-application=
+  writes the project's =.env= (=SHISO_ENV=development=) itself: kept in the
+  template, the template's own =.gitignore= would keep it out of Shiso's
+  repository.
+
+8. *Later.* The store and the admin page.
+
+* Decisions
+
+- *The environment of a saved image*, =shiso='s CLI included, defaults to
+  production. A development machine says otherwise in its =.env=
+  (=SHISO_ENV=development=), read even outside development for that one
+  variable, so nothing is set in the shell. See [[*Which machine this is][Which machine this is]].
+- *The debugger names Shiso's condition types*, through
+  =settei:use-condition-class=.
+- *=.env= is read only in development*, apart from =SHISO_ENV=.
+
+No questions are open.

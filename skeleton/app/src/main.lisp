@@ -3,26 +3,17 @@
   (:export #:start-server
            #:stop-server
            #:main)
-  (:local-nicknames (#:config #:<% @var application-name %>/config)
-                    (#:routes #:<% @var application-name %>/routes)))
+  (:local-nicknames (#:routes #:<% @var application-name %>/routes)))
 
 (in-package #:<% @var application-name %>/main)
 
-(defun setup-database ()
-  (let ((db (config:database-path)))
-    (ensure-directories-exist (uiop:pathname-directory-pathname db))
-    (mito:connect-toplevel :sqlite3 :database-name db)
-    (shiso:ensure-session-table :table-name "shiso_session")
-    (dolist (model-name (shiso/models:all-models))
-      (mito:ensure-table-exists (shiso/models:model-class model-name)))))
-
-(defun start-server (&key (host (config:host))
-                          (port (config:port))
-                          (debugp (config:debugp)))
-  (setup-database)
+(defun start-server ()
+  "Start the server. Shiso loads the settings (src/settings.lisp, the
+environment, and .env in development), connects to the database and makes
+its tables, and serves on :server/host and :server/port."
   (shiso:load-localisations
    :root (asdf:system-relative-pathname :<% @var application-name %> "locale/"))
-  (shiso:start routes:application :host host :port port :debugp debugp))
+  (shiso:start routes:application))
 
 (defun stop-server ()
   (shiso:stop))
@@ -39,11 +30,9 @@
 
 (defun main (&rest argv)
   "Binary entry point. Delegates to Shiso's management-command dispatcher:
-a recognized subcommand (e.g. createsuperuser) runs and exits; a bare
-invocation starts the server. Management commands that need the DB get
-`setup-database' first."
+a recognized subcommand (e.g. createsuperuser, settings) runs and exits; a
+bare invocation starts the server."
   (shiso:run-cli (or argv (uiop:command-line-arguments))
                  :program "<% @var application-name %>"
                  :version "0.1"
-                 :setup-db #'setup-database
                  :serve #'run-server))

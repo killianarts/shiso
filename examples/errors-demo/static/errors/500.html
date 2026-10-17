@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>500 Internal Server Error</title>
+<style>
+  /* Self-contained on purpose: this page is served when the app's own error
+     page fails, so it must not depend on the app's templates or assets. */
+  body { font-family: system-ui, sans-serif; max-width: 40rem; margin: 4rem auto; padding: 0 1rem; color: #222; line-height: 1.5; }
+  h1 { font-size: 1.6rem; }
+  .which { color: #888; font-size: 0.85rem; }
+  @media (prefers-color-scheme: dark) { body { background: #161616; color: #ddd; } }
+</style>
+</head>
+<body>
+<p class="which">Served from static/errors/500.html: the app's error page itself failed.</p>
+<h1>500 Internal Server Error</h1>
+<p>Something went wrong on our side. It has been logged.</p>
+<p><a href="/">Home</a></p>
+</body>
+</html>

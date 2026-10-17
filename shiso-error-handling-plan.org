@@ -1,0 +1,669 @@
+#+TITLE: Shiso HTTP Error Handling Plan
+#+STARTUP: content
+
+* Implementation status (2026-10-17)
+Implemented: everything below except phase 2 (=:error-pages= on =define-application=). Tests: =t/errors.lisp= (41 tests). Demo: =examples/errors-demo=. Docs: =docs/how-to/handle-http-errors.org=, CHANGELOG.
+
+Where the code differs from the plan:
+- *Settings, not a variable.* The settings work landed first, so =*debug*= defaults to =:settings= and reads =:server/debugp= and a new boolean setting =:server/repl-debugger= (defined in =src/errors.lisp=) per request. =(s:start app :debugp :repl)= sets both. Tests bind =*debug*= to =nil= / =t= / =:repl=.
+- *Fallback signals by flag.* =signal-or-render= raises the condition only inside =wrap-http-errors= (=*in-error-middleware*=), and otherwise renders the page itself. Plain =signal= didn't work: a test framework's handler (lisp-unit2) took the signal.
+- *Pages render after unwinding.* Handlers record what happened, unwind, then render. So a request transaction has rolled back before the error page queries the database. =*render-around*= (=render-error-page-in-request= in =server.lisp=) binds the locale /and/ =shiso:*request*= again, so helpers like =csrf-token-value= work in pages.
+- =*allowed-methods*= is bound by =define-application='s app as well as by the middleware, so a bare app (tests) works.
+- *Static error root:* derived from =shiso/static:project-static-root= (=static/errors/=) instead of being set by =define-application=.
+- *Woo lacks status lines* for 428, 429 and 431, so such a response reached the client as an empty 500. =shiso:start= adds the missing lines (=ensure-woo-status-lines=).
+- *Backtraces* in logs and on the debug page are trimmed to start at the =error= call.
+- =Allow= lists methods in the usual order (GET, HEAD, POST, …).
+- Public helper added: =shiso:reason-phrase=.
+
+* shiso: HTTP error handling --- implementation plan (revised after review)
+Repo: =~/common-lisp/almighty/shiso= (system =shiso=, tests =shiso/tests=, lisp-unit2). Scope: condition hierarchy + =abort-with=, one error middleware, =define-error-page= registry, JSON/HTMX negotiation, real 405 + =Allow=, debug page, crash-safe fallback, removal of hard-coded responses. =:error-pages= on =define-application= is phase 2.
+
+Additions borrowed from other frameworks (§4.10–4.15): condition→status mapping + =get-or-404= (Rails =rescue_responses=, Phoenix =Plug.Exception=, Django =get_object_or_404=), RFC 9457 =application/problem+json= (Spring/ASP.NET =ProblemDetails=), debug 404 page listing the routes tried (Django technical 404), REPL-debugger mode with a =retry-request= restart (Lisp-only), a 4xx logging policy (Django =BrokenLinkEmailsMiddleware=), and static error-page files as a last resort (Rails =public/500.html=).
+
+** 1. Goals
+1. Controllers can write =(s:abort-with 404)= or =(error 's:not-found)= anywhere in the request extent (incl. inside almighty-html rendering, Mito calls, guards).
+2. Apps customise pages with one form per status: =(s:define-error-page 404 (c) (hypermedia:page "Not found" (ah:</> ...)))=.
+3. Lookup: exact code → =:4xx=/=:5xx= → =t= → built-in default page.
+4. JSON for =Accept: application/json= clients, bare fragment for HTMX (=HX-Request=).
+5. Wrong method on an existing path → 405 with =Allow=, not 404.
+6. Unhandled Lisp errors → logged with backtrace, then 500 page (prod) or debug page (dev).
+7. A crashing error page never produces a loop or an empty connection: plain-text fallback.
+8. Behaviour of existing apps unchanged except the bodies of 404/400/500 responses.
+9. Foreign conditions map to statuses without per-controller =handler-case=: =(defmethod s:condition-http-status ((c my-app:quota-exceeded)) 429)=. =(s:get-or-404 'book :id id)= for the common lookup case.
+10. JSON errors use RFC 9457 =application/problem+json=, not an ad-hoc shape.
+11. In debug mode a router 404 shows the URL patterns tried, in order (Django's technical 404).
+12. =:debugp :repl= opens the Lisp debugger on unexpected errors, with =RETRY-REQUEST= (re-run the request after fixing/recompiling code) and =SHOW-DEBUG-PAGE= restarts.
+13. 5xx always logged with backtrace; 4xx logged by policy (default: only 404s whose Referer is the same site, i.e. broken internal links), one line, no backtrace.
+14. If the dynamic error page fails, serve =static/errors/<status>.html= (or =4xx.html= / =5xx.html=) before falling back to plain text.
+
+** 2. Files
+| File                                              | Change                                                                                                                                    |
+|---------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------|
+| =src/errors.lisp= (new, package =shiso/errors=)   | conditions, =abort-with=, registry, negotiation, renderers, =wrap-http-errors=                                                            |
+| =shiso.asd=                                       | add =(:file "errors")= right after ="modules"= (before ="routing"=, whose macro expansion references =shiso/errors= symbols at read time) |
+| =src/routing.lisp=                                | =define-application= final fallback → 404/405 via =shiso/errors= (404 carries =:mounts=); sets =errors:*route-describer*=; sets =errors:*static-error-root*= from the detected project =static/= |
+| =src/models/shortcuts.lisp= (new)                 | =get-or-404=, =found-or-404=; re-exported via =shiso/models= and =shiso=                                                                   |
+| =src/routing.lisp=, =src/utils.lisp= (§4.17)      | typed route parameters: =<type:name>= rewrite, converter registry, =next-route= on rejection, =url= applies =to-url=; =:regexp= captures fix |
+| =src/admin/routes.lisp=, =src/admin/controllers.lisp= | =/:model/<int:id>=; drop =parse-integer=                                                                                                  |
+| =src/requests.lisp=                               | 400 on bad request → =bad-request=; on mapper miss record allowed methods in env                                                          |
+| =src/server.lisp=                                 | replace =wrap-error-logging= with =shiso/errors:wrap-http-errors= (logging moves inside it); set =*debug*= from =debugp= (=nil= / =t= / =:repl=) |
+| =src/package.lisp=                                | import + re-export public names                                                                                                           |
+| =src/auth/guards.lisp=                            | (optional, step 8) =forbidden-response= renders via registry                                                                              |
+| =src/i18n/controllers.lisp=                       | =set-language=: hand-made 405 → =(errors:abort-with 405 :allowed '(:POST))=                                                               |
+| =t/errors.lisp= (new) + =shiso.asd= =shiso/tests= | tests; add =run-tests :package :shiso/t/errors= to =:perform=                                                                             |
+| =skeleton/app/src/…=, =examples/mysite=           | example =define-error-page= forms; docs                                                                                                   |
+| =skeleton/…/static/errors/500.html= (new)         | self-contained static 500 page (inline CSS, no external assets)                                                                           |
+| =shiso.asd=                                       | add =:flexi-streams= (already loaded transitively) for the =:repl= body snapshot; add =shortcuts= to the =models= module                  |
+
+** 3. Public exports (from =shiso/errors=, re-exported by =shiso=)
+=http-error http-error-status http-error-message http-error-headers http-client-error http-server-error bad-request unauthorized forbidden not-found method-not-allowed allowed-methods internal-server-error abort-with define-error-page remove-error-page *error-pages* find-error-page *debug* *allowed-methods* *render-around* *fragment-p* wrap-http-errors render-error-response default-error-page
+condition-http-status http-error-cause http-error-type not-found-mounts *debug-404* *route-describer* *log-client-errors* *static-error-root* *prefer-static-5xx* retry-request show-debug-page=
+
+From =shiso/models= (re-exported by =shiso=): =get-or-404 found-or-404=
+
+** 4. Code
+*** 4.1 Conditions + abort-with (=src/errors.lisp=)
+#+begin_src lisp
+(defpackage #:shiso/errors
+  (:use #:cl)
+  (:local-nicknames (#:ah #:almighty-html))
+  (:export ...))           ; list in §3
+(in-package #:shiso/errors)
+
+(defvar *debug* nil
+  "Global (NOT let-bound): Woo serves requests on worker threads, which do not
+inherit dynamic bindings made in the thread that called clackup.")
+
+(define-condition http-error (error)
+  ((status  :initarg :status  :reader http-error-status)
+   (message :initarg :message :initform nil :reader http-error-message)
+   (headers :initarg :headers :initform nil :reader http-error-headers)
+   ;; Original condition when a foreign condition was mapped (§4.10).
+   (cause   :initarg :cause   :initform nil :reader http-error-cause)
+   ;; RFC 9457 "type" URI; NIL renders as "about:blank" (§4.11).
+   (type    :initarg :type    :initform nil :reader http-error-type))
+  (:report (lambda (c s) (format s "HTTP ~D~@[: ~A~]"
+                                 (http-error-status c) (http-error-message c)))))
+(define-condition http-client-error (http-error) ())
+(define-condition http-server-error (http-error) ())
+(define-condition bad-request  (http-client-error) () (:default-initargs :status 400))
+(define-condition unauthorized (http-client-error) () (:default-initargs :status 401))
+(define-condition forbidden    (http-client-error) () (:default-initargs :status 403))
+(define-condition not-found    (http-client-error)
+  ;; Set only by the define-application fallback: ((prefix . module-kw) ...),
+  ;; in mount order. Lets the debug 404 page list the routes tried (§4.12).
+  ((mounts :initarg :mounts :initform nil :reader not-found-mounts))
+  (:default-initargs :status 404))
+(define-condition method-not-allowed (http-client-error)
+  ((allowed :initarg :allowed :initform nil :reader allowed-methods))
+  (:default-initargs :status 405))
+(define-condition internal-server-error (http-server-error) ()
+  (:default-initargs :status 500))
+
+(defun status-condition-class (status)
+  (case status
+    (400 'bad-request) (401 'unauthorized) (403 'forbidden)
+    (404 'not-found) (405 'method-not-allowed) (500 'internal-server-error)
+    (t (if (< status 500) 'http-client-error 'http-server-error))))
+
+(defun abort-with (status &rest initargs &key message headers allowed type)
+  (declare (ignore message headers allowed type))
+  (check-type status (integer 400 599))
+  (apply #'error (status-condition-class status) :status status initargs))
+#+end_src
+
+=allowed= is only a valid initarg for =method-not-allowed=; =abort-with= drops it (=(remf initargs :allowed)=) for other classes to avoid an invalid-initarg error. =abort-with= also accepts =:type= (RFC 9457 problem type URI).
+
+*** 4.2 Registry
+#+begin_src lisp
+(defvar *error-pages* (make-hash-table :test 'eql)
+  "Keys: integer status, :4xx, :5xx, or T. Values: (lambda (condition) ...)
+returning an HTML string, an almighty-html node, or a full Clack list.")
+
+(defmacro define-error-page (key (condition-var) &body body)
+  (check-type key (or (integer 400 599) (member :4xx :5xx t)))
+  `(progn (setf (gethash ',key *error-pages*)
+                (lambda (,condition-var) (declare (ignorable ,condition-var)) ,@body))
+          ',key))
+
+(defun remove-error-page (key) (remhash key *error-pages*))
+
+(defun find-error-page (status)
+  (or (gethash status *error-pages*)
+      (gethash (if (< status 500) :4xx :5xx) *error-pages*)
+      (gethash t *error-pages*)
+      #'default-error-page))
+#+end_src
+
+Late-bound (looked up per request), so re-evaluating a form in the REPL takes effect immediately --- matches how =define-module= is late-bound.
+
+*** 4.3 Negotiation (Lack env: =:headers= is a hash table with lowercase keys)
+#+begin_src lisp
+(defun request-header (env name)
+  (let ((h (getf env :headers))) (and h (gethash name h))))
+
+(defun response-kind (env)
+  (let ((accept (or (request-header env "accept") "")))
+    (cond ((request-header env "hx-request") :fragment)
+          ;; "application/problem+json" doesn't contain "application/json".
+          ((and (or (search "application/json" accept)
+                    (search "application/problem+json" accept))
+                (not (search "text/html" accept))) :json)
+          (t :html))))
+#+end_src
+
+Simple substring check, deliberately not full q-value parsing (decided, §8 Q4).
+
+*** 4.4 Rendering
+#+begin_src lisp
+(defparameter +reason-phrases+
+  '((400 . "Bad Request") (401 . "Unauthorized") (403 . "Forbidden")
+    (404 . "Not Found") (405 . "Method Not Allowed") (500 . "Internal Server Error")))
+(defun reason-phrase (status)
+  (or (cdr (assoc status +reason-phrases+)) (if (< status 500) "Client Error" "Server Error")))
+
+(defun default-error-page (c)
+  (let ((status (http-error-status c)))
+    (ah:</> (html (head (meta :charset "utf-8")
+                        (title (format nil "~D ~A" status (reason-phrase status))))
+                  (body (h1 (format nil "~D ~A" status (reason-phrase status)))
+                        (p (or (http-error-message c) "")))))))
+
+(defun json-escape (s) ...)   ; shiso has no JSON dependency; escape \" \\ and control chars
+
+(defun extra-headers (c)
+  (append (http-error-headers c)
+          (when (typep c 'method-not-allowed)
+            (list :allow (format nil "~{~A~^, ~}" (allowed-methods c))))))
+
+(defun coerce-page-result (status result c)
+  "Page functions may return a Clack list, a string, or an almighty-html node."
+  (cond ((and (consp result) (integerp (first result))) result)
+        (t (list status
+                 (append (list :content-type "text/html; charset=utf-8") (extra-headers c))
+                 (list (if (stringp result) result (ah:render-to-string result)))))))
+
+(defun plain-fallback (status)
+  (list status '(:content-type "text/plain; charset=utf-8")
+        (list (format nil "~D ~A" status (reason-phrase status)))))
+
+(defun render-error-response (c env)
+  "Never signals. Always returns a Clack (status headers body) list."
+  (let ((status (http-error-status c)))
+    (handler-case
+        (ecase (response-kind env)
+          (:json (problem-json-response c))                 ; §4.11
+          ((:html :fragment)
+           (if (and (>= status 500) *prefer-static-5xx*)     ; §4.15
+               (or (static-error-response status) (plain-fallback status))
+               (if (debug-404-p c env)                       ; §4.12
+                   (debug-404-response c env)
+                   ;; :fragment — HTMX swaps only the body; page fns may check *fragment-p*.
+                   (let ((*fragment-p* (eq (response-kind env) :fragment)))
+                     (coerce-page-result status (funcall (find-error-page status) c) c))))))
+      (error (e)
+        (log-error e env "error page itself failed")
+        (or (ignore-errors (static-error-response status))   ; §4.15
+            (plain-fallback status))))))
+#+end_src
+
+=*fragment-p*= (exported) lets an app page return just the inner content for HTMX. For =HEAD= requests the body is replaced by ='()= (headers still sent).
+
+*** 4.5 Debug page
+#+begin_src lisp
+(defun debug-page-response (c backtrace env)
+  (list 500 '(:content-type "text/html; charset=utf-8")
+        (list (ah:render-to-string
+               (ah:</> (html (body (h1 (format nil "500: ~A" (type-of c)))
+                                   (pre (princ-to-string c))
+                                   (h2 "Backtrace") (pre backtrace)
+                                   (h2 "Request")
+                                   (pre (format nil "~S ~S" (getf env :request-method)
+                                                (getf env :request-uri))))))))))
+#+end_src
+
+Never dump the full env (session cookie, CSRF token). Text goes through almighty-html so it's escaped (check =ah= escapes string children --- see §8).
+
+*** 4.6 The middleware (replaces =wrap-error-logging=)
+#+begin_src lisp
+(defun log-error (c env &optional backtrace note) ...) ; same format as current
+                                                         ; shiso/server::wrap-error-logging
+
+(defun wrap-http-errors (app)
+  (lambda (env)
+    (let ((*allowed-methods* nil)) ; per request, thread-local under Woo
+      (if (eq *debug* :repl)
+          (call-with-retry app env)          ; §4.13: restarts around the request
+          (call-with-error-pages app env)))))
+
+(defun call-with-error-pages (app env)
+  (block request
+    (handler-bind
+        ((error
+           (lambda (c)
+             (let ((status (ignore-errors (condition-http-status c)))) ; §4.10
+               (if status
+                   ;; Expected: an http-error, or a foreign condition mapped to a status.
+                   (let ((hc (if (typep c 'http-error) c (http-error-for c status))))
+                     (log-client-error hc env)                         ; §4.14
+                     (return-from request (render-error-response hc env)))
+                   ;; Unexpected. Runs BEFORE unwinding, so the backtrace is still on the stack.
+                   (let ((bt (ignore-errors
+                              (with-output-to-string (s)
+                                (uiop:print-condition-backtrace c :stream s)))))
+                     (log-error c env bt)
+                     (when (and (eq *debug* :repl) (local-request-p env))
+                       ;; Never returns: the developer picks a restart (§4.13).
+                       (setf *request-failure* (cons c bt))
+                       (invoke-debugger c))
+                     (return-from request
+                       (if (and *debug* (local-request-p env))
+                           (handler-case (debug-page-response c bt env)
+                             (error () (plain-fallback 500)))
+                           (render-error-response
+                            (make-condition 'internal-server-error) env)))))))))
+      (funcall app env))))
+
+(defun local-request-p (env)
+  "True only for a request made directly from this machine (Rails' request.local?).
+A request with X-Forwarded-For / Forwarded came through a proxy, so it is NOT
+local even though :remote-addr is loopback (nginx on the same host)."
+  (and (member (getf env :remote-addr) '("127.0.0.1" "::1") :test #'equal)
+       (not (request-header env "x-forwarded-for"))
+       (not (request-header env "forwarded"))))
+#+end_src
+
+Debug output (debug 500 page, debug 404 page, =:repl= debugger) requires /both/ =*debug*= and =local-request-p= (§8 Q3). A production server left at =debugp t= therefore still shows the normal 500 page to the public. The failure mode is safe: a client can only add forwarding headers, which make a request /less/ local, and a remote client can't make =:remote-addr= loopback.
+
+Inner =handler-case=s in user code still win (handlers are searched innermost first). A single =error= clause now covers =http-error= too, because =condition-http-status= returns the status for it. =condition-http-status= is wrapped in =ignore-errors=: a buggy app method must not escape the handler (a =handler-bind= handler runs with its own cluster disabled, so a signal there would go straight to Woo); a failing lookup counts as unexpected (500).
+
+*** 4.7 Middleware order (=src/server.lisp=)
+#+begin_src lisp
+(defun wrap-app (inner-app)
+  (errors:wrap-http-errors                         ; outermost: catches session/CSRF/i18n errors too
+   (funcall lack/middleware/session:*lack-middleware-session*
+            (i18n:wrap-locale
+             (funcall lack/middleware/csrf:*lack-middleware-csrf*
+                      (wrap-atomic-requests inner-app)))       ; §4.16
+            :store (session:make-store))))
+#+end_src
+
+Resulting order, outer→inner: http-errors → session → locale → CSRF → atomic-requests → app (static → strip-trailing-slash → module mounts → 404/405 fallback). Because the error layer is outside =wrap-locale=, =i18n:*locale*= is NOT bound while an error page renders. =render-error-response= therefore rebinds it: via the =errors:*render-around*= hook (R3), which =server.lisp= sets to =(lambda (env thunk) (let ((i18n:*locale* (or (ignore-errors (i18n:best-locale env)) i18n:*default-locale*))) (funcall thunk)))=.
+
+=%start=: =(setf errors:*debug* debugp)= before =clackup=. =debugp= accepts =nil= / =t= / =:repl= (§4.13). Pass =:debug (and debugp t)= to clack; it no longer matters for app errors because we always return a response.
+
+*** 4.8 404/405 at the end of the mount chain
+Modules return =(values 404-response nil)= on a miss so the next mount can try; that must stay (signalling in the module would break fall-through). So:
+
+=src/requests.lisp=, miss branch:
+
+#+begin_src lisp
+(let ((allowed (allowed-methods-for (routing:routes-mapper (modules:module-routes this))
+                                    (req:request-path-info *request*))))
+  (when allowed
+    (setf errors:*allowed-methods* (union allowed errors:*allowed-methods*))))
+;; errors:*allowed-methods* is let-bound to NIL per request inside wrap-http-errors (R5).
+#+end_src
+
+#+begin_src lisp
+(defparameter +probe-methods+ '(:GET :POST :PUT :PATCH :DELETE :OPTIONS))
+(defun allowed-methods-for (mapper path)
+  "Methods for which PATH matches some route. Uses myway.rule::match-rule directly
+(not myway:dispatch, which would CALL the controller)."
+  (let ((ms (loop for m in +probe-methods+
+                  when (some (lambda (route)
+                               (myway.rule::match-rule (myway.route:route-rule route) m path
+                                                       :allow-head nil))
+                             (myway.mapper:mapper-routes mapper))
+                    collect m)))
+    (if (member :GET ms) (append ms '(:HEAD)) ms)))
+#+end_src
+
+Allowed methods are collected in a per-request special, not in env (R5).
+
+=define-application= fallback:
+
+#+begin_src lisp
+(lambda (env)
+  (declare (ignore env))
+  (let ((allowed shiso/errors:*allowed-methods*))
+    (if allowed
+        (shiso/errors:abort-with 405 :allowed allowed)
+        ;; Mount list is known at macro-expansion time; quoted constant.
+        (error 'shiso/errors:not-found
+               :mounts '(("" . :pages) ("/books" . :books))))))  ; from (:modules ...)
+#+end_src
+
+=requests.lisp= bad request: =(error 'shiso/errors:bad-request)= instead of the literal ='(400 () ("Bad Request"))=.
+
+OPTIONS: if the path exists but no route accepts OPTIONS, the fallback returns =204= with =Allow= instead of 405 (phase 1.5; behind =*auto-options*=, default T).
+
+*** 4.9 Guards / CSRF
+- =forbidden-response= (=src/auth/guards.lisp=) → render through =errors:render-error-response (make-condition 'errors:forbidden) env=, keeping its =(values result t)= contract in the =:around= method (no signalling there, so the mount wrapper still sees "handled").
+- CSRF failure is =lack/middleware/csrf::return-400=, a plain response. Pass =:block-app (lambda (env) (declare (ignore env)) (error 'errors:bad-request :message "CSRF token invalid"))= to the CSRF middleware so it uses the registry too.
+
+*** 4.10 Condition → status mapping, =get-or-404= (from Rails / Phoenix / Django)
+Rails maps exception classes to statuses (=rescue_responses=), Phoenix asks the exception (=Plug.Exception.status/1=). In Lisp this is a generic function, so apps (or shiso modules) add methods for conditions they don't own:
+
+#+begin_src lisp
+(defgeneric condition-http-status (condition)
+  (:documentation "Status (integer 400–599) CONDITION should produce, or NIL if it
+is unexpected (logged with backtrace → 500 / debug page / debugger).")
+  (:method ((c condition)) nil)
+  (:method ((c http-error)) (http-error-status c)))
+
+(defun http-error-for (c status)
+  "Wrap foreign condition C so the renderers only ever see http-errors.
+No :message: a foreign condition's report text may leak internals."
+  (make-condition (status-condition-class status) :status status :cause c))
+#+end_src
+
+App usage: =(defmethod s:condition-http-status ((c billing:quota-exceeded)) 429)=. Mapped conditions are /expected/: no backtrace, no debugger, logged under the 4xx policy (§4.14) when < 500. Error pages can reach the original via =(http-error-cause c)=. Shiso ships *no built-in mappings in phase 1* (decided, §8 Q7): =condition-http-status= has only the =condition= (NIL) and =http-error= methods.
+
+=src/models/shortcuts.lisp= (new; loads after =define-model=, before =package=):
+
+#+begin_src lisp
+(defun get-or-404 (class &rest find-args)
+  "Like mito:find-dao, but signals shiso/errors:not-found instead of returning NIL."
+  (or (apply #'mito:find-dao class find-args)
+      (shiso/errors:abort-with
+       404 :message (when shiso/errors:*debug*
+                      (format nil "No ~A matching ~S" class find-args)))))
+
+(defun found-or-404 (value)
+  "VALUE, or signal not-found when it is NIL. For lookups that aren't find-dao."
+  (or value (shiso/errors:abort-with 404)))
+#+end_src
+
+The message is set only in debug mode, because the default page shows it and "No BOOK matching (:ID 7)" is an internal detail. Django likewise shows the =Http404= text only on its debug page.
+
+*** 4.11 RFC 9457 problem details (from Spring / ASP.NET Core)
+Replace the ad-hoc ={"status":…,"error":…}= body with =application/problem+json=:
+
+#+begin_src lisp
+(defun problem-json-response (c)
+  (let ((status (http-error-status c)))
+    (list status
+          (append '(:content-type "application/problem+json; charset=utf-8") (extra-headers c))
+          (list (format nil "{\"type\":\"~A\",\"title\":\"~A\",\"status\":~D~@[,\"detail\":\"~A\"~]}"
+                        (json-escape (or (http-error-type c) "about:blank"))
+                        (json-escape (reason-phrase status))
+                        status
+                        (and (http-error-message c) (json-escape (http-error-message c))))))))
+#+end_src
+
+- =type= defaults to =about:blank=, for which the RFC says =title= SHOULD be the reason phrase --- so =title= is always the reason phrase and app text goes in =detail=.
+- 5xx never carry =detail= (the middleware creates =internal-server-error= without a message; mapped conditions get none either).
+- 405 keeps the =Allow= header; no non-standard extension members in phase 1.
+- Still hand-rolled (R11: no JSON dependency).
+
+*** 4.12 Debug 404 page (from Django's technical 404)
+When =*debug*= is on (=t= or =:repl=), =*debug-404*= is T (default), the response kind is =:html=, and the status is 404, render a page instead of the app's 404 page:
+
+- Router miss (=not-found-mounts= non-nil): "Shiso tried these URL patterns, in this order", one row per entry in the same order the app runs them:
+  1. =/static/…= (static middleware; only when a static root exists), with the roots searched (project =static/= + module =static/= dirs).
+  2. "Trailing slash: =PATH/= → 301 =PATH=" (strip-trailing-slash middleware).
+  3. Each mounted module's routes: mount prefix + route URL, methods, route name (=pages:index=).
+  The path requested is shown below the table. The static and trailing-slash rows come from the same =:mounts= data plus =shiso/static= roots, via the =*route-describer*= hook.
+- Raised by code (=abort-with 404= / =get-or-404=): "Raised by: <message>" plus the request path; no route table.
+- Footer: "You're seeing this because debugp is on. Set =shiso:*debug-404*= to NIL to preview your own 404 page."
+
+Route listing goes through a hook, because =errors.lisp= loads before =routing.lisp= (R3) and =routes-mapper= lives there:
+
+#+begin_src lisp
+(defvar *route-describer* nil
+  "Function (module-keyword) → list of (methods url name), set by routing.lisp.")
+
+(defun debug-404-p (c env)
+  (and *debug* *debug-404* (local-request-p env)
+       (typep c 'not-found) (eq (response-kind env) :html)))
+#+end_src
+
+=routing.lisp= sets =*route-describer*= to walk =(myway.mapper:mapper-routes (routes-mapper (modules:module-routes (modules:get-module kw))))=, reading =myway.route:route-name= and =myway.rule:rule-url= / =rule-methods= (a =map-set=; convert to a list) from =myway.route:route-rule=. Like the 405 probe (R4), it uses myway internals. Module lookup is late-bound, so the listing reflects re-evaluated =define-module= forms. All text escaped through almighty-html (§8 Q5).
+
+*** 4.13 REPL debugger mode (=:debugp :repl=) --- Lisp-only
+Instead of a debug page, unexpected errors enter the debugger (SLY/SLIME) /with the request still live/. The developer fixes the code, recompiles it (=C-c C-c=), and picks =RETRY-REQUEST=. The browser gets the fixed response, so no reload or re-submitting a form. This works because controllers are stored as symbols (=to-symbol-form=), so routes call the new definition, and modules and error pages are late-bound.
+
+#+begin_src lisp
+(defvar *request-failure* nil "(condition . backtrace) of the error being debugged.")
+
+(defun call-with-retry (app env)
+  (let ((body (snapshot-raw-body env))           ; octets, read once
+        (*request-failure* nil))
+    (loop
+      (restart-case
+          (return (call-with-error-pages app (fresh-env env body)))
+        (retry-request ()
+          :report (lambda (s) (format s "Retry ~A ~A" (getf env :request-method)
+                                      (getf env :request-uri)))
+          nil)                                   ; loop: run the request again
+        (show-debug-page ()
+          :report "Send the debug page to the browser"
+          (return (destructuring-bind (c . bt) *request-failure*
+                    (handler-case (debug-page-response c bt env)
+                      (error () (plain-fallback 500))))))
+        (show-error-page ()
+          :report "Send the normal 500 page to the browser"
+          (return (render-error-response (make-condition 'internal-server-error) env)))))))
+#+end_src
+
+- =fresh-env=: =copy-list= of the original env with =:raw-body= replaced by =(flex:make-in-memory-input-stream body)=. A copy is needed because =lack/request= mutates env in place (wraps =:raw-body= in a circular stream and =rplacd=-appends =:body-parameters=), and other middleware may add keys; a retry must start from the original request.
+- Only unexpected errors enter the debugger. http-errors and mapped conditions render normally: a 404 is not a bug.
+- Restarts established by user code (e.g. a =use-value= around a parser) also show in the debugger, since the handler runs before unwinding.
+- Woo's own =ABORT= is also listed; choosing it drops the connection. =SHOW-DEBUG-PAGE= is the "give up" choice.
+- *Retries are safe for unsafe methods.* POST/PUT/PATCH/DELETE run inside a request transaction (§4.16). The debugger opens /inside/ it (the handler runs before unwinding), so the failed attempt's writes are still pending; =RETRY-REQUEST= unwinds out of the attempt, which rolls them back, then the retry opens a fresh transaction. Non-DB side effects (emails sent, files written) are still not undone.
+- *The transaction stays open while the debugger is.* With SQLite that holds the write lock; harmless here because the server is paused anyway (next bullet).
+- *The server pauses.* Woo's default is one event-loop thread (=woo::*default-worker-num*= is NIL, =vendored/woo/src/woo.lisp:62=), so other requests, including the page's own CSS/JS, wait until a restart is chosen. Acceptable for dev.
+- *Reaching the editor (verified by reading vendored Swank).* On connect, Swank calls =install-debugger-globally=, which =setq=s the /global/ =*debugger-hook*= (=vendored/swank/swank/sbcl.lisp:1103=). Woo, Clack, Lack and bordeaux-threads never rebind it (grep), so Woo's thread sees Swank's hook. =invoke-slime-debugger= then uses =*emacs-connection*= or, in a non-REPL thread where that is NIL, =(default-connection)= (=vendored/swank/swank.lisp:2047=), so SLDB pops up in Emacs. Requires =swank:*global-debugger*= T (the default).
+- *SLY (the author's setup; also verified by reading the code).* Slynk (=~/.emacs.d/.local/straight/repos/sly/slynk/=) does the same: =install-debugger= on new connection → =install-debugger-globally= =setq=s the global =*debugger-hook*= (=backend/sbcl.lisp:1172=); =invoke-sly-debugger= falls back to =(default-connection)= in non-REPL threads (=slynk.lisp:2420=); =slynk:*global-debugger*= defaults to T (=slynk.lisp:2445=). So =sly-db= should pop up for errors on Woo's thread. Still do one live test with SLY before shipping §4.13.
+- *No REPL attached.* With no connection, =invoke-slime-debugger= does nothing and SBCL falls through to the terminal debugger, blocking Woo's thread on stdin. So =%start= checks =slynk::default-connection=, then =swank::default-connection= (not =*emacs-connection*=, which is NIL outside the REPL thread). It looks the symbols up with =find-symbol=, since shiso depends on neither. If neither is connected, it warns and falls back to =:debugp t=.
+- *Local requests only.* The debugger opens only for =local-request-p= requests (§4.6), so a remote client can't pause a dev server that's reachable from the network. Remote requests get the normal 500 page.
+- Request bodies are buffered in memory for the snapshot. That's fine for dev, but very large uploads cost RAM.
+
+*** 4.14 Logging policy for client errors (from Django's broken-link reporting)
+- 5xx / unexpected: always =log-error= with backtrace (unchanged).
+- 4xx (http-errors and mapped conditions): =log-client-error=, one line, no backtrace: =[ts] 404 GET /path referer=…=.
+- =*log-client-errors*=: =nil= (never), =:internal-referer= (default), =t= (all 4xx).
+- =:internal-referer= logs only 404s whose =Referer= host equals the request's =Host=, i.e. a broken link on /your own/ site. 404s from bots and typed URLs are noise; broken internal links are bugs. Same heuristic as Django's =BrokenLinkEmailsMiddleware=.
+- Same output and format as =log-error= (=*error-output*=) for now; moves to the planned logging layer when that lands.
+
+*** 4.15 Static error-page files (from Rails =public/500.html=)
+If rendering the registry page fails (template bug, DB down during a page that queries), serve a file from disk before the plain-text fallback. The file needs no Lisp rendering, so it can't fail the same way.
+
+#+begin_src lisp
+(defvar *static-error-root* nil
+  "Directory holding <status>.html / 4xx.html / 5xx.html. Set by define-application
+to <project static/>errors/ when that directory exists.")
+(defvar *prefer-static-5xx* nil
+  "When T, 5xx HTML responses skip the dynamic page and use the static file directly.")
+
+(defun static-error-response (status)
+  "Clack list from the first existing file, or NIL."
+  (when *static-error-root*
+    (let ((file (find-if #'probe-file
+                         (list (merge-pathnames (format nil "~D.html" status) *static-error-root*)
+                               (merge-pathnames (if (< status 500) "4xx.html" "5xx.html")
+                                                *static-error-root*)))))
+      (when file
+        (list status '(:content-type "text/html; charset=utf-8") file)))))
+#+end_src
+
+- Chain on page failure: registry page → static =<status>.html= → static =4xx/5xx.html= → plain text.
+- Body is the pathname (Clack serves it); read at request time, so editing the file takes effect without a restart.
+- The files are also served at =/static/errors/…=. That's harmless and lets you preview them.
+- The skeleton ships a self-contained =static/errors/500.html= (inline CSS, no external assets, which might be the broken thing).
+
+*** 4.16 Atomic requests for unsafe methods (Django =ATOMIC_REQUESTS=, scoped)
+Decision: POST/PUT/PATCH/DELETE requests are atomic. Their database writes all commit or all roll back.
+
+#+begin_src lisp
+(defvar *atomic-requests* t
+  "When T, unsafe-method requests run inside one DB transaction.")
+
+(defun wrap-atomic-requests (app)
+  (lambda (env)
+    (if (and *atomic-requests*
+             (member (getf env :request-method) '(:POST :PUT :PATCH :DELETE))
+             mito:*connection*)
+        (dbi:with-transaction mito:*connection*
+          (funcall app env))
+        (funcall app env))))
+#+end_src
+
+- *Commit* when the app returns a response, including a returned 4xx/redirect list. *Rollback* on any non-local exit, which is how every error leaves (=wrap-http-errors= does =return-from= past it; =RETRY-REQUEST= unwinds past it). Confirmed in =%with-transaction= (=vendored/dbi/src/driver.lisp:355=): the body runs inside =unwind-protect=, and the transaction commits only if the body returned normally; any non-local exit rolls it back.
+- A signalled =http-error= after writes (e.g. =abort-with 403= halfway through) rolls back, as in Django.
+- *Placement:* innermost, wrapping =inner-app= inside CSRF (=wrap-app=, §4.7). Requests CSRF rejects never open a transaction. The error page renders after rollback, so it may query the DB safely. The DB-backed session store writes /outside/ the transaction (session middleware is further out), so a rolled-back POST still persists session changes; that matches Django.
+- *Nested app transactions keep working:* =dbi:with-transaction= inside a controller becomes a savepoint when one is already open (=vendored/dbi/src/driver.lisp:382=).
+- *Opt out per route:* phase 1 only has the global switch. A per-controller =non-atomic= declaration (Django's =@transaction.non_atomic_requests=) is deferred until a real need appears (§8 Q8).
+- *Shared connection:* =mito:*connection*= is one global connection. That's correct with Woo's single event-loop thread (requests are serialised), but with =:worker-num= > 1 concurrent requests would share one transaction. That's already a latent problem today; document that =:worker-num= > 1 needs per-thread connections.
+- File: =src/server.lisp= (=wrap-app=). Tests: POST that inserts then signals → row absent; POST that inserts and returns → row present; GET never opens a transaction; nested =with-transaction= in a controller still commits with the request.
+
+*** 4.17 Typed route parameters (Django path converters) --- separate phase
+Myway parameters are untyped: =:id= matches =[^/?]+= and the controller gets a string. Controllers therefore call =parse-integer= themselves, and a non-numeric ID becomes a 500 (=src/admin/controllers.lisp:131=, =(parse-integer id-str)= on =/:model/:id=) or needs =:junk-allowed t= plus a NIL check (=examples/mysite=, =examples/todo=). Typed parameters move conversion into routing, so =/admin/book/abc= is a routing 404 and the controller receives =42=, not ="42"=. This is the alternative to a global =parse-error= → 400 mapping, which Q7 ruled out.
+
+**Syntax:** =<type:name>= in =define-module= paths, e.g. ="/:model/<int:id>"=. Plain =:name= stays untyped. =:id/int= was rejected because Myway already reads =/int= as a literal path segment. =<= and =>= can't appear unescaped in a URL, so the syntax is unambiguous.
+
+**Converters** (registry in =src/routing.lisp=, late-bound like error pages):
+#+begin_src lisp
+(defvar *path-converters* (make-hash-table :test 'equal))
+
+(defmacro define-path-converter (name (string &key (to-url '#'princ-to-string)) &body body)
+  "BODY returns (values converted-value t) on success, or (values nil nil) to reject.
+TO-URL turns a value back into a URL segment for `shiso:url'."
+  ...)
+
+;; Built-ins (Django's set, minus =path=):
+;;   int   [0-9]+ → integer (non-negative, like Django)
+;;   slug  [-A-Za-z0-9_]+ → string
+;;   uuid  8-4-4-4-12 hex → string (lowercased)
+;;   str   anything Myway matched → string (same as :name)
+#+end_src
+
+**How it works on top of Myway (no Myway patch):**
+1. =define-module= / =define-route= rewrite =<int:id>= → =:id= before calling =myway:connect=, and record =((:id . "int") ...)= plus the original pattern string.
+2. =make-endpoint= gets the converter list. At dispatch it converts each parameter; if any converter rejects, it calls =(myway:next-route)= (=vendored/myway/src/mapper.lisp:59=). Later routes still get a chance, and a request that matches nothing ends at the normal not-found fallback (§4.8). Converters are looked up by name per request, so redefining one in the REPL takes effect at once.
+3. =shiso:url= applies each converter's =to-url= before =myway:url-for=, so =(s:url "shiso-admin:model-instance-rebuild" :model m :id 42)= works without the =princ-to-string= in =src/admin/components.lisp:125=. An unknown converter name is a macro-expansion-time error.
+
+**Interactions with this plan:**
+- *405 probe* (§4.8, R4): =allowed-methods-for= matches by URL shape only, so it would report =POST /books/abc= as 405. It must also run the route's converters on the =match-rule= params and count a method only if they all accept. The converter list is kept in a side table keyed by the =myway.route:route= object, because Myway's route only holds the endpoint closure.
+- *Debug 404* (§4.12): list the original typed pattern (=/:model/<int:id>=), not the rewritten =/:model/:id=.
+- *Existing bug found while checking this:* =define-route= with =:regexp t= computes parameter keys by parsing the regex as a normal pattern (=src/routing.lisp:160=). A regex like =/books/(\d+)= has no =:name= parts, so the controller is called with no arguments and Myway's =:captures= are dropped. Fix: for regex rules, pass =(getf params :captures)= as positional arguments. =define-module= has no regex option at all; typed parameters make one mostly unnecessary.
+
+**Migration:** opt-in per route; untyped =:id= keeps receiving strings. Convert shiso's own admin routes (=src/admin/routes.lisp:15-16= → =<int:id>=, drop =parse-integer= in the controllers) and update the examples and tutorial as the showcase.
+
+**Tests** (=t/routes=): =<int:id>= passes =42= (an integer); =/books/abc= → 404, not 500; an untyped route registered later at the same path still matches =abc= via =next-route=; POST to =/books/abc= on a GET+POST =<int:id>= route → 404, not 405; =shiso:url= with an integer works; a custom converter defined with =define-path-converter= is used and can be redefined live; regex route captures reach the controller.
+
+** 5. Implementation order
+1. =errors.lisp= conditions/registry/renderers + asd entry; unit tests for lookup/render.
+2. =wrap-http-errors= swapped into =wrap-app=; delete =wrap-error-logging= (logging inside).
+3. =*debug*= from =%start=.
+4. Replace hard-coded 404 (routing fallback) and 400 (requests).
+5. 405 probing + Allow + HEAD; OPTIONS.
+6. Exports in =src/package.lisp=.
+7. Negotiation (JSON/HTMX) + locale rebinding.
+8. Guards forbidden + CSRF block-app + i18n =set-language= 405.
+9. Skeleton/example =define-error-page= forms, README/CHANGELOG.
+10. =condition-http-status= + =http-error-for= (folded into step 2's middleware); =get-or-404= / =found-or-404=.
+11. problem+json renderer (replaces step 7's JSON body).
+12. =log-client-error= + =*log-client-errors*=.
+13. Static error files: =*static-error-root*= detection in =define-application=, fallback chain, skeleton =500.html=.
+14. Debug 404 page + =*route-describer*= + =:mounts= on the fallback.
+15. =wrap-atomic-requests= (§4.16), before step 16 so retries are already safe.
+16. =:debugp :repl=: =call-with-retry=, body snapshot, REPL-connection check in =%start=.
+17. Separate phase: typed route parameters (§4.17), including the =:regexp= captures fix, the converter-aware 405 probe, and migration of the admin routes.
+18. Phase 2: =(:error-pages (404 'views:not-found) ...)= on =define-application=, expanding to =define-error-page= forms (global registry; per-app scoping deferred, §8 Q2).
+
+** 6. Test plan (=t/errors.lisp=, package =shiso/t/errors=, lisp-unit2)
+Call the Lack app directly with a fake env --- no server needed:
+
+#+begin_src lisp
+(defun env (method path &key (accept "text/html") hx)
+  (let ((h (make-hash-table :test 'equal)))
+    (setf (gethash "accept" h) accept)
+    (when hx (setf (gethash "hx-request" h) "true"))
+    (list :request-method method :path-info path :request-uri path :script-name ""
+          :headers h :server-name "localhost" :server-port 80 :url-scheme "http"
+          :query-string nil :raw-body (flex:make-in-memory-input-stream #()))))
+#+end_src
+
+Use a test app built with =define-module= + =define-application= wrapped by =errors:wrap-http-errors= only (skip session/CSRF/DB). Restore =*error-pages*= via =(let ((errors:*error-pages* (make-hash-table))) ...)= per test. Cases:
+
+- unknown path → 404, default page contains "404".
+- =(define-error-page 404 ...)= used; =:4xx= used for 403 when no exact; =t= catch-all; exact beats class.
+- POST to GET-only route → 405, =Allow: GET, HEAD=; same path in two modules → union.
+- HEAD on GET route → 200 (myway allow-head), body empty for errors.
+- controller =(abort-with 403 :message "x")= → 403; =(error "boom")= → 500 with =*debug*= nil (no backtrace in body) and debug page with =*debug*= t.
+- page fn that signals → plain-text fallback with the original status.
+- page fn returning a Clack list (e.g. redirect) passed through.
+- =Accept: application/json= → JSON body/content-type; =HX-Request= → fragment.
+- error inside =ah:render-to-string= in a controller → 500 (eager rendering).
+- controller's own =handler-case= around =abort-with= still wins.
+- =condition-http-status= method on a test condition → that status, no backtrace logged, =http-error-cause= is the original; method that signals → 500.
+- =get-or-404= with a missing row → 404; message present only when =*debug*= (needs a DB fixture --- reuse =t/auth='s setup, or test =found-or-404= only).
+- JSON: content-type =application/problem+json=, =type= =about:blank=, =title= = reason phrase, =detail= only when a message was given, never on 500; =Accept: application/problem+json= also negotiates JSON.
+- =*debug*= T + unknown path → body lists each mounted route (prefix + url) in mount order; =*debug-404*= NIL → app's 404 page; =*debug*= NIL → never the route list.
+- =*log-client-errors*=: bind =*error-output*= to a string stream; =:internal-referer= logs a 404 with same-host Referer, not one without; =nil= logs nothing; 500 always logged.
+- static files: temp dir with =500.html=, page fn that signals → file served with status 500; =5xx.html= used for 503; no files → plain text; =*prefer-static-5xx*= skips the page fn.
+- =:repl= (no real debugger): bind =*debugger-hook*= / =sb-ext:*invoke-debugger-hook*= to a function that invokes =retry-request= once after redefining the failing controller → second attempt's 200 returned; POST body readable on both attempts; =show-debug-page= returns the debug page.
+- regression: existing =t/routes=, =t/modules=, =t/auth=, =t/static= pass unchanged; module fall-through (=shiso-auth= at "" + "/polls") still works. Run: =make test= / =sbcl --load test.lisp= (which calls =asdf:test-system :shiso=).
+
+** 7. Migration notes
+- Response bodies of 404/400/500 change (HTML page instead of "Not found"); status codes unchanged except wrong-method requests now 405 (previously 404).
+- Apps catching errors themselves keep working.
+- =wrap-error-logging= removed; anyone calling it directly → =wrap-http-errors=.
+- =debugp= defaults to T in both =%start= and skeleton =config:debugp= → production deployments should still set =DEBUGP=false=. Debug output is now limited to local requests (§4.6, §8 Q3), so forgetting it no longer shows backtraces to the public.
+- Handlers that return =(404 ...)= lists directly are NOT rewritten (opt-in only).
+- Streaming/SSE (function) responses: errors after the response starts are outside the middleware extent; still uncaught (same as today).
+- JSON error bodies change shape and content-type (=application/problem+json=). No released JSON shape exists yet, so there's nothing to migrate.
+- 4xx are now logged by default only for same-site-Referer 404s; previously no 4xx were logged at all.
+- =:debugp :repl= is opt-in; =t= keeps the debug page.
+- Unsafe-method requests are now transactional (§4.16). Writes before an error are rolled back, where previously they persisted. Set =*atomic-requests*= NIL to restore the old behaviour.
+
+** 8. Open questions
+1. +Status interception for returned =(404 …)= lists?+ --- *Decided:* no. Only signalled errors go through the registry; a returned response is sent as written (Django behaves the same).
+2. +Per-application vs global registry?+ --- *Decided:* global in phase 1. Several apps in one image is rare; revisit with phase 2's =:error-pages=.
+3. +Debug page default with =debugp= T?+ --- *Decided:* debug output (debug 500/404 pages, =:repl= debugger) only for =local-request-p= requests (§4.6), like Rails' =request.local?=. Loopback =:remote-addr= with no =X-Forwarded-For= / =Forwarded= header. Tests: loopback → debug page; =10.0.0.5= → normal 500; loopback + =X-Forwarded-For= (nginx) → normal 500; same three for the debug 404 page.
+4. +Full Accept q-value parsing?+ --- *Decided:* no; substring check. Revisit if a real client gets the wrong format.
+5. +Does almighty-html escape string children by default?+ --- *Answered by reading the code:* yes. =render-children= passes every string child through =escape-html-text-content= (=vendored/almighty-html/src/element.lisp:144=), which escapes =& < > " ' / ` ==. Attribute values only escape ="= (enough inside double-quoted attributes). So messages and backtraces placed as /children/ are safe; don't put untrusted text in attribute values without care, and never wrap it in a raw fragment.
+6. +Guards signal =forbidden=?+ --- *Decided:* no, not in phase 1. Guards keep returning a response; the 403 is rendered through the registry (§4.9), so custom 403 pages still work.
+7. +Built-in =condition-http-status= methods?+ --- *Decided: no built-in mappings in phase 1.* Survey of other frameworks:
+   - Every framework maps only its /own/ request errors (routing, parsing, CSRF). Shiso does too (§4.8–4.9).
+   - Not-found from the ORM: Rails and Laravel map it globally. Django and Spring don't; Django provides =get_object_or_404=. Phoenix maps it in a separate glue package (=phoenix_ecto=). Shiso follows Django: =get-or-404= / =found-or-404= (§4.10).
+   - Unique violations: nobody maps them to 409; the validation layer turns them into field errors (Ecto =unique_constraint=, Django =validate_unique=). Shiso: future work in model-form save.
+   - DB down → 503: no major framework does this by default. Dropped.
+   - Bad URL parameters: handled by typed route parameters (§4.17), not by mapping =parse-error=.
+   - If shiso ever ships defaults, keep them in an editable table (like Rails' =rescue_responses=) consulted after app methods, not as =defmethod=s apps would have to remove.
+8. +=:repl= and side effects+ --- *Decided:* unsafe-method requests are atomic (§4.16). Per-route opt-out deferred until something needs it (long import, streaming response); the global =*atomic-requests*= switch covers it meanwhile.
+9. +Does the editor's global hook reach Woo's thread?+ --- *Answered by reading the code:* yes for both Swank and Slynk (§4.13). The author uses SLY: one live test with SLY is part of implementing §4.13.
+10. +Debug 404 lists =/static/= and trailing slash?+ --- *Decided:* yes (§4.12).
+11. +Clack's default =:backtrace= middleware?+ --- *Decided:* turn it off. =%start= passes =:use-default-middlewares nil= to =clackup=. It printed the full env (=Cookie=, =Authorization=) to stderr and bypassed shiso's log format. To keep its one real benefit (catching a crash inside shiso's own error code), =wrap-http-errors= gets an outermost last-resort layer:
+    #+begin_src lisp
+    (lambda (env)
+      (block last-resort
+        (handler-bind ((error (lambda (c)
+                                ;; Only reached if the error machinery itself failed.
+                                (ignore-errors (log-error c env (backtrace-string c)
+                                                          "error handler itself failed"))
+                                (return-from last-resort (plain-fallback 500)))))
+          (funcall inner env))))   ; inner = the per-request logic in §4.6
+    #+end_src
+    It logs method + URI + backtrace (never the env). Test: make =render-error-response= and =log-client-error= both signal → plain-text 500, one log line.
+
+** Review findings
+Second pass, re-reading source (=shiso/src/{server,routing,requests,utils,modules,package}.lisp=, =src/auth/guards.lisp=, =src/i18n/{middleware,controllers}.lisp=, =shiso.asd=, myway =src/{mapper,rule}.lisp=, lack =src/middleware/csrf.lisp=). Changes made to the plan:
+
+- *R1 Logging would have been silently lost.* Draft put =wrap-http-errors= (handler-case) /inside/ the existing =wrap-error-logging= (handler-bind). The inner handler is found first and unwinds, so the outer logger never runs → 500s unlogged. Fix: single middleware; log in a =handler-bind= handler before the non-local exit (=return-from=), which also keeps the backtrace available (a =handler-case= clause runs after unwinding --- the stack is gone).
+- *R2 404 cannot be signalled in the module.* =lack/component:call= on a module returns =(values 404 nil)= so =make-module-mount-middleware= falls through to the next mount. Signalling there breaks multi-module apps (e.g. mysite: =shiso-auth= at "" before "/polls"). Only the final lambda in =define-application= signals.
+- *R3 asd order / read-time symbol refs.* =define-application='s expansion mentions =shiso/errors:= symbols, which are read when =routing.lisp= is compiled → =errors.lisp= must load before =routing=. But locale rebinding needs =shiso/i18n=, which loads later. Fix: =errors.lisp= depends only on almighty-html/uiop; it exposes a =*render-around*= hook (function of env + thunk); =server.lisp= (loads after i18n) sets it to bind =i18n:*locale*= via =best-locale=.
+- *R4 myway can't tell 404 from 405.* =myway:dispatch= checks method inside =match-rule=; a method mismatch is just "no match", and using dispatch to probe would /execute/ controllers. Fix: probe with =myway.rule::match-rule= (internal symbol, same style as the existing =myway.rule::rule-param-keys= use in =define-route=) per method, =:allow-head nil=, and add HEAD when GET is allowed (myway's =allow-head T= default already serves HEAD for GET routes).
+- *R5 =setf getf= on env doesn't propagate.* Adding a new key with =(setf (getf env ...))= pushes onto the callee's local variable; the outer fallback lambda never sees it. Fix: =wrap-http-errors= binds a per-request special =*allowed-methods*= (nil); modules =union= into it; the fallback reads it. Per-request =let= inside the middleware is thread-safe under Woo.
+- *R6 =*debug*= and Woo threads.* A =let= around =clackup= in =%start= is invisible to worker threads. Fix: =defvar= global + =setf= in =%start= (or capture =debugp= in the closure built by =wrap-app=). Documented in the docstring.
+- *R7 Recursive failure.* Error page fn / =render-to-string= / JSON encoding can signal while we're in a handler. Fix: =render-error-response= wraps everything in =handler-case= → =plain-fallback=, and is called after =return-from= semantics so no nested =wrap-http-errors= handler re-enters. Debug page also guarded.
+- *R8 Guards keep their contract.* The module =:around= method in =auth/guards.lisp= returns =(values response t)=; signalling =forbidden= there would still work (propagates through the mount middleware) but changes control flow for redirects. Plan keeps response-returning and only reuses the renderer; listed as open question.
+- *R9 CSRF 400 bypassed the registry* (=lack/middleware/csrf::return-400=). Use its =:block-app= key to signal =bad-request=.
+- *R10 almighty-html errors are caught.* =ah:render-to-string= is eager (string built inside the controller call), so rendering errors occur within the middleware extent. Only function/streaming responses escape --- documented.
+- *R11 No JSON library* in =shiso.asd= deps → hand-rolled =json-escape= rather than adding a dependency.
+- *R12 Security.* Debug page must not print the env plist (session id, CSRF token); =debugp= defaults to T in =%start= and in the skeleton config → loud migration note.
+- *R13 =abort-with= with =:allowed=* for non-405 classes would signal an invalid initarg error; strip it.
+- *R14 Tests* use lisp-unit2 and the explicit =run-tests :package= list in =shiso.asd :perform= --- new package must be added there or it silently never runs.
+- *R15 i18n =set-language=* already hand-builds a 405 without =Allow=; migrated.

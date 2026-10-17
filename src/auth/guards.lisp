@@ -1,6 +1,7 @@
 (defpackage #:shiso/auth/guards
   (:use #:cl)
   (:local-nicknames (#:modules #:shiso/modules)
+                    (#:errors #:shiso/errors)
                     (#:user #:shiso/auth/user)
                     (#:session #:shiso/auth/session)
                     (#:req #:lack/request)
@@ -54,10 +55,11 @@ hit an :anonymous-only page.")
                        *login-url*)))
     (finalize 302 (list :location location) "")))
 
-(defun forbidden-response ()
-  (finalize 403
-            (list :content-type "text/html; charset=utf-8")
-            "<h1>403 Forbidden</h1>"))
+(defun forbidden-response (&optional env)
+  "The 403 page from the error-page registry (SHISO:DEFINE-ERROR-PAGE 403).
+Returned, not signalled: a guard's result is a response, and the module's
+:around method marks it handled."
+  (errors:render-error-response (make-condition 'errors:forbidden) env))
 
 (defun redirect-post-login ()
   (finalize 302 (list :location *post-login-redirect*) ""))
@@ -87,11 +89,11 @@ login redirect's `next' parameter; pass NIL if you don't have one."
       ((eq require :staff)
        (cond ((null user) (redirect-to-login env))
              ((user:user-is-staff user) :allow)
-             (t (forbidden-response))))
+             (t (forbidden-response env))))
       ((eq require :anonymous)
        (if user (redirect-post-login) :allow))
       ((and (listp require) (eq (first require) :predicate))
-       (if (funcall (second require) user) :allow (forbidden-response)))
+       (if (funcall (second require) user) :allow (forbidden-response env)))
       (t
        (error "Unknown guard spec :require ~S" require)))))
 

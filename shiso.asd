@@ -35,12 +35,21 @@
                :clingon
                ;; i18n (fosskers/fluent + parcom, plurals, filepaths)
                :fluent
+               ;; Settings
+               :almighty-settei
+               ;; Request-body snapshots for the :repl debugger's retries
+               :flexi-streams
                )
   :components ((:module "src"
                 :serial t
                 :components
-                ((:file "modules")
+                (;; Settings first: everything after may define or read them.
+                 (:file "settings")
+                 (:file "modules")
                  (:file "static")
+                 ;; Before routing: DEFINE-APPLICATION's expansion names
+                 ;; shiso/errors symbols.
+                 (:file "errors")
                  (:file "routing")
                  (:file "requests")
                  (:file "utils")
@@ -68,6 +77,7 @@
                                (:file "registry")
                                (:file "field-types")
                                (:file "define-model")
+                               (:file "shortcuts")
                                (:file "package")))
                  ;; Forms
                  (:module "forms" :serial t
@@ -88,6 +98,8 @@
                                (:file "routes")
                                (:file "createsuperuser")
                                (:file "package")))
+                 ;; The database: connecting, and the session and model tables.
+                 (:file "database")
                  ;; Server — loaded after auth so it can install the
                  ;; session+CSRF middleware stack using shiso/auth/session.
                  (:file "server")
@@ -118,7 +130,9 @@
                  (:file "forms")
                  (:file "admin")
                  (:file "auth")
-                 (:file "static"))))
+                 (:file "static")
+                 (:file "settings")
+                 (:file "errors"))))
   :perform (test-op (o s)
                     (uiop:symbol-call :lisp-unit2 :run-tests
                                       :package :shiso/t/routes)
@@ -137,5 +151,9 @@
                     (uiop:symbol-call :lisp-unit2 :run-tests
                                       :package :shiso/t/auth)
                     (uiop:symbol-call :lisp-unit2 :run-tests
-                                      :package :shiso/t/static)))
+                                      :package :shiso/t/static)
+                    (uiop:symbol-call :lisp-unit2 :run-tests
+                                      :package :shiso/t/settings)
+                    (uiop:symbol-call :lisp-unit2 :run-tests
+                                      :package :shiso/t/errors)))
 

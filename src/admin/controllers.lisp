@@ -123,13 +123,13 @@
           (render-page title (forms:render-form form :style :admin :action (shiso/utils:url "shiso-admin:model-instance-persist" :model model-name-str)))))))
 
 
-(defun model-instance-rebuild (model-name-str id-str)
-  "Render the edit form, or handle POST to update an existing instance."
+(defun model-instance-rebuild (model-name-str id)
+  "Render the edit form, or handle POST to update an existing instance.
+ID is an integer (the route's <int:id>); a missing row is a 404."
   (let* ((model-name (models:get-model-name model-name-str))
          (config (reg:get-admin model-name))
          (model-class (models:model-class model-name))
-         (id (parse-integer id-str))
-         (instance (mito:find-dao model-class :id id))
+         (instance (models:get-or-404 model-class :id id))
          (is-post (mw:post-request-p))
          (data (when is-post (mw:parse-body-params)))
          (form (forms:make-model-form model-name
@@ -148,15 +148,14 @@
                                     :style :admin
                                     :action (shiso/utils:url "shiso-admin:model-instance-repersist"
                                                              :model model-name-str
-                                                             :id id-str)))))
+                                                             :id id)))))
 
-(defun model-instance-repersist (model-name-str id-str)
-  "Validate and update the instance on PATCH."
+(defun model-instance-repersist (model-name-str id)
+  "Validate and update the instance on PATCH. A missing row is a 404."
   (let* ((model-name (models:get-model-name model-name-str))
          (config (reg:get-admin model-name-str))
          (model-class (models:model-class model-name))
-         (id (parse-integer id-str))
-         (instance (mito:find-dao model-class :id id))
+         (instance (models:get-or-404 model-class :id id))
          (data (mw:parse-body-params))
          (form (forms:make-model-form model-name
                                       :fields (reg:admin-fields config)
@@ -179,13 +178,12 @@
                                         :style :admin
                                         :action (shiso/utils:url "shiso-admin:model-instance-repersist"
                                                                  :model model-name-str
-                                                                 :id id-str))))))
+                                                                 :id id))))))
 
-(defun model-instance-delete (model-name-str id-str)
+(defun model-instance-delete (model-name-str id)
   "Handle POST to delete a model instance."
   (let* ((model-name (model-name-from-string model-name-str))
          (model-class (models:model-class model-name))
-         (id (parse-integer id-str))
          (instance (mito:find-dao model-class :id id)))
     (when instance
       (mito:delete-dao instance))

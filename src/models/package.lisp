@@ -41,7 +41,13 @@
                 #:expand-field-type)
   (:import-from #:shiso/models/define-model
                 #:define-model)
+  (:import-from #:shiso/models/shortcuts
+                #:get-or-404
+                #:found-or-404)
   (:export
+   ;; Shortcuts
+   #:get-or-404
+   #:found-or-404
    ;; Structs
    #:slot-metadata
    #:make-slot-metadata

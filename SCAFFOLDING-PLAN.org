@@ -1,0 +1,473 @@
+#+title: Scaffolding Plan
+
+* Django inspired web framework needs scaffolding
+
+Shiso is a Django-inspired web framework. One example of an application that
+uses this framework is the almightylisp.com site (visible at
+~/Learning/lisp/almighty/almightylisp.com). The .asd file looks like this:
+
+#+begin_src lisp
+(defsystem "almightylisp"
+  :author "Micah Killian <micah@almightylisp.com>"
+  :maintainer "Micah Killian <micah@almightylisp.com>"
+  :description "The almightylisp.com website"
+  :license "MIT"
+  :version "0.1"
+  :depends-on (:almightylisp/core
+               :cl-org-mode
+               ;; Project modules
+               :book
+               :article
+               :author
+               :home)
+  :build-operation "program-op"
+  :build-pathname "almightylisp"
+  :entry-point "almightylisp:main")
+
+(defsystem "almightylisp/core"
+  :author "Micah Killian <micah@killianarts.online>"
+  :maintainer "Micah Killian <micah@killianarts.online>"
+  :description "The almightylisp.com website"
+  :license "MIT"
+  :version "0.1"
+  :depends-on (:shiso :datastar-cl)
+  :pathname "src"
+  :serial t
+  :components ((:module "hypermedia"
+                :serial t
+                :components ((:file "components")
+                             (:file "package")))
+               (:file "utils")
+               (:file "routes")
+               (:file "main")))
+#+end_src
+
+Notice that the main system has "Project modules". Those project modules
+stand-alone systems.
+
+#+begin_src lisp
+;;; book.asd
+(defsystem "book"
+  :description "book module"
+  :version "0.1"
+  :depends-on (:shiso :almightylisp/core)
+  :pathname "."
+  :serial t
+  :components ((:file "models")
+               (:file "forms")
+               (:module "hypermedia"
+                :components ((:file "components")))
+               (:file "controllers")
+               (:file "routes")
+               (:file "convert")
+               (:file "book")))
+
+;;; author.asd
+(defsystem "author"
+  :description "Module for Authors"
+  :version "0.1"
+  :depends-on (:shiso :almightylisp/core)
+  :pathname "."
+  :serial t
+  :components ((:file "models")
+               (:file "forms")
+               (:module "hypermedia"
+                :components ((:file "components")))
+               (:file "controllers")
+               (:file "routes")
+               (:file "author")))
+#+end_src
+
+The common elements are:
+
+- models.lisp
+- forms.lisp
+- hypermedia/components.lisp
+- controllers.lisp
+- routes.lisp
+- <module-name>.lisp
+
+There are no static files inside these modules, unlike a typical Django
+application.
+
+Our final goal is to have:
+
+- A CLI command =shiso create-app <project-name>= that will create a new
+  application--like the =almightylisp.com= directory that has all of the pieces
+  necessary to deploy it as an executable on a server (see the application root
+  for details about the deployment strategy).
+- A CLI command =shiso create-module <module-name>= that will create a new
+  module in the =modules= directory.
+
+This means we need *scaffolding*.
+
+First, let's consider how other software ecosystems outside of Common Lisp do
+scaffolding.
+
+* Survey: scaffolding in other ecosystems
+
+** Django (Python)
+
+Django ships =django-admin= and =manage.py= as two distinct entry points. The
+distinction matters: =django-admin= is project-agnostic and can bootstrap from
+nothing, while =manage.py= is generated /into/ a project and knows about that
+project's settings.
+
+- =django-admin startproject mysite=: copies a template tree from
+  =django/conf/project_template/= into =mysite/=. File and directory names
+  containing tokens like ={{ project_name }}= are rendered via Django's own
+  template engine. The result is a runnable project with =settings.py=,
+  =urls.py=, =wsgi.py=, =asgi.py=, and =manage.py=.
+- =django-admin startapp polls=: copies =django/conf/app_template/= into a new
+  =polls/= directory --- =models.py=, =views.py=, =admin.py=, =apps.py=,
+  =tests.py=, =migrations/=, =__init__.py=. Apps are deliberately self-contained
+  and pluggable; the project's =INSTALLED_APPS= list is the only registration
+  step, and it is manual.
+- The templates are plain files on disk inside the Django source tree. You can
+  point =startproject= at your own template (a local directory, a zip, or even
+  a URL) via =--template=, which is how organizations distribute "blessed"
+  project starters.
+- There is /no/ post-generation step that wires the new app into the project
+  for you. The user must edit =INSTALLED_APPS=, =urls.py=, etc. by hand. This
+  is an intentional choice: it keeps the generator dumb and the project state
+  legible.
+
+Lesson for Shiso: a directory-tree-with-token-substitution model is enough to
+go a very long way. Django's generators do not parse or rewrite Python source;
+they just stamp out files. The cost is that wiring is manual, but the benefit
+is that the generator never fights the user's code.
+
+** Ruby on Rails
+
+Rails has the most ambitious generator system of any mainstream framework, and
+it is worth studying both for what it does well and what makes it costly.
+
+- =rails new myapp=: invokes the application generator, which emits a complete
+  project (Gemfile, =config/=, =app/=, =bin/=, =db/=, test harness, etc.) and
+  then runs =bundle install= and =rails db:create= as post-generation hooks.
+  Flags like =--api=, =--minimal=, =--database=postgresql=, =--skip-test=,
+  =--css=tailwind= produce materially different trees.
+- =rails generate= (alias =rails g=) is a pluggable framework. =rails g
+  scaffold Post title:string body:text= produces a model, a migration, a
+  controller with seven RESTful actions, view templates, a resource route, a
+  test file, and a helper. It does this by /modifying/ existing files
+  (=config/routes.rb=) in addition to creating new ones.
+- Under the hood, generators are Ruby classes that inherit from
+  =Rails::Generators::NamedBase= (itself a Thor subclass). They expose hooks
+  (=create_file=, =template=, =route=, =inject_into_class=, etc.) that wrap
+  filesystem and source-tree edits.
+- Templates use ERB with =.tt= extension and live alongside the generator
+  source. The same generator can be invoked programmatically from an
+  /application template/ --- a Ruby DSL file passed to =rails new -m
+  template.rb= that scripts the entire post-creation setup (add gems, run
+  generators, modify config). This is how communities like Suspenders and
+  Jumpstart distribute opinionated starters.
+
+The cost of all this power: Rails generators frequently lag behind framework
+changes, and the file-rewriting hooks (=inject_into_class=, =gsub_file=) are
+fragile against user edits. The community's pragmatic answer has been to treat
+scaffolds as one-shot starting points, not as ongoing tools you'd re-run.
+
+Lesson for Shiso: separate template /stamping/ from source-tree /modification/
+mentally, even if both are implemented. Stamping is robust; modification is
+fragile and should be reserved for narrow, well-defined cases (e.g. appending
+a module name to a known list).
+
+** Phoenix (Elixir) --- the closest cultural cousin
+
+Phoenix is the most relevant prior art because Elixir, like Common Lisp,
+favors small composable libraries, distinguishes "applications" from the
+broader project, and has a strong macro/code-generation culture.
+
+- =mix phx.new my_app=: scaffolds a new Phoenix project. Heavy use of Mix
+  tasks (=mix=) means the generator is /just another task/, discoverable via
+  =mix help=.
+- =mix phx.gen.html Blog Post posts title:string body:text=: generates a
+  context module (=Blog=), a schema (=Post=), an Ecto migration, a controller,
+  HTML templates, and tests. It prints a snippet of routes you must paste into
+  =router.ex= --- it does /not/ modify the router for you. This is a deliberate
+  reversal of the Rails approach.
+- =mix phx.gen.context= / =mix phx.gen.schema= / =mix phx.gen.live= /
+  =mix phx.gen.json= are layered so that you can pick exactly the level of
+  scaffolding you want.
+- Generators live in the =phoenix= and =phoenix_live_view= hex packages and
+  use EEx templates plus Elixir code that knows how to format the result with
+  =Code.format_string!/2= before writing it. Output is therefore
+  indistinguishable from hand-written code with respect to formatting.
+
+Lesson for Shiso: Phoenix's *print-and-paste* approach for the router is a
+strong middle ground. It keeps the generator pure (no file-rewriting
+fragility) while still telling the user exactly what to do next. For Common
+Lisp, where reader macros and =defpackage= forms make robust source rewriting
+hard, this is probably the right default.
+
+** =cookiecutter= (Python, ecosystem-agnostic)
+
+Cookiecutter deserves a separate mention because it has become a /lingua
+franca/ for project templates well beyond Python:
+
+- A template is a git repo containing a =cookiecutter.json= manifest (the list
+  of prompts and defaults) and a top-level directory whose name itself is a
+  Jinja2 expression, e.g. ={{cookiecutter.project_slug}}/=.
+- =cookiecutter gh:audreyfeldroy/cookiecutter-pypackage= clones the repo,
+  prompts the user for each variable, then renders the tree.
+- Pre- and post-generation hooks are arbitrary scripts in =hooks/pre_gen_project.py=
+  and =hooks/post_gen_project.py= --- the template author can run anything
+  (=git init=, =poetry install=, =chmod=) after the files are stamped out.
+
+Lesson for Shiso: the cookiecutter pattern --- templates as ordinary
+directories with placeholder syntax, plus optional pre/post hooks --- is
+implementable in any language in a few hundred lines. The pattern is so
+durable precisely because it has almost no machinery.
+
+** =create-next-app= and the JavaScript "create-*" pattern
+
+The JS ecosystem converged on =npm create foo= / =npx create-foo@latest= as the
+canonical bootstrap idiom:
+
+- =create-next-app=, =create-react-app= (now deprecated in favor of frameworks),
+  =create-vite=, =create-t3-app=, etc.
+- Each is a standalone npm package that can be invoked without prior
+  installation (=npx= handles the fetch-and-run).
+- Most prompt interactively (TypeScript? Tailwind? App Router? src dir?)
+  and stamp out variants from a small set of in-package templates.
+- =degit= (by Rich Harris) is the minimalist flavor: =degit user/repo target=
+  clones a git repo without history. Many "create-*" tools are conceptually
+  thin wrappers around degit plus a prompt step.
+
+Lesson for Shiso: making the bootstrap a single command the user can run
+/before they have anything installed locally/ is valuable for adoption. For a
+Common Lisp framework, this likely means a small Roswell script
+(=ros install shiso/shiso-cli= or similar) that can be invoked from any
+directory.
+
+** Yeoman (JavaScript, generic)
+
+Yeoman was the most ambitious general-purpose scaffolding system of the 2010s.
+It is largely faded now, but its design is instructive:
+
+- A generator is an npm package whose name starts with =generator-=.
+- The base class (=Generator= from the =yeoman-generator= package) defines a
+  /lifecycle/ with named phases: =initializing=, =prompting=, =configuring=,
+  =default=, =writing=, =conflicts=, =install=, =end=. The framework runs all
+  methods in each phase before moving to the next.
+- The =writing= phase uses an in-memory filesystem (=mem-fs=) so that conflict
+  resolution can happen against /pending/ writes, not just disk state.
+- Sub-generators compose: =yo react:component Foo= invokes the =component=
+  subgenerator of the =react= generator. This is how complex generators stay
+  legible.
+
+Lesson for Shiso: a lifecycle with explicit phases is overkill for a small
+framework, but the /sub-generator/ composition idea maps cleanly onto =shiso
+create-app= and =shiso create-module= being two faces of one underlying
+machinery. The eventual third generator (=shiso create-model=? =create-view=?)
+should slot into the same dispatch.
+
+** =dotnet new= templates
+
+Microsoft's =dotnet new= is interesting because it ships /first-class/ template
+packaging, which most of the ecosystems above do not:
+
+- Templates are NuGet packages whose contents include a =.template.config/=
+  directory with =template.json= (parameters, conditional file inclusion,
+  symbol replacement rules).
+- =dotnet new install <package>= adds a template to the local list; =dotnet new
+  list= shows all installed templates; =dotnet new <short-name> --foo bar=
+  instantiates.
+- Conditional file/region inclusion is driven by parameter values, allowing
+  one template to support many variants without an explosion of duplicated
+  trees.
+- Microsoft and the community ship hundreds of templates this way --- web
+  apps, libraries, Azure functions, gRPC services, etc.
+
+Lesson for Shiso: distributing templates as ordinary Quicklisp/Ultralisp
+systems (perhaps a system tagged =:shiso-template=) is a natural Common Lisp
+analogue. A future =shiso create-app --template my-org/blessed-starter= would
+just =ql:quickload= the template system and stamp it out.
+
+** Cargo (Rust) and =cargo generate=
+
+- =cargo new my_pkg= and =cargo init= are intentionally minimal: they create
+  =Cargo.toml=, =src/main.rs= (or =src/lib.rs=), and =.gitignore=. Nothing more.
+- =cargo-generate= is the community subcommand that fills the cookiecutter
+  niche: =cargo generate --git https://github.com/user/template= clones a repo
+  with =liquid= placeholders and renders it. Pre/post hooks are =rhai= scripts.
+
+Lesson for Shiso: the official tool can stay minimal and unopinionated, with a
+richer third-party generator slotting in via the same CLI namespace. Whether
+Shiso wants to bundle opinionated templates from day one is a separate
+question from whether the /machinery/ supports them.
+
+* Patterns that emerge across all of these
+
+After surveying the above, a few cross-cutting patterns are clear:
+
+1. *Templates are just directories with placeholder syntax.* Almost every
+   ecosystem above ultimately resolves to: a tree of files, some path
+   components and contents contain tokens, the generator renders them. The
+   sophistication lives elsewhere (interactive prompts, conditional inclusion,
+   post-generation wiring), not in the templating itself.
+
+2. *The hard problem is wiring, not stamping.* Stamping out a new module's
+   files is trivial. Adding =:my-module= to the project's =:depends-on= list,
+   adding it to =INSTALLED_APPS=, adding a route to =urls.py= --- this is
+   where every generator either gets fragile (Rails) or punts to the user
+   (Phoenix, Django). Phoenix's "print the snippet, tell the user where to
+   paste it" approach is the most honest and the most robust.
+
+3. *Two distinct entry points: bootstrap vs. in-project.* Django splits
+   =django-admin= from =manage.py=; Rails splits =rails new= from =rails
+   generate=; Phoenix splits =mix phx.new= from =mix phx.gen.*=. The
+   bootstrap command does not need to know about the project; the in-project
+   command does and can read project state to make smarter decisions.
+
+4. *Templates as first-class distributable artifacts pay off long-term.*
+   =dotnet new install=, =cookiecutter gh:user/repo=, Rails application
+   templates --- once the template format is stable and the loader can fetch
+   from a URL or a package, an ecosystem of community templates becomes
+   possible without changing the framework.
+
+5. *Pre/post hooks belong in the template, not the generator.* Cookiecutter,
+   =cargo-generate=, =dotnet new=, and Yeoman all let the template ship hook
+   scripts. The generator stays minimal; the template carries its own setup
+   logic (=git init=, =bundle install=, format, run migrations).
+
+* Implications for Shiso
+
+Mapping these lessons onto Common Lisp and the Shiso shape sketched above:
+
+- =shiso create-app <name>= should stamp a directory tree from a template that
+  lives /in the Shiso source/ initially (mirroring =almightylisp.com='s
+  layout), with the door explicitly left open for =--template= to point
+  elsewhere later. The existing =skeleton/module/= directory in this repo
+  shows the intent already; an =skeleton/app/= sibling is the natural
+  counterpart.
+- =shiso create-module <name>= should stamp a new module directory and then
+  *print* the lines the user must add to their app's =.asd= file (the
+  =:depends-on= entry and the matching entry in the app's =Project modules=
+  list). Do not rewrite the =.asd= file --- it is hand-edited, may have
+  comments and reader macros, and the fragility cost is not worth it.
+- Placeholder syntax: pick one and stick to it. The cookiecutter-style
+  ={{ name }}= reads cleanly in Lisp source (no clash with reader macros or
+  backquote) and is familiar to anyone coming from other ecosystems. The
+  generator can be a few hundred lines built on =cl-template= or even a
+  hand-rolled substitution pass --- the templating is not the hard part.
+- Sub-generator composition: =create-app= and =create-module= should share
+  one underlying =render-template= primitive. A future =create-model= or
+  =create-controller= slots in the same way.
+- Treat generated code as a starting point, not a contract. Do not promise
+  re-runnability or upgrades-in-place; the Rails ecosystem learned the hard
+  way that this is rarely worth the engineering cost in a small framework.
+- Distribution: a Roswell script entry-point (=shiso= the binary, =ros
+  install shiso/shiso=) keeps the bootstrap cost low. Once installed,
+  =shiso create-app foo= works from any directory the user picks.
+
+The smallest first cut, then, is:
+
+1. A =shiso/cli= system with one entry point.
+2. An =skeleton/app/= template tree alongside the existing =skeleton/module/=.
+3. A =render-template= function that walks a tree, substitutes ={{ name }}=
+   (and a small set of derived names: package name, system name, etc.), and
+   writes the result.
+4. Two CLI verbs (=create-app=, =create-module=) wired to that primitive.
+5. After =create-module=, print the exact lines to paste into the app's =.asd=.
+
+Everything else (interactive prompts, =--template= URLs, post-generation
+hooks, additional sub-generators) can be added later without disturbing this
+core.
+
+* Conclusions
+
+After working through wiring, distribution, and the relationship between the
+framework and the scaffolding tool, the following decisions are settled.
+
+** One project, one repo, one ASDF system
+
+The Shiso framework and the scaffolding CLI are *not* separate projects. They
+share the same =shiso.asd= and live in the same repo. The CLI is additional
+source (a =shiso/cli= module or similar) with its own entry point inside the
+existing system.
+
+This avoids the chicken-and-egg of the CLI depending on the framework across
+repo boundaries and keeps the developer experience of working on Shiso
+identical to any other Common Lisp project: one =.asd=, one checkout.
+
+** Distribution: vend + Makefile, not Roswell
+
+Roswell is dropped from the toolchain. Installation follows the canonical
+Unix pattern, matching how almightylisp.com is already deployed:
+
+#+begin_src bash
+git clone <shiso>
+cd shiso
+make            # builds the shiso CLI binary
+make install    # copies it to $(PREFIX)/bin
+#+end_src
+
+A =Makefile= now lives at the repo root with targets =shiso= (binary build,
+runs =vend get= first), =install=, =uninstall=, =test=, =clean=, =distclean=.
+=SBCL= and =PREFIX= are overridable.
+
+For =make= to succeed end-to-end, =shiso.asd= needs:
+
+#+begin_src lisp
+:build-operation "program-op"
+:build-pathname "shiso"
+:entry-point "shiso/cli:main"
+#+end_src
+
+…plus a =shiso/cli= package containing =main=. Until those exist, =make= will
+fail at the =asdf:make= step. That work belongs to the CLI module itself, not
+the Makefile.
+
+** Applications consume Shiso through vend
+
+End users never need Shiso to be globally ASDF-discoverable. Applications
+declare =:depends-on (:shiso ...)= in their =.asd= and run =vend get= to
+populate =./vendored/=. *vend's manifest /is/ the =.asd= file* --- there is
+no second manifest format to invent or maintain.
+
+The Makefile therefore does *not* symlink the Shiso repo into =~/common-lisp/=
+or anywhere else. The repo only needs to exist on disk for the duration of
+=make install=; after that, the binary is on =$PATH= and the framework is
+fetched per-application by vend, landing in each app's own =vendored/shiso/=.
+
+** End-to-end user flow
+
+1. =git clone <shiso> && cd shiso && make && make install=
+2. =shiso new-application my-app= --- stamps the app skeleton, including an
+   =.asd= whose =:depends-on= lists =:shiso= and other runtime needs.
+3. =cd my-app && vend get= --- populates =my-app/vendored/=, including
+   =vendored/shiso/= alongside the rest of the runtime dependencies.
+4. =shiso new-module blog= (inside =my-app=) --- stamps a new module directory
+   and *prints* the lines to paste into =my-app/my-app.asd=. No in-place file
+   rewriting (per the wiring discussion above).
+5. =make= inside =my-app= --- builds the application binary against the
+   vendored Shiso.
+
+** Restated: smallest first cut
+
+Adjusting the earlier "smallest first cut" list to match the decisions above:
+
+1. Add =:build-operation=, =:build-pathname=, and =:entry-point= to
+   =shiso.asd=, and write a stub =shiso/cli:main= so =make= produces a
+   working binary (even if the CLI initially does nothing).
+2. Add =skeleton/app/= alongside the existing =skeleton/module/=. The =app/=
+   template includes its own =.asd= with =:depends-on (:shiso)=, a =Makefile=,
+   and the minimum source needed for =vend get= plus =make= to succeed inside
+   a freshly scaffolded app.
+3. Implement =render-template=: walk a tree, substitute ={{ name }}= and a
+   small set of derived names (system name, package name), write the result
+   to a target directory.
+4. Implement two CLI verbs:
+   - =shiso new-application <name>= --- stamps from =skeleton/app/=.
+   - =shiso new-module <name>= --- stamps from =skeleton/module/=, then
+     prints the =.asd= lines for the user to paste.
+5. Test by scaffolding a new application, running =vend get= inside it, and
+   verifying =make= produces a working binary that serves a request.
+
+Everything else --- interactive prompts, =--template <url>=, post-generation
+hooks, additional sub-generators (=new-model=, =new-controller=), distribution
+of third-party templates --- is additive and can wait until the core flow is
+proven.
+

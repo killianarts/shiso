@@ -1,0 +1,68 @@
+#+TITLE: errors-demo
+#+OPTIONS: toc:nil num:nil
+
+Pages that show how Shiso handles HTTP errors. Each one triggers one
+behaviour; the home page is a guided tour with a short explanation per link.
+
+* Run it
+
+From SLY or SLIME, with Shiso loadable by ASDF:
+
+#+begin_src lisp
+(asdf:load-asd #p"~/common-lisp/almighty/shiso/examples/errors-demo/errors-demo.asd")
+(asdf:load-system :errors-demo)
+(errors-demo:start)                      ; http://localhost:5050
+#+end_src
+
+It keeps its SQLite database in =db/demo.db= next to this file.
+
+Debug mode is on in development (the REPL's default), so you start with the
+debug pages. Switch modes without leaving the REPL:
+
+#+begin_src lisp
+(errors-demo:restart-server :debugp nil)    ; production: the app's own pages
+(errors-demo:restart-server :debugp t)      ; debug pages
+(errors-demo:restart-server :debugp :repl)  ; the debugger, with RETRY-REQUEST
+(setf shiso:*debug-404* nil)                ; your 404 page, even in debug mode
+#+end_src
+
+* What to try
+
+| Page                 | Shows                                                                 |
+|----------------------+-----------------------------------------------------------------------|
+| =/nowhere=           | the app's 404 page, or in debug mode the routes tried                 |
+| =/forbidden=         | =abort-with 403 :message=, through the =:4xx= page                    |
+| =/post-only=         | 405 with =Allow: POST=                                                |
+| =/notes/abc=         | the =int= converter rejects =abc=: a 404, not a =parse-integer= error |
+| =/notes/999999=      | =get-or-404=                                                          |
+| =/boom=              | an unexpected error: 500 page, debug page, or the debugger            |
+| =/quota=             | a condition the app maps to 429                                       |
+| =/broken-error-page= | the =:5xx= page fails, so =static/errors/500.html= is served          |
+| =/notes=             | "Add a note, then fail": the insert is rolled back                    |
+
+The home page also has buttons that fetch pages as JSON, as HTMX, with
+=OPTIONS= and =HEAD=, and a POST without a CSRF token, and print the
+responses.
+
+* The REPL debugger
+
+With =:debugp :repl= and SLY or SLIME connected, open =/boom=. The browser
+waits while the debugger shows the =PARSE-ERROR=. Change =boom= in
+=src/demo.lisp= to something that works, for example:
+
+#+begin_src lisp
+(defun boom ()
+  (layout:render "Fixed" (ah:</> (p "Fixed from the REPL."))))
+#+end_src
+
+Compile it with =C-c C-c=, then choose =RETRY-REQUEST=: the browser gets
+"Fixed from the REPL." The server serves nothing else while the debugger is
+open.
+
+* Where things are
+
+- =src/demo.lisp=: the routes and controllers, and the conditions mapped to
+  statuses.
+- =src/error-pages.lisp=: the app's =define-error-page= forms.
+- =static/errors/500.html=: the static fallback.
+- =src/settings.lisp=: port 5050 and the database file.

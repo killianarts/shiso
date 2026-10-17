@@ -9,3 +9,5 @@ vendored/*
 
 .mcp.json
 db/*.db
+/shiso
+/shiso

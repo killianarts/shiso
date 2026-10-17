@@ -176,9 +176,13 @@
   (let ((expansion (macroexpand-1
                     '(shiso:define-application my-app ()
                        (:modules ("/blog" blog) ("/shop" shop))))))
-    ;; expansion is (DEFPARAMETER MY-APP (LACK:BUILDER ...))
-    (assert-true (and (listp expansion) (eq 'defparameter (first expansion)))
-                 "Should expand to a defparameter form")))
+    ;; expansion is (PROGN <settings for static/database…> (DEFPARAMETER MY-APP …))
+    (assert-true (and (listp expansion)
+                      (eq 'progn (first expansion))
+                      (find-if (lambda (form)
+                                 (and (consp form) (eq 'defparameter (first form))))
+                               (rest expansion)))
+                 "Should expand to a progn holding a defparameter form")))
 
 (define-test define-application-contains-module-mounts ()
   (let ((expansion (macroexpand-1

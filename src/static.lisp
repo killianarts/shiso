@@ -10,7 +10,8 @@
    #:module-static-roots
    #:cached-static
    #:reload-manifest
-   #:*project-static-root*))
+   #:*project-static-root*
+   #:project-static-root))
 
 (in-package #:shiso/static)
 
@@ -85,7 +86,10 @@ Not the current directory first: a deployed binary often runs elsewhere."
       (merge-pathnames "static/" (uiop:getcwd))))
 
 (defun default-manifest-path ()
-  (merge-pathnames "static/staticfiles.json" (uiop:getcwd)))
+  "The :static/manifest setting, or static/staticfiles.json in the directory
+the server runs in."
+  (or (almighty-settei:setting :static/manifest)
+      (merge-pathnames "static/staticfiles.json" (uiop:getcwd))))
 
 (defun encode-manifest-json (table)
   "Encode a string→string hash-table as a flat JSON object."

@@ -2,7 +2,8 @@
   (:use #:cl)
   (:local-nicknames (#:modules #:shiso/modules)
                     (#:utils #:shiso/utils)
-                    (#:routing #:shiso/routing))
+                    (#:routing #:shiso/routing)
+                    (#:errors #:shiso/errors))
   (:export
    ;; Locale binding
    #:*locale*
