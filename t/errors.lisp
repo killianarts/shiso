@@ -572,6 +572,34 @@ and then invokes RESTART, as a developer in SLY would."
 (define-test csrf-failure-is-a-bad-request ()
   (assert-error 'shiso:bad-request (server::csrf-failed nil)))
 
+;;; Sessions -----------------------------------------------------------------------------------------
+
+(defun session-count ()
+  (getf (first (mito:retrieve-by-sql "SELECT COUNT(*) AS n FROM shiso_session")) :n))
+
+(defun session-app (handler)
+  (shiso:ensure-session-table)
+  (server::wrap-app handler))
+
+(define-test page-that-stores-nothing-sends-no-session-cookie ()
+  ;; A CDN won't cache a response that sets a cookie.
+  (with-memory-db
+    (let ((r (funcall (session-app (lambda (env) (declare (ignore env))
+                                     '(200 (:content-type "text/html") ("page"))))
+                      (make-env :get "/"))))
+      (assert-eql 200 (status r))
+      (assert-false (header r :set-cookie))
+      (assert-eql 0 (session-count)))))
+
+(define-test page-with-a-csrf-token-sends-a-session-cookie ()
+  (with-memory-db
+    (let ((r (funcall (session-app (lambda (env)
+                                     (lack/middleware/csrf:csrf-token (getf env :lack.session))
+                                     '(200 (:content-type "text/html") ("form"))))
+                      (make-env :get "/"))))
+      (assert-true (search "lack.session=" (header r :set-cookie)))
+      (assert-eql 1 (session-count)))))
+
 ;;; Logging details ---------------------------------------------------------------------------------
 
 (define-test backtraces-start-at-the-signal ()

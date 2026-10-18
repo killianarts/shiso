@@ -59,14 +59,19 @@ the error-page registry renders it."
 HTTP errors (so it also catches errors raised inside session/CSRF handling),
 session (DB-backed via Mito's connection), locale, CSRF protection, then the
 request transaction. The session middleware must precede CSRF so that the
-CSRF middleware can find the session in env."
+CSRF middleware can find the session in env.
+
+A new session is saved, and its cookie sent, only once something is stored
+in it, such as a login or a CSRF token for a form. A page that stores
+nothing sends no cookie, so a shared cache such as a CDN can keep it."
   (errors:wrap-http-errors
    (funcall lack/middleware/session:*lack-middleware-session*
             (i18n:wrap-locale
              (funcall lack/middleware/csrf:*lack-middleware-csrf*
                       (wrap-atomic-requests inner-app)
                       :block-app 'csrf-failed))
-            :store (session:make-store))))
+            :store (session:make-store)
+            :keep-empty nil)))
 
 (defun ensure-woo-status-lines ()
   "Woo writes status lines from a table that lacks some statuses (428, 429,

@@ -10,313 +10,354 @@ highlights; the sections after them list every change.
 
 * Unreleased
 
-For running a Shiso site in production with confidence, and for sites
-in more than one language.
+Run a Shiso site in production with less risk, and in more than one
+language.
 
-- *Settings.* A project configures Shiso and every module in one
-  place, and each machine says what it is in its environment, so
-  projects no longer write their own configuration code. A server
-  with a wrong setting refuses to start and says why, rather than
-  failing later in a request, and a built program assumes production,
-  so nothing meant for development is left on by accident.
-- *Start-up.* =shiso:start= sets up the server and the database
-  itself, leaving less code in each application.
-- *Security.* Secrets stay out of committed files and out of logs.
-- *Internationalization.* A site can be in a language other than
-  English, or in several, Shiso's own text included, and translators
-  work in their own files without touching the Lisp.
-- *Routing fixes.* Redirects and logins behave under modules mounted
-  at a prefix.
-- *HTTP errors.* A controller signals =(s:abort-with 404)= from
-  anywhere and the application designs each error page in one form.
-  JSON and HTMX clients get answers they can use, a wrong method is a
-  405, a failed POST leaves no half-written rows, and in development
-  an error opens the debugger with the request waiting to be retried.
+- *Settings.* Configure Shiso and every module in one file with
+  =shiso:configure=, and give each machine its own values in its
+  environment. A misconfigured server refuses to start and tells you
+  why.
+- *Safety.* A built program assumes production, so development
+  features stay off. Mark a setting =:secret t= to keep its value out
+  of committed files and logs.
+- *Start-up.* =shiso:start= sets up the server and the database for
+  you, so your application has less code to maintain.
+- *Languages.* Serve your site in any language, or several, including
+  Shiso's own text. Your code calls =shiso:translate=, and translators
+  work in their own files.
+- *HTTP errors.* Every error returns the right status and a page you
+  design with =define-error-page=; JSON and HTMX clients get responses
+  they can use. A failed request leaves no partial changes in the
+  database.
+- *Debugging.* In development, =:debugp :repl= opens the Lisp debugger
+  on an error, so you can fix the code and retry the request.
+- *Routing.* Controllers receive URL parameters already checked and
+  converted, as in ="/<int:id>"=, so they need less code. Redirects
+  and logins work in modules mounted at a prefix.
 
 ** Added
 
-- HTTP error handling (=src/errors.lisp=): conditions =http-error=,
-  =bad-request=, =unauthorized=, =forbidden=, =not-found=,
-  =method-not-allowed=, =internal-server-error=; =abort-with=;
-  =define-error-page= for a status, =:4xx=, =:5xx= or =t=;
-  =condition-http-status= to map an application's own conditions to
-  statuses; =get-or-404= and =found-or-404=. JSON clients get RFC 9457
-  =application/problem+json=, HTMX requests a fragment
-  (=*fragment-p*=), =HEAD= an empty body. If an error page fails,
-  =static/errors/<status>.html= is served, then plain text. In debug
-  mode, for requests from this machine only, the debug 500 page and a
-  404 listing the routes tried (=*debug-404*=). =:debugp :repl= (setting
-  =:server/repl-debugger=) opens SLY's or SLIME's debugger on an
-  unexpected error, with =retry-request=, =show-debug-page= and
-  =show-error-page= restarts. Client errors are logged by
-  =*log-client-errors*=. Error pages render with the request's locale
-  and =shiso:*request*= bound, so =translate=, =url= and page
-  components work in them. =reason-phrase= gives a status's standard
-  text. Docs: how-to "Handle HTTP errors"; demo: =examples/errors-demo=.
-- New projects get =static/errors/500.html=, a self-contained page for
-  when the app's own error page fails, and example =define-error-page=
-  forms in =src/routes.lisp=.
-- Typed route parameters: ="/<int:id>"= gives the controller an
-  integer and makes a non-numeric value a 404. Converters =int=,
-  =slug=, =uuid=, =str=, and =define-path-converter= for more. =url=
-  accepts the typed values.
-- 405 with an =Allow= header for a path some route serves with another
-  method; =OPTIONS= for it gets 204 and =Allow= (=*auto-options*=).
-- Atomic requests: POST, PUT, PATCH and DELETE run in one database
-  transaction, rolled back when an error leaves the request
+- HTTP error handling, in =src/errors.lisp=:
+  - Stop a request from anywhere with =abort-with=, or signal a
+    condition: =http-error=, =bad-request=, =unauthorized=,
+    =forbidden=, =not-found=, =method-not-allowed= or
+    =internal-server-error=.
+  - Define an error page with =define-error-page=, for one status,
+    =:4xx=, =:5xx=, or =t= for all.
+  - Map your own conditions to statuses with =condition-http-status=.
+  - Use =get-or-404= and =found-or-404= to return a 404 when a row
+    doesn't exist.
+  - JSON clients get RFC 9457 =application/problem+json=. HTMX
+    requests get a fragment (=*fragment-p*=), and =HEAD= requests an
+    empty body.
+  - If an error page fails, Shiso serves =static/errors/<status>.html=,
+    then plain text.
+  - In debug mode, requests from your own machine get a debug 500
+    page, and a 404 page that lists the routes tried (=*debug-404*=).
+  - With =:debugp :repl= (the =:server/repl-debugger= setting), an
+    unexpected error opens SLY's or SLIME's debugger. Its restarts are
+    =retry-request=, =show-debug-page= and =show-error-page=.
+  - =*log-client-errors*= decides which client errors are logged.
+  - Error pages render with the request's locale and =shiso:*request*=,
+    so =translate=, =url= and your page components work in them.
+  - =reason-phrase= returns a status's standard text.
+  - See the how-to "Handle HTTP errors" and the demo in
+    =examples/errors-demo=.
+- New projects include =static/errors/500.html=, a self-contained page
+  for when the application's error page fails. They also include
+  example =define-error-page= forms in =src/routes.lisp=.
+- Typed route parameters: in ="/<int:id>"=, the controller receives
+  =id= as an integer, and a non-numeric value returns 404. The
+  converters are =int=, =slug=, =uuid= and =str=; add more with
+  =define-path-converter=. =url= accepts typed values.
+- A request whose method no route on its path accepts gets a 405 with
+  an =Allow= header. An =OPTIONS= request gets 204 and =Allow=
+  (=*auto-options*=).
+- Atomic requests: each POST, PUT, PATCH and DELETE request runs in one
+  database transaction. An error that leaves the request rolls it back
   (=*atomic-requests*=).
-- Settings, on the =almighty-settei= library: =define-setting= (kinds
-  =boolean-setting=, =integer-setting=, =string-setting=,
-  =pathname-setting=, =choice-setting=, =list-setting=), =setting=,
-  =setting-source=, =per-environment=, =with-settings=,
-  =on-setting-change=, =print-settings=, =redact=. A value comes from
-  the session, its environment variable, =.env= (development only),
-  the project's =configure=, or its default. =load-settings= reports
-  every problem at once in one =shiso:settings-invalid=. Docs:
-  =org/src/settings.org=.
-- =:shiso/environment= (=SHISO_ENV=): =:development=, =:test= or
-  =:production=. Defaults to development in a REPL and production in a
-  built program; =SHISO_ENV= in =.env= is read on any machine.
+- Settings, built on the =almighty-settei= library:
+  - Declare a setting with =define-setting=. The kinds are
+    =boolean-setting=, =integer-setting=, =string-setting=,
+    =pathname-setting=, =choice-setting= and =list-setting=.
+  - Read a setting with =setting=, and where its value came from with
+    =setting-source=.
+  - Also new: =per-environment=, =with-settings=, =on-setting-change=,
+    =print-settings= and =redact=.
+  - A value comes from the first of: the session, its environment
+    variable, =.env= (development only), the project's =configure=,
+    or its default.
+  - =load-settings= reports every problem at once, in one
+    =shiso:settings-invalid=.
+  - See =org/src/settings.org=.
+- =:shiso/environment=, set by =SHISO_ENV=, is =:development=, =:test=
+  or =:production=. It defaults to development in a REPL and
+  production in a built program. Shiso reads =SHISO_ENV= from =.env=
+  on any machine.
 - Shiso's own settings: =:shiso/site-origin=, =:server/host=,
   =:server/port=, =:server/debugp=, =:server/backend=, the
-  =:database/= settings (=:database/password= secret), and
-  =:static/manifest=. The old variables =HOST=, =PORT=, =DEBUGP= and
+  =:database/= settings, and =:static/manifest=. =:database/password=
+  is secret. The old variables =HOST=, =PORT=, =DEBUGP= and
   =DATABASE_PATH= still work.
-- =shiso:setup-database= and =shiso:connect-database=: connect from
-  the =:database/= settings, make the session table and each model's
-  missing table. =define-application= takes =:after-database=, a
-  function called once the database is set up.
-- =shiso:site-origin=.
-- =<app> settings [--changed]=: the application's binary lists its
-  settings, sources and documentation, secrets masked.
-- New projects get =src/settings.lisp= and a git-ignored =.env= with
-  =SHISO_ENV=development=.
-
-- Internationalization via a Fluent wrap (=shiso:translate=,
-  =with-locale=, =load-localisations=). Catalogs are =.ftl= files
-  under =locale/<locale>/=. Locale middleware reads the
-  =shiso_language= cookie then =Accept-Language=. =POST
-  /i18n/set-language= (module =shiso-i18n=) persists the choice.
-  Framework strings (validators, auth, admin) go through =translate=
-  with English =:default=. Model field labels use derived ids
-  ={model}-{field}=. Vendored =fluent=, =parcom=, =plurals=,
-  =filepaths= (Fluent is MPL-2.0). Date *display* localization is
-  not included; =local-time= still owns instants and widgets.
-  Docs: tutorial 7, how-to, reference, and explanation chapters.
+- =shiso:connect-database= connects using the =:database/= settings.
+  =shiso:setup-database= also creates the session table and any
+  missing model tables. =define-application= accepts
+  =:after-database=, a function Shiso calls once the database is
+  ready.
+- =shiso:site-origin= returns the site's scheme and host.
+- =<app> settings [--changed]= lists the application's settings with
+  their sources and documentation, secrets masked.
+- New projects include =src/settings.lisp= and a git-ignored =.env=
+  that sets =SHISO_ENV=development=.
+- Internationalization with Fluent:
+  - The API is =shiso:translate=, =with-locale= and
+    =load-localisations=.
+  - Catalogs are =.ftl= files in =locale/<locale>/=.
+  - The locale middleware reads the =shiso_language= cookie, then
+    =Accept-Language=.
+  - =POST /i18n/set-language= (module =shiso-i18n=) saves the
+    visitor's choice.
+  - Framework text (validators, auth, admin) goes through =translate=,
+    with English defaults.
+  - Model field labels use ids of the form ={model}-{field}=.
+  - Shiso vendors =fluent=, =parcom=, =plurals= and =filepaths=.
+    Fluent is MPL-2.0.
+  - Dates aren't localized for display. =local-time= still handles
+    instants and widgets.
+  - See tutorial 7 and the how-to, reference and explanation chapters.
 
 ** Fixed
 
-- A response with status 428, 429 or 431 reached the client as an
-  empty 500: Woo has no status line for them. =shiso:start= adds the
-  missing ones.
-- =define-route= with =:regexp t= dropped the regex's captures and
+- =cached-static= looked for files in the current directory, so a
+  deployed binary started elsewhere produced unversioned URLs. It now
+  uses the =static/= directory that =define-application= serves.
+- Responses with status 428, 429 or 431 reached the client as an empty
+  500, because Woo lacks their status lines. =shiso:start= now adds
+  them.
+- =define-route= with =:regexp t= dropped the regex captures and
   called the controller with no arguments.
-- The admin answered 500 for a non-numeric ID in its URLs, and showed
-  a blank form for a missing row; both are 404s now.
-- Trailing-slash redirect loops: local =redirect-response= Locations
-  and =url= reverses no longer re-add a trailing slash that
-  =define-application='s 301 stripper removes. Module index reverse
-  is =/prefix= not =/prefix/=.
-- Login =?next== after a prefix mount: mounts set Lack
-  =:script-name= to the prefix; guards rebuild the full path so
-  =next=/staff= (not =next=/= when =path-info= is =/= inside the
-  mount).
-- Trailing-slash 301 preserves the query string on =Location=.
+- The admin returned 500 for a non-numeric ID in a URL, and a blank
+  form for a missing row. Both now return 404.
+- Trailing-slash redirect loops: =redirect-response= and =url= no
+  longer add a trailing slash that =define-application='s 301 redirect
+  removes. A module's index URL is now =/prefix=, not =/prefix/=.
+- After login in a module mounted at a prefix, =?next== lost the
+  prefix: =/= instead of =/staff=. Mounts now set Lack's =:script-name=
+  to the prefix, and guards use the full path.
+- The trailing-slash 301 now keeps the query string in =Location=.
+- Every response set a session cookie and saved a session row, even
+  for anonymous visitors. A CDN won't cache a page that sets a cookie.
+  Shiso now creates a session only when you store something in it,
+  such as a login or a CSRF token.
 
 ** Upgrading
 
-Move a project's =src/config.lisp= values into =shiso:configure= in
-=src/settings.lisp=, and let =shiso:start= set up the database. Debug
-mode is now on in development; =DEBUGP=false= turns it off.
-
-Error responses are pages now: a controller that returned
-=(http-response "Not found" :code 404)= can =(s:abort-with 404)=
-instead, and gets the application's 404 page. Writes made before an
-error in a POST are rolled back; set =shiso:*atomic-requests*= to NIL
-if something relied on them. Copy =static/errors/500.html= from a new
-project into yours.
+1. Move your =src/config.lisp= values into =shiso:configure= in
+   =src/settings.lisp=.
+2. Remove your database setup code. =shiso:start= now connects and
+   creates the tables.
+3. Copy =static/errors/500.html= from a new project into yours.
+4. To show your 404 page, replace =(http-response "Not found" :code
+   404)= with =(s:abort-with 404)=.
+5. Debug mode is now on in development. To turn it off, set
+   =DEBUGP=false=.
+6. Writes made before an error in a POST, PUT, PATCH or DELETE request
+   are now rolled back. If your code relies on them, set
+   =shiso:*atomic-requests*= to NIL.
 
 ** Changed
 
-- Errors in a request are answered by =wrap-http-errors=, which
-  replaces =wrap-error-logging=. In debug mode an unexpected error
-  shows the debug page rather than entering the debugger; =:debugp
-  :repl= enters it, with a restart to retry the request.
-- 404, 400 and 403 responses (unknown paths, unparsable requests, a
-  bad CSRF token, guards) render through the error-page registry
-  instead of fixed text. A wrong method on an existing path is a 405,
-  not a 404.
-- Unexpected errors' backtraces are logged without the frames of the
-  error handling itself.
+- =wrap-http-errors= handles errors in a request, replacing
+  =wrap-error-logging=. In debug mode, an unexpected error shows the
+  debug page instead of entering the debugger. Use =:debugp :repl= to
+  enter it, with a restart to retry the request.
+- 404, 400 and 403 responses render through the error-page registry
+  instead of fixed text. This covers unknown paths, unparsable
+  requests, bad CSRF tokens and guards. A wrong method on an existing
+  path now returns 405, not 404.
+- Logged backtraces omit the frames of the error handler itself.
 - =shiso:start= loads the settings, sets up the database, and serves
-  from =:server/= settings; its =:host=, =:port= and =:debugp= set
-  those settings for the run. An application no longer connects to
-  the database or reads the environment itself.
-- =:server/debugp= is true in development, so an error in a request
-  shows the debug page (or, with =:debugp :repl=, opens the debugger).
-  =DEBUGP=false= turns it off.
-- Unhandled errors are logged once, secrets masked, never the cookies.
-  Shiso always answers the 500 itself, so the error is never printed
-  unmasked.
-- =shiso:absolute-url= starts with =:shiso/site-origin=, or with the
-  request's own scheme and host when it is for another host.
-- =run-cli= loads the settings first; =setup-db= uses
+  using the =:server/= settings. Its =:host=, =:port= and =:debugp=
+  arguments set those settings for the run. Applications no longer
+  connect to the database or read the environment themselves.
+- =:server/debugp= is true in development, so an error shows the debug
+  page. With =:debugp :repl=, it opens the debugger instead. Set
+  =DEBUGP=false= to turn it off.
+- Shiso logs each unexpected error once, with secrets masked and
+  cookies left out. It always returns the 500 itself, so nothing else
+  prints the error unmasked.
+- =shiso:absolute-url= starts with =:shiso/site-origin=. For a request
+  to another host, it uses that request's scheme and host.
+- =run-cli= loads the settings first, and =setup-db= uses
   =setup-database=.
 - The project template's =src/config.lisp= is replaced by
   =src/settings.lisp=.
-
-- =shiso:current-path= returns the full request path (=script-name= +
-  =path-info=), not the post-mount =path-info= alone.
-- Exported =canonicalize-path= / =canonicalize-redirect-url=.
+- =shiso:current-path= returns the full request path (=script-name=
+  plus =path-info=), not only the =path-info= after the mount.
+- =canonicalize-path= and =canonicalize-redirect-url= are exported.
 
 * 0.3
 
-For sites that look and load the way their authors want.
+Make a site look and load the way you want.
 
 - *Static files.* Browsers get new stylesheets and scripts as soon as
-  a site is deployed, while unchanged files stay cached.
-- *Forms.* A form can match a site's own design. Shiso still does the
-  tedious parts (validation, error messages, keeping what the visitor
-  typed, CSRF protection) without fighting generated markup, and the
-  admin is unaffected.
+  you deploy, while unchanged files stay cached. =shiso:cached-static=
+  gives each file a versioned URL.
+- *Forms.* Make forms match your site's design while Shiso handles
+  validation, errors, the visitor's input and CSRF protection.
+  =field-context= gives each field's state as plain data, ready for
+  any markup.
 - *Scaffolding.* New projects start with their own page skeleton and
-  form components, ready to restyle.
+  form components, such as =ac-field=, ready to restyle.
 
 ** Added
 
-- =shiso:cached-static= — cache-busting static URLs. With a
-  =staticfiles.json= manifest (production), returns content-hashed
-  paths; without one (development), appends =?v=<mtime>=. Unknown
+- =shiso:cached-static= returns cache-busting static URLs. With a
+  =staticfiles.json= manifest (production), it returns content-hashed
+  paths. Without one (development), it appends =?v=<mtime>=. Unknown
   paths fall back to =static= and warn once.
-- =(shiso:collectstatic :hash t)= — writes =stem.<12-hex>.ext=
-  siblings next to unhashed copies and emits
-  =<target>/staticfiles.json=. Old hashed files accumulate (rolling
-  deploy safe). Nested CSS =url()= references are not rewritten.
-- =shiso/static:reload-manifest= — force-reload the manifest from
-  the REPL after a live collectstatic.
-- Dev static middleware resolves hashed names by stripping a
-  =.<hex>= segment before the extension so manifest URLs work
-  against module =static/= trees.
-- Direct =:ironclad= dependency (SHA-256 for fingerprints).
-- Static-file unit tests in =t/static.lisp=.
-- Headless forms API in =shiso/forms/context=:
-  =field-context=, =form-field-by-name=, =cleaned-value=,
-  =resolve-widget=, =request-form-data=. Form objects keep validation,
-  coercion, sticky values, and errors as plain data; markup is optional.
-- Style-dispatched =render-field= / =render-fields= (STYLE first, then
-  field). Default style =t=; admin always passes =:admin= so app
-  specialisations cannot clobber admin pages.
-- =register-widget-field-class= / =widget-field-class=: map a model
-  =:widget= keyword to a form-field class during =make-model-form=
-  (built-in: =:email= → =email-field=).
-- Scaffolded =src/hypermedia/form-components.lisp= with app-owned
-  =ac-csrf-input=, =ac-field=, and =ac-fields= (consume =field-context=;
-  restyle by editing the stamped file).
-- Forms re-exported from the top-level =shiso= package for app authors.
-- Todo example: model-forms for create/update, module form components,
-  compact add form via =field-context=, edit route, CSRF via
-  =ac-csrf-input=.
-- Form tests for field-context, widgets (password/email), date parse,
-  =render-fields= row ids, and =cleaned-value=.
-- App skeleton =src/config.lisp=: env-backed =host=, =port=, =debugp=,
-  and =database-path= (absolute XDG data-home default, =DATABASE_PATH=
-  override).
-- Project-wide hypermedia secondary system in the app skeleton
-  (=<%application-name%>/hypermedia=) with =ac-page-skeleton=
-  (charset, viewport, CSRF meta, CSS/JS hooks).
-- Module skeleton =hypermedia/package.lisp= that re-exports
-  module components.
-- Scaffolded =main= wires =shiso:run-cli= (=createsuperuser= and
-  friends) with =:setup-db= / =:serve=.
+- =(shiso:collectstatic :hash t)= writes =stem.<12-hex>.ext= copies
+  next to the unhashed files, and a =<target>/staticfiles.json=
+  manifest. Old hashed files stay, so rolling deploys are safe. Nested
+  CSS =url()= references aren't rewritten.
+- =shiso/static:reload-manifest= reloads the manifest from the REPL
+  after a live =collectstatic=.
+- In development, the static middleware strips a =.<hex>= segment
+  before the extension, so manifest URLs work against module =static/=
+  trees.
+- =:ironclad= is a direct dependency, for SHA-256 fingerprints.
+- Static-file tests in =t/static.lisp=.
+- A headless forms API in =shiso/forms/context=: =field-context=,
+  =form-field-by-name=, =cleaned-value=, =resolve-widget= and
+  =request-form-data=. A form keeps validation, coercion, the
+  visitor's input and errors as plain data. Markup is up to you.
+- =render-field= and =render-fields= dispatch on a style first, then
+  on the field. The default style is =t=. The admin always passes
+  =:admin=, so your specializations can't change admin pages.
+- =register-widget-field-class= and =widget-field-class= map a model's
+  =:widget= keyword to a form-field class in =make-model-form=. Built
+  in: =:email= maps to =email-field=.
+- New projects include =src/hypermedia/form-components.lisp=, with
+  =ac-csrf-input=, =ac-field= and =ac-fields=. They use
+  =field-context=; restyle them by editing the file.
+- The top-level =shiso= package re-exports the forms API.
+- The todo example uses model forms for create and update, module form
+  components, a compact add form built with =field-context=, an edit
+  route, and =ac-csrf-input=.
+- Form tests for =field-context=, password and email widgets, date
+  parsing, =render-fields= row ids and =cleaned-value=.
+- New projects include =src/config.lisp=, which reads =host=, =port=,
+  =debugp= and =database-path= from the environment. =database-path=
+  defaults to an absolute path under the XDG data home, and
+  =DATABASE_PATH= overrides it.
+- New projects include a project-wide hypermedia system
+  (=<%application-name%>/hypermedia=). Its =ac-page-skeleton= sets
+  the charset, viewport and CSRF meta tag, with hooks for CSS and JS.
+- New modules include =hypermedia/package.lisp=, which re-exports the
+  module's components.
+- A new project's =main= calls =shiso:run-cli= with =:setup-db= and
+  =:serve=, so commands such as =createsuperuser= work.
 
 ** Changed
 
-- =render-form= injects a CSRF hidden input for non-GET methods, honours
-  field =:widget= (including =:password= / =:hidden=), and accepts
-  =:style=. Prefer =field-context= + components for designed pages;
-  =render-form= remains for admin and prototypes.
-- Auth login/signup pages use =render-form= (password widgets work);
-  body data via =request-form-data=; cleaned values via =cleaned-value=.
-- Admin CRUD forms pass =:style :admin= to =render-form=.
-- =date-field= parse accepts HTML =date= (=YYYY-MM-DD=) and
-  =datetime-local= (seconds optional); blank → =NIL=.
-- Docs: forms reference (headless API, style dispatch), CSRF how-to,
-  todo tutorial (05), auth tutorial (06), polls part 2 CSRF helper.
-- Scaffolder template bindings:
-  - =new-application= substitutes =application-name=
-  - =new-module= substitutes =module-name=
-  (replacing the single shared =name= key).
-- Skeleton file names and package prefixes follow those keys
-  (=<% @var application-name %>.asd=, =<% @var module-name %>.asd=,
-  etc.).
-- App =build.lisp= / =Makefile=: =vend get= then load+make via
-  =build.lisp= alone.
-- Docs: scaffolder how-to and CLI reference updated for the new
-  placeholders and inventory.
-- Routing uses *vanilla MyWay* (no namespace fork). Each module still
-  has its own mapper; short route names (=:INDEX=) live on that
-  mapper. =shiso:url= with ="module:route"= resolves the module, then
-  looks up the short name. Removed =*global-routes-namespace*= and
-  MyWay =:namespace= usage.
+- =render-form= adds a CSRF hidden input for methods other than GET.
+  It honours a field's =:widget=, including =:password= and =:hidden=,
+  and accepts =:style=. Use =field-context= and components for
+  designed pages; =render-form= stays for the admin and prototypes.
+- The login and signup pages use =render-form=, so password widgets
+  work. They read the body with =request-form-data= and values with
+  =cleaned-value=.
+- Admin forms pass =:style :admin= to =render-form=.
+- =date-field= accepts HTML =date= (=YYYY-MM-DD=) and
+  =datetime-local= values, with optional seconds. A blank value parses
+  as =NIL=.
+- Updated docs: the forms reference (headless API, style dispatch),
+  the CSRF how-to, the todo tutorial (05), the auth tutorial (06), and
+  the CSRF helper in polls part 2.
+- Scaffolder templates use separate keys: =new-application=
+  substitutes =application-name=, and =new-module= substitutes
+  =module-name=. They replace the shared =name= key.
+- Skeleton file names and package prefixes use those keys, as in
+  =<% @var application-name %>.asd= and =<% @var module-name %>.asd=.
+- A new project's =build.lisp= and =Makefile= run =vend get=, then
+  load and build with =build.lisp= alone.
+- Updated docs: the scaffolder how-to and the CLI reference cover the
+  new keys and files.
+- Routing uses plain MyWay, without the namespace fork. Each module
+  still has its own mapper, which holds its short route names
+  (=:INDEX=). =shiso:url= with ="module:route"= finds the module, then
+  the short name. =*global-routes-namespace*= and MyWay's =:namespace=
+  are removed.
 
 * 0.2 — 2026-07-17
 
-For starting and running real projects.
+Start and run real projects.
 
-- *Scaffolding.* A new project or module works from a single command,
-  not by copying an example.
-- *Authentication.* Sites can have users and logins without building
-  them.
-- *Application binaries.* A built site runs maintenance tasks, such as
-  creating an administrator, from the command line.
-- *Documentation.* Shiso can be learned from first tutorial to full
-  reference.
+- *Scaffolding.* Make a working project or module with one command,
+  such as =shiso new-application=, instead of copying an example.
+- *Authentication.* Give your site sessions, logins and CSRF
+  protection without building them. =createsuperuser= makes your
+  first administrator.
+- *Application binaries.* Add your own maintenance commands to your
+  site's built program with =register-command=.
+- *Documentation.* Learn Shiso from the first tutorial to the full
+  reference, all under =docs/=.
 
 This release includes the work landed through the =Updated
 scaffolding= line of development.
 
 ** Added
 
-- CLI scaffolder (=shiso new-application=, =shiso new-module=) with
-  =SHISO_HOME=-aware template trees under =skeleton/=.
-- Auth subsystem: sessions, CSRF helpers, login flow,
+- A CLI scaffolder: =shiso new-application= and =shiso new-module=.
+  Its templates live under =skeleton/=, found through =SHISO_HOME=.
+- Authentication: sessions, CSRF helpers, a login flow, and the
   =createsuperuser= management command.
-- =shiso:run-cli= / =register-command= for application binaries.
-- Basic logging support.
-- Full Diátaxis documentation tree under =docs/= (tutorials, how-tos,
-  reference, explanation).
-- Model field-type sugar and registry introspection improvements
-  (=define-model=, proper model class interning).
+- =shiso:run-cli= and =register-command=, for commands in application
+  binaries.
+- Basic logging.
+- A Diátaxis documentation tree under =docs/=: tutorials, how-tos,
+  reference and explanation.
+- Field-type shorthand for =define-model=, better registry
+  introspection, and proper interning of model classes.
 
 ** Changed
 
-- Package exports and utility surface expanded for app authors
-  (=url=, CSRF token access, session table helpers, …).
-- Admin links standardized on =shiso/utils:url=.
+- More exports and utilities for app authors, such as =url=, CSRF
+  token access and session table helpers.
+- Admin links use =shiso/utils:url=.
 
 ** Removed
 
-- Literate-programming org sources as the primary code path (plain
-  =src/= is canonical again).
+- Org sources are no longer the primary code. Plain =src/= is
+  canonical again.
 
 * 0.1 — 2026-02 … 2026-03
 
-The first release: a site built from reusable modules, with database
-models, forms, and an admin for managing the data from the first day.
+Build a site from reusable modules, with models, forms and an admin
+from the first day.
+
+- *Modules.* Build a site from modules mounted at URL prefixes, each
+  with its own named routes. =define-module= declares one, and
+  =define-application= mounts it.
+- *Models and forms.* Store data in Mito-backed models declared with
+  =define-model=, and accept it through forms with validators.
+- *Admin.* Manage your data through CRUD pages for each model you
+  register with =define-admin=.
 
 ** Added
 
 - Module and application macros: =define-module=,
-  =define-application=, =define-route= / route table.
-- Named and regex routes; request/response helpers.
-- Models (Mito-backed), forms, validators.
-- Admin: registry, CRUD views, module mount.
-- Early scaffold for applications and modules.
+  =define-application=, and =define-route= with a route table.
+- Named and regex routes, and helpers for requests and responses.
+- Mito-backed models, forms and validators.
+- An admin with a registry, CRUD pages and a module to mount.
+- An early scaffold for applications and modules.
 - Tests for routing and related core behaviour.
 
 ** Changed
 
-- Route API renamed toward =define-route= and clearer export sets.
+- The route API is renamed toward =define-route=, with clearer export
+  sets.
 
 * See also
 
