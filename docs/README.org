@@ -39,6 +39,8 @@ Goal-driven recipes. Skim by title until one matches your problem.
 - [[file:how-to/serve-static-files.org][Serve static files]]
 - [[file:how-to/handle-http-errors.org][Handle HTTP errors]] — error pages, =abort-with=, =get-or-404=,
   typed route parameters, debug pages and the REPL debugger
+- [[file:how-to/measure-request-time.org][Measure request time]] — the =Server-Timing= header, the access
+  log, slow requests and repeated queries
 - [[file:how-to/set-up-authentication.org][Set up authentication in a new project]]
 - [[file:how-to/add-translations.org][Add translations]]
 - [[file:how-to/customize-the-scaffolder-templates.org][Customize the scaffolder templates]]

@@ -39,6 +39,9 @@
                :almighty-settei
                ;; Request-body snapshots for the :repl debugger's retries
                :flexi-streams
+               ;; Request timing: SQL hooks, response sizes
+               :dbi
+               :trivial-utf-8
                )
   :components ((:module "src"
                 :serial t
@@ -50,6 +53,8 @@
                  ;; Before routing: DEFINE-APPLICATION's expansion names
                  ;; shiso/errors symbols.
                  (:file "errors")
+                 ;; Before routing: routes record their names for the log.
+                 (:file "timing")
                  (:file "routing")
                  (:file "requests")
                  (:file "utils")
@@ -132,7 +137,8 @@
                  (:file "auth")
                  (:file "static")
                  (:file "settings")
-                 (:file "errors"))))
+                 (:file "errors")
+                 (:file "timing"))))
   :perform (test-op (o s)
                     (uiop:symbol-call :lisp-unit2 :run-tests
                                       :package :shiso/t/routes)
@@ -155,5 +161,7 @@
                     (uiop:symbol-call :lisp-unit2 :run-tests
                                       :package :shiso/t/settings)
                     (uiop:symbol-call :lisp-unit2 :run-tests
-                                      :package :shiso/t/errors)))
+                                      :package :shiso/t/errors)
+                    (uiop:symbol-call :lisp-unit2 :run-tests
+                                      :package :shiso/t/timing)))
 

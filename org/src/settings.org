@@ -119,10 +119,15 @@ keeping what was set there.
 | =:server/port=        | =5000=                                        | =SHISO_SERVER_PORT=, =PORT=     |
 | =:server/debugp=      | development: true; otherwise false            | =SHISO_SERVER_DEBUGP=, =DEBUGP= |
 | =:server/backend=     | =:woo=                                        | =SHISO_SERVER_BACKEND=          |
+| =:server/repl-debugger= | false                                       | =SHISO_SERVER_REPL_DEBUGGER=    |
+| =:server/timing-header= | =:total=; or =:full=, =:off=                | =SHISO_SERVER_TIMING_HEADER=    |
+| =:server/access-log=  | =:logfmt=; or =:json=, =:off=                 | =SHISO_SERVER_ACCESS_LOG=       |
+| =:server/slow-request-ms= | =500=; =0= turns it off                   | =SHISO_SERVER_SLOW_REQUEST_MS=  |
 | =:database/driver=    | =:sqlite3=                                    | =SHISO_DATABASE_DRIVER=         |
 | =:database/name=      | development: =db/development.db=; test: in memory; required in production | =SHISO_DATABASE_NAME=, =DATABASE_PATH= |
 | =:database/host=, =:database/port=, =:database/user= | not set | =SHISO_DATABASE_HOST= ... |
 | =:database/password=  | not set; secret                               | =SHISO_DATABASE_PASSWORD=       |
+| =:database/sqlite-pragmas= | =journal_mode=WAL=, =synchronous=NORMAL=, =busy_timeout=5000=, =temp_store=MEMORY= | =SHISO_DATABASE_SQLITE_PRAGMAS= |
 | =:static/manifest=    | =static/staticfiles.json=                     | =SHISO_STATIC_MANIFEST=         |
 
 * The database
@@ -132,6 +137,15 @@ keeping what was set there.
 session table and each registered model's missing table, and then calls the
 application's =:after-database= function, if =define-application= gives one.
 A table that is there isn't changed: a changed model needs a migration.
+
+Each SQLite connection Shiso makes runs the =:database/sqlite-pragmas=.
+WAL lets pages read while another request writes. =busy_timeout= makes a
+request wait for a lock instead of failing at once. Setting the list
+replaces all four, so repeat the ones you keep:
+
+#+begin_src sh
+SHISO_DATABASE_SQLITE_PRAGMAS="journal_mode=WAL,synchronous=FULL,busy_timeout=10000"
+#+end_src
 
 * Absolute URLs
 

@@ -51,6 +51,25 @@ mapper, and falls through to =pages=.
 
 If nothing handles the request, the final fallback returns a 404.
 
+* Turn sessions off for a mount
+
+A module that serves files, such as photos, doesn't need a session:
+
+#+begin_src lisp
+(:modules
+  ("/media/photos" media :sessions nil)
+  (""              pages))
+#+end_src
+
+Requests under =/media/photos= then skip the session middleware. No
+session row is read or written, and no response sets a session cookie, so
+a CDN such as Cloudflare can cache them. =/static/= always works this way.
+
+Without a session there is no login and no CSRF check under that prefix.
+=shiso:current-user= returns =nil=, and so does =shiso:csrf-token-value=.
+A module mounted at =""= can't turn sessions off, because every path starts
+with =""=.
+
 * Static files come first
 
 The application also installs a static-file middleware /before/ any

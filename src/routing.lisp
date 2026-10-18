@@ -1,7 +1,8 @@
 (defpackage #:shiso/routing
   (:use #:cl)
   (:local-nicknames (#:modules #:shiso/modules)
-                    (#:errors #:shiso/errors))
+                    (#:errors #:shiso/errors)
+                    (#:timing #:shiso/timing))
   (:export
    ;; Typed route parameters
    #:define-path-converter
@@ -28,6 +29,7 @@
    #:full-path-from-env
    #:strip-trailing-slash-middleware
    #:make-module-mount-middleware
+   #:application-sessionless-prefixes
 ))
 
 (in-package #:shiso/routing)
@@ -231,9 +233,10 @@ NIL when a converter rejects its value."
                                    value)))
         params)))
 
-(defun make-endpoint (fn param-keys &key converters regexp)
+(defun make-endpoint (fn param-keys &key converters regexp label)
   "The MyWay handler for controller FN: calls it with the route's parameters,
-converted when typed, or with a regex route's captures."
+converted when typed, or with a regex route's captures. LABEL,
+\"module:name\", goes in the request's access-log line."
   (let ((fn (if (functionp fn)
                 (let ((name (nth-value 2 (function-lambda-expression fn))))
                   (if (symbolp name) name fn))
@@ -241,21 +244,25 @@ converted when typed, or with a regex route's captures."
     (cond
       (regexp
        (lambda (params)
+         (timing:note-route label)
          (apply fn (getf params :captures))))
       (converters
        (lambda (params)
          (multiple-value-bind (args ok) (convert-params param-keys params converters)
-           (if ok
-               (apply fn args)
-               ;; Not a match after all: let later routes try. NIL when none
-               ;; does; the module treats that as a miss.
-               (values (myway:next-route))))))
+           (cond (ok
+                  (timing:note-route label)
+                  (apply fn args))
+                 ;; Not a match after all: let later routes try. NIL when
+                 ;; none does; the module treats that as a miss.
+                 (t (values (myway:next-route)))))))
       (param-keys
        (lambda (params)
+         (timing:note-route label)
          (apply fn (mapcar (lambda (key) (getf params key)) param-keys))))
       (t
        (lambda (params)
          (declare (ignore params))
+         (timing:note-route label)
          (funcall fn))))))
 
 (defun to-symbol-form (fn-form)
@@ -294,9 +301,11 @@ name is \"ADMIN:USERS\")."
     (symbol (intern (symbol-name name) :keyword))
     (string (intern (string-upcase name) :keyword))))
 
-(defun define-route (method routing-rule &key controller name (regexp nil) (routes *routes*))
+(defun define-route (method routing-rule &key controller name (regexp nil) (routes *routes*)
+                                              module)
   "Register ROUTING-RULE on ROUTES (default `*routes*').
 NAME is stored as a MyWay route name keyword (see `coerce-route-name').
+MODULE, a string, names the route \"module:name\" in the access log.
 Module routes should use a short name unique within that module's
 mapper (e.g. \"index\"); reverse URLs with `shiso:url' as
 \"module:index\". Global `define-routes' may use a unique dotted name
@@ -310,7 +319,10 @@ on the shared mapper."
       (prog1 (myway:connect mapper
                             rule
                             (make-endpoint controller param-keys
-                                           :converters converters :regexp regexp)
+                                           :converters converters :regexp regexp
+                                           :label (cond ((and module name)
+                                                         (format nil "~A:~(~A~)" module name))
+                                                        (name (format nil "~(~A~)" name))))
                             :method method
                             :name name-kw
                             :regexp regexp)
@@ -385,7 +397,8 @@ for the recognized specs (e.g. (:require :staff))."
                            collect `(define-route ,m ,path
                                       :controller ,controller-symbol
                                       :name ,route-name
-                                      :routes ,module-routes-var)))))
+                                      :routes ,module-routes-var
+                                      :module ,(string-downcase (symbol-name name)))))))
          (modules:register-module ,module-keyword
                           (make-instance 'modules:module
                                          :routes ,module-routes-var
@@ -407,8 +420,11 @@ Usage:
   (:after-database #'seed-data) is called once SHISO:START has connected to
 the database and made its tables.
 
-Each entry in :modules is (PREFIX MODULE-NAME). The prefix string is used
-directly — \"\" means mount at root, \"/books\" means mount at /books.
+Each entry in :modules is (PREFIX MODULE-NAME &key (SESSIONS T)). The
+prefix string is used directly — \"\" means mount at root, \"/books\" means
+mount at /books. With :SESSIONS NIL, requests under the prefix get no
+session: no session row is read or written, and there is no login and no
+CSRF check there. For modules that serve files, such as images.
 Modules must be loaded (and their define-module forms evaluated) before
 this macro runs so that their routes are in the registry.
 Modules are late-bound: the registry is consulted at dispatch time, so
@@ -416,7 +432,9 @@ re-evaluating define-module takes effect immediately.
 Static files are served by a global middleware under /static/ that searches
 the project's static/ directory and per-module static/ directories."
   (let* ((app-var (intern (string-upcase (symbol-name name))))
-         (modules (cdr (assoc :modules options)))
+         (modules (mapcar #'parse-mount (cdr (assoc :modules options))))
+         (sessionless (loop for (prefix nil sessions) in modules
+                            unless sessions collect prefix))
          ;; Detect project-wide static/ directory at compile time
          ;; Walk up from the source file's directory to find static/
          (source-path (or *compile-file-pathname* *load-pathname*))
@@ -471,7 +489,29 @@ the project's static/ directory and per-module static/ directories."
          ;; Per request: the methods modules collect for the 405.
          (lambda (env)
            (let ((shiso/errors:*allowed-methods* nil))
-             (funcall app env))))))))
+             (funcall app env)))))
+      ;; Read by SHISO:START, which wraps the app in the session middleware.
+      (setf (shiso/routing:application-sessionless-prefixes ,app-var) ',sessionless)
+      ',app-var)))
+
+(defun parse-mount (entry)
+  "(PREFIX MODULE-NAME SESSIONS) from a :modules entry of DEFINE-APPLICATION."
+  (destructuring-bind (prefix module-name &key (sessions t)) entry
+    (when (and (not sessions) (equal prefix ""))
+      (error "The module ~A is mounted at \"\" with :sessions nil, but every ~
+path starts with \"\". Mount it at a prefix of its own." module-name))
+    (list prefix module-name sessions)))
+
+(defvar *sessionless-prefixes* (make-hash-table :test 'eq #+sbcl :weakness #+sbcl :key)
+  "Application function → the mount prefixes DEFINE-APPLICATION gave
+:sessions nil.")
+
+(defun application-sessionless-prefixes (app)
+  "The mount prefixes under which APP's requests get no session."
+  (values (gethash app *sessionless-prefixes*)))
+
+(defun (setf application-sessionless-prefixes) (prefixes app)
+  (setf (gethash app *sessionless-prefixes*) prefixes))
 
 (defvar *auto-options* t
   "When true, an OPTIONS request for a path some route serves, but not with

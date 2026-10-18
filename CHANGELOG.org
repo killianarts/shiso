@@ -34,9 +34,32 @@ language.
 - *Routing.* Controllers receive URL parameters already checked and
   converted, as in ="/<int:id>"=, so they need less code. Redirects
   and logins work in modules mounted at a prefix.
+- *Speed.* See where each request's time goes, in Lisp, the database
+  or the network, so you fix the slow part. Name your own phases with
+  =shiso:with-timing=.
 
 ** Added
 
+- Request timing, in =src/timing.lisp=:
+  - Every response has a =Server-Timing= header with its time in Lisp.
+    In debug mode, requests from your machine also get the database
+    time, query count, garbage collection and named phases. The
+    =:server/timing-header= setting chooses =:total=, =:full= or
+    =:off=.
+  - Time part of a request with =with-timing=.
+  - An access log: one line per request, with status, time, queries,
+    bytes and route. =:server/access-log= chooses =:logfmt=, =:json=
+    or =:off=.
+  - A request that takes 500 ms or more is logged with its SQL
+    statements (=:server/slow-request-ms=).
+  - In debug mode, a request that runs the same SQL more than 10 times
+    logs a warning: usually an N+1 query.
+  - See the how-to "Measure request time".
+- Mount a module with =:sessions nil= to serve it without sessions, as
+  in =("/media" media :sessions nil)=. Its responses set no cookie, so
+  a CDN can cache them.
+- =:database/sqlite-pragmas=: PRAGMA statements for each SQLite
+  connection.
 - HTTP error handling, in =src/errors.lisp=:
   - Stop a request from anywhere with =abort-with=, or signal a
     condition: =http-error=, =bad-request=, =unauthorized=,
@@ -164,9 +187,23 @@ language.
 6. Writes made before an error in a POST, PUT, PATCH or DELETE request
    are now rolled back. If your code relies on them, set
    =shiso:*atomic-requests*= to NIL.
+7. SQLite databases now use WAL mode, which keeps two more files next to
+   the database: =-wal= and =-shm=. Back up with =sqlite3 db .backup=,
+   not by copying the database file alone.
+8. If your application sets SQLite pragmas after connecting, remove that
+   code, or move the pragmas to =:database/sqlite-pragmas=. =shiso:start=
+   connects again, and the pragmas you set are lost with your
+   connection.
 
 ** Changed
 
+- Each request writes an access-log line to standard output. Set
+  =:server/access-log= to =:off= to stop it.
+- Shiso sets =journal_mode=WAL=, =synchronous=NORMAL=,
+  =busy_timeout=5000= and =temp_store=MEMORY= on each SQLite connection.
+  Requests wait up to 5 seconds for a lock instead of failing.
+- Requests under =/static/= skip the session middleware. They no longer
+  read or write a session.
 - =wrap-http-errors= handles errors in a request, replacing
   =wrap-error-logging=. In debug mode, an unexpected error shows the
   debug page instead of entering the debugger. Use =:debugp :repl= to

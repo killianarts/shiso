@@ -74,7 +74,7 @@ to a =defparameter= holding the resulting Lack app.
 
 | Option                                  | Meaning                                            |
 |-----------------------------------------+----------------------------------------------------|
-| =(:modules (PREFIX MOD-NAME)*)=         | Module mount table — see [[file:../how-to/mount-a-module-under-a-prefix.org][mount how-to]] |
+| =(:modules (PREFIX MOD-NAME &key (sessions t))*)= | Module mount table — see [[file:../how-to/mount-a-module-under-a-prefix.org][mount how-to]]. =:sessions nil= serves the mount without sessions. |
 
 ** Generated pipeline
 

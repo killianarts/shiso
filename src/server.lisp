@@ -2,6 +2,8 @@
   (:use #:cl)
   (:local-nicknames (#:session #:shiso/auth/session)
                     (#:errors #:shiso/errors)
+                    (#:timing #:shiso/timing)
+                    (#:routing #:shiso/routing)
                     (#:i18n #:shiso/i18n)
                     (#:settei #:almighty-settei)
                     (#:database #:shiso/database))
@@ -54,24 +56,55 @@ the error-page registry renders it."
   (declare (ignore env))
   (errors:abort-with 400 :message "CSRF token missing or invalid."))
 
-(defun wrap-app (inner-app)
+(defun sessionless-path-p (path prefixes)
+  "True when PATH is under /static/ or one of PREFIXES, the mounts
+DEFINE-APPLICATION gave :sessions nil."
+  (flet ((under (prefix)
+           (let ((n (length prefix)))
+             (and (>= (length path) n)
+                  (string= path prefix :end1 n)
+                  (or (= (length path) n)
+                      (char= (char path n) #\/)
+                      (char= (char prefix (1- n)) #\/))))))
+    (and path
+         (or (under "/static/")
+             (some #'under prefixes)))))
+
+(defun wrap-sessions (app sessionless-prefixes)
+  "APP with locale, CSRF protection and the request transaction, inside the
+session middleware, except under SESSIONLESS-PREFIXES and /static/. There a
+request has no session, so no session row is read or written, and no CSRF
+check: without a session, a forged request carries no login."
+  (let ((with-session
+          (funcall lack/middleware/session:*lack-middleware-session*
+                   (i18n:wrap-locale
+                    (funcall lack/middleware/csrf:*lack-middleware-csrf*
+                             (wrap-atomic-requests app)
+                             :block-app 'csrf-failed))
+                   :store (session:make-store)
+                   :keep-empty nil))
+        (without-session (i18n:wrap-locale (wrap-atomic-requests app))))
+    (lambda (env)
+      (if (sessionless-path-p (getf env :path-info) sessionless-prefixes)
+          (funcall without-session env)
+          (funcall with-session env)))))
+
+(defun wrap-app (inner-app &key (sessionless-prefixes
+                                 (routing:application-sessionless-prefixes inner-app)))
   "Wrap INNER-APP with the standard shiso middleware stack, outermost first:
-HTTP errors (so it also catches errors raised inside session/CSRF handling),
-session (DB-backed via Mito's connection), locale, CSRF protection, then the
-request transaction. The session middleware must precede CSRF so that the
-CSRF middleware can find the session in env.
+request timing (Server-Timing and the access log), HTTP errors (so it also
+catches errors raised inside session/CSRF handling), session (DB-backed via
+Mito's connection), locale, CSRF protection, then the request transaction.
+The session middleware must precede CSRF so that the CSRF middleware can
+find the session in env.
 
 A new session is saved, and its cookie sent, only once something is stored
 in it, such as a login or a CSRF token for a form. A page that stores
-nothing sends no cookie, so a shared cache such as a CDN can keep it."
-  (errors:wrap-http-errors
-   (funcall lack/middleware/session:*lack-middleware-session*
-            (i18n:wrap-locale
-             (funcall lack/middleware/csrf:*lack-middleware-csrf*
-                      (wrap-atomic-requests inner-app)
-                      :block-app 'csrf-failed))
-            :store (session:make-store)
-            :keep-empty nil)))
+nothing sends no cookie, so a shared cache such as a CDN can keep it.
+Requests under /static/ and SESSIONLESS-PREFIXES get no session at all."
+  (timing:wrap-request-timing
+   (errors:wrap-http-errors
+    (wrap-sessions inner-app sessionless-prefixes))))
 
 (defun ensure-woo-status-lines ()
   "Woo writes status lines from a table that lacks some statuses (428, 429,

@@ -126,6 +126,20 @@ an SQLite database in memory."
   "The password to connect to the database server with."
   :secret t)
 
+(settei:define-setting :database/sqlite-pragmas settei:list-setting
+  "PRAGMA statements run on each SQLite connection, as name=value. WAL lets
+readers work while one request writes. synchronous=NORMAL is safe with WAL:
+a power cut can lose the last commits, but never corrupts the database.
+busy_timeout waits up to that many milliseconds for a lock instead of
+failing. Setting this replaces all four."
+  :validator (lambda (pragmas configuration)
+               (declare (ignore configuration))
+               (let ((bad (find-if-not (lambda (p) (cl-ppcre:scan "^[A-Za-z_]+=[A-Za-z0-9_-]+$" p))
+                                       pragmas)))
+                 (when bad
+                   (format nil "has ~S, which isn't name=value" bad))))
+  :default '("journal_mode=WAL" "synchronous=NORMAL" "busy_timeout=5000" "temp_store=MEMORY"))
+
 ;;; Static files
 
 (settei:define-setting :static/manifest settei:pathname-setting

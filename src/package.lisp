@@ -63,6 +63,9 @@
                 #:stop
                 #:*atomic-requests*)
 
+  (:import-from #:shiso/timing
+                #:with-timing)
+
   (:import-from #:shiso/static
                 #:collectstatic
                 #:cached-static)
@@ -293,6 +296,8 @@
    #:get-or-404
    #:found-or-404
    #:*atomic-requests*
+   ;; Request timing
+   #:with-timing
    ;; Typed route parameters
    #:define-path-converter
    #:*auto-options*

@@ -32,14 +32,22 @@ again with the same ones does nothing.")
                     when value
                       append (list key value))))))
 
+(defun apply-sqlite-pragmas ()
+  "Run the :database/sqlite-pragmas on the current connection."
+  (dolist (pragma (settei:setting :database/sqlite-pragmas))
+    (mito:execute-sql (format nil "PRAGMA ~A" pragma))))
+
 (defun connect-database ()
   "Connect to the database the settings name, unless already connected to
-it. For SQLite, the file's directory is made first."
+it. For SQLite, the file's directory is made first, and the connection gets
+the :database/sqlite-pragmas."
   (let ((arguments (connection-arguments)))
     (unless (and mito:*connection* (equal arguments *connected-to*))
       (when (eq (first arguments) :sqlite3)
         (ensure-directories-exist (getf (rest arguments) :database-name)))
       (apply #'mito:connect-toplevel arguments)
+      (when (eq (first arguments) :sqlite3)
+        (apply-sqlite-pragmas))
       (setf *connected-to* arguments))
     mito:*connection*))
 

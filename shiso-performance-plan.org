@@ -1,0 +1,402 @@
+#+TITLE: Performance plan: make Shiso sites fast, and measure them
+#+DATE: 2026-10-18
+#+OPTIONS: toc:2 num:nil
+
+* Summary
+
+This plan covers the Shiso side of making sites fast:
+
+- what Shiso should measure about every request;
+- what Shiso should change to make requests faster;
+- a protocol you follow to measure a site's speed, now and after each change.
+
+Each site keeps its own findings, budgets and site-specific changes in its
+own repository:
+
+| Site            | Server       | Most visitors | Its file                                                   |
+|-----------------+--------------+---------------+------------------------------------------------------------|
+| gyokubundo.com  | Linode Tokyo | Japan         | =~/Work/Software_Development/gyokubundo/PERFORMANCE.org=   |
+| almightylisp.com | Linode Tokyo | Outside Japan, mostly the US | =~/Learning/lisp/almighty/almightylisp.com/PERFORMANCE.org= |
+
+Both sites run behind Cloudflare and Caddy, on Woo, with SQLite.
+
+* What Shiso lacks today
+
+Measuring Gyokubundo on 2026-10-18 showed these gaps in Shiso itself:
+
+1. *Nothing measures Lisp's share of a request.* A slow first byte can't be
+   split into network, waiting and server time.
+2. *Shiso can't say how long a response may be cached.* Each application
+   writes =Cache-Control= by hand. almightylisp.com does this for its
+   magazine pages; Gyokubundo doesn't.
+3. *A page that shows a CSRF token can't be cached by Cloudflare.*
+   =csrf-token-value= stores a token in the session, so the response sets a
+   cookie, and Cloudflare won't cache a response that sets one. Nothing warns
+   you.
+4. *Every request loads and saves the session.* For a visitor with a session
+   cookie, Lack reads the session, then opens a transaction to compare and
+   save it. That includes every image and static file Lisp serves.
+5. *Woo serves every request on one thread.* Shiso doesn't pass
+   =:worker-num=, and Woo's default is a single thread. A slow request
+   delays every request behind it. Woo sends files with =sendfile=, so files
+   themselves are cheap.
+6. *Shiso sets no SQLite pragmas.* An application that sets =busy_timeout=
+   on its own connection loses it, because =shiso:start= connects again if
+   Shiso didn't make the first connection.
+
+* Part 1: Measure every request in Shiso
+
+** M1. Request timer and =Server-Timing=
+
+A new outermost middleware, outside =wrap-http-errors=, times each request.
+It adds a =Server-Timing= header with what it measured:
+
+#+begin_example
+Server-Timing: total;dur=41.2, db;dur=12.8;desc="9 queries", gc;dur=0.0, render;dur=18.1
+#+end_example
+
+- =total=: from entering the middleware to the finished response.
+- =db=: the time and count of SQL statements, from =dbi:*sql-execution-hooks*=.
+  This includes the session store's queries.
+- =gc=: the change in =sb-ext:*gc-run-time*=, so you can see a pause.
+- Named phases from =s:with-timing= (M4), such as =render=.
+
+A new setting, =:server/timing-header=, decides how much is sent:
+
+- =:total= (production default): only =total=. Anyone can read the header,
+  and a breakdown can leak timing information.
+- =:full=: every entry. Debug mode sends this to requests from this
+  machine, the same rule as the debug pages.
+- =:off=: no header.
+
+The header goes out with the response headers. It doesn't include the time
+Woo spends writing the body, or the time a request waits for Woo's thread.
+
+When Cloudflare serves a cached page, the header shows the server time of
+the request that filled the cache, not of this one. Check =cf-cache-status=
+before reading it.
+
+** M2. Access log with timings
+
+One line per request, on =*standard-output*=, so =journalctl= keeps it:
+
+#+begin_example
+method=GET path=/works status=200 ms=41.2 db_ms=12.8 queries=9 gc_ms=0.0 bytes=4070 route=works:index
+#+end_example
+
+- The =:server/access-log= setting chooses =:logfmt= (the default), =:json=,
+  or =:off=. Caddy already logs requests, so this log adds what only Lisp
+  knows: the route, queries and server time.
+- A request slower than =:server/slow-request-ms= (default 500) also logs
+  its SQL statements, with their times.
+- In debug mode, a request that runs the same SQL more than 10 times gets a
+  warning. That pattern is usually an N+1 query.
+
+** M3. Per-route statistics in the running image
+
+Shiso keeps, per route, the count, errors and the 50th, 95th and 99th
+percentile times since start-up.
+
+- =(s:request-stats)= prints the table in the REPL.
+- =GET /_shiso/stats= returns it as text, only to requests from this
+  machine. On the server, =curl http://127.0.0.1:5000/_shiso/stats= reads
+  it, because that request doesn't pass through Caddy.
+
+** M4. =s:with-timing= for application code
+
+#+begin_src lisp
+(s:with-timing (:render)
+  (ah:render-to-string (hm:ac-home-page ...)))
+#+end_src
+
+It adds a named entry to =Server-Timing= and the access log. Outside a
+request it runs the body and records nothing.
+
+** M5. Profile a request in the image
+
+Lisp can profile a route without a network or a browser:
+
+#+begin_src lisp
+(s:time-request "/works")                      ; one run: times, queries, bytes, allocation
+(s:profile-request "/works" :count 500)        ; SB-SPROF over 500 runs, CPU
+(s:profile-request "/works" :mode :alloc)      ; where the garbage comes from
+#+end_src
+
+They build a request environment and call the wrapped application, so
+sessions, CSRF and the database are included.
+
+** M6. Real-visitor measurements
+
+Each site turns on Cloudflare Web Analytics. It costs no code, and it
+reports Core Web Vitals by country, page and device. A Shiso endpoint for
+=web-vitals= beacons is possible later, for a site without Cloudflare.
+
+* Part 2: Make Shiso faster
+
+** S1. SQLite settings
+
+=connect-database= sets these on every SQLite connection:
+
+| Pragma         | Value     | Why                                                |
+|----------------+-----------+----------------------------------------------------|
+| =journal_mode= | =WAL=     | Readers don't wait for a writer.                   |
+| =synchronous=  | =NORMAL=  | Safe with WAL, and commits skip a disk flush each. |
+| =busy_timeout= | =5000=    | Waits for a lock instead of failing at once.       |
+| =temp_store=   | =MEMORY=  | Sorting and temporary tables stay off disk.        |
+
+A new setting, =:database/sqlite-pragmas=, adds to or replaces them.
+
+** S2. No session where none is used
+
+A mount option turns sessions off for a module:
+
+#+begin_src lisp
+(:modules ("/media/photos" :media :sessions nil) ...)
+#+end_src
+
+=/static/= never gets a session. Controllers under such a mount see no
+session, so =csrf-token-value= returns =nil= there.
+
+** S3. Say how long a response may be cached
+
+Add a route option and a response keyword:
+
+#+begin_src lisp
+(:GET "/works" 'index "index" :cache '(:public :max-age 0 :s-maxage 60 :stale-while-revalidate 600))
+(s:http-response html :cache :private)
+#+end_src
+
+- The option sets =Cache-Control=, and =:cdn-max-age= sets
+  =Cloudflare-CDN-Cache-Control=, as almightylisp.com's magazine does by hand.
+- The default for a cached public page is 60 seconds at the CDN, with
+  =stale-while-revalidate=. An edit then appears within a minute, and nothing
+  needs to purge the CDN.
+- In debug mode, Shiso warns when a response marked =:public= also sets a
+  cookie, since no shared cache will keep it.
+
+Two cautions belong in the documentation:
+
+- A page's language comes from a cookie or =Accept-Language=. Cloudflare
+  ignores =Vary= on HTML, so a cached page in one language reaches visitors
+  of another. Cache public HTML only for one-language sites, or put the
+  language in the URL.
+- HTMX requests get fragments from some routes. Don't cache a route that
+  answers differently to =HX-Request=.
+
+** S4. Conditional requests for pages
+
+A middleware adds a weak =ETag= to successful =GET= responses with a string
+body. It answers =304 Not Modified= when =If-None-Match= matches. The server
+still renders the page, but a repeat visitor downloads nothing.
+
+** S5. Static files with the right headers
+
+When Lisp serves =/static/=, it sends no =Cache-Control=. Browsers and
+Cloudflare then guess a lifetime. Shiso's static middleware sends:
+
+- =public, max-age=31536000, immutable= for a content-hashed name;
+- =no-cache= for any other name, so the browser checks with an =ETag=.
+
+** S6. Woo worker threads (only if measurements call for it)
+
+A =:server/workers= setting would pass =:worker-num= to Woo. More threads need
+one database connection per thread, because a cl-dbi connection isn't
+thread-safe. Do this only if step 4 of the protocol shows requests waiting
+for the thread.
+
+** S7. An in-image page cache (only if measurements call for it)
+
+Cloudflare caches per data center, so each one still asks the server once.
+A per-route cache in the image, cleared when a model is saved, would make
+those requests cheap. Decide after the sites cache pages at Cloudflare.
+
+* Implementation status
+
+Phase 1's Shiso items are done (2026-10-18): M1, M2, M4, S1 and S2. See
+=docs/how-to/measure-request-time.org= and =src/timing.lisp=. Transaction
+statements (=BEGIN=, =COMMIT=) count as queries, but cl-dbi reports no
+time for them.
+
+* Order of work
+
+** Phase 1: measure, and the changes that cost little
+
+1. Run the protocol on both sites for a baseline, with today's tools.
+2. M1, M2 and M4: the timer, =Server-Timing=, the access log and
+   =with-timing=.
+3. S1 and S2: SQLite settings, and sessionless mounts.
+4. The phase 1 items in each site's file.
+5. Run the protocol again and compare.
+
+** Phase 2: caching
+
+M3, M5, S3, S4 and S5, then each site's phase 2 items. Then run the
+protocol.
+
+** Phase 3: only where the measurements point
+
+S6, S7, M6's beacon endpoint, and a debug panel listing each request's SQL.
+
+* Decisions
+
+- *Real-visitor data:* Cloudflare Web Analytics on both sites.
+- *Freshness of cached pages:* 60 seconds at the CDN with
+  =stale-while-revalidate= is S3's default. A site may keep pages longer and
+  purge on deploy, as almightylisp.com does.
+
+* The measurement protocol
+
+Follow these steps for a baseline, after each change meant to improve speed,
+after each deploy that changes caching or the server, and once a month.
+Each site's =PERFORMANCE.org= lists the pages, regions and budgets to use.
+
+** Before you start
+
+- Keep the results in =perf/log.org= in the site's repository. Record one
+  entry per run, with the date, the deployed commit, and what changed since
+  the last run.
+- Measure the deployed site, not a development server. Debug mode, the REPL
+  and a local database all change the numbers.
+- Run each timing at least 3 times, and record the median. Single runs vary
+  by a factor of two.
+- Note whether each request was a cache hit, from =cf-cache-status=. A hit
+  and a miss are different measurements.
+
+** Step 1: Check the headers
+
+Check that caching works before you time anything. Use the site's own
+pages in place of these:
+
+#+begin_src sh
+SITE=https://gyokubundo.com
+for u in / /about /static/home/base.css; do
+  echo "== $u"
+  curl -s -o /dev/null -D - --compressed "$SITE$u" |
+    grep -i -E '^(HTTP|cache-control|cf-cache-status|content-encoding|set-cookie|server-timing|etag|age)'
+done
+#+end_src
+
+Check each of these:
+
+- Images and static files show =cf-cache-status: HIT= on a second request.
+- Pages meant to be cached show =HIT= on a second request.
+- No public page, image or static file sends =set-cookie= to an anonymous
+  visitor.
+- Pages show =content-encoding: gzip=, =br= or =zstd=.
+- Hashed static files carry =immutable=, and unhashed ones =no-cache=.
+- Pages carry =server-timing: total;dur=…= once M1 is deployed.
+
+** Step 2: Time requests from the visitors' regions
+
+Use Globalping (=globalping.io=, a free command-line tool) or KeyCDN's
+Performance Test. Measure from the regions in the site's file:
+
+#+begin_src sh
+globalping http https://almightylisp.com/ from "Virginia,California,Texas,London,Tokyo" --limit 5 --json
+#+end_src
+
+Each result's =timings= holds the DNS, TCP, TLS and first-byte times. If a
+flag has changed, =globalping http --help= lists the current ones.
+
+Record DNS, connect, TLS and first-byte times for:
+
+- two pages: the home page and one deep page;
+- a static file, twice, so the second is a cache hit;
+- an image, twice.
+
+A cached static file's first byte is the floor for that region: Cloudflare
+answered it without the server. A page's first byte minus that floor is the
+trip to the server plus the server's own time.
+
+To time Cloudflare's trip to the server without the page, request a static
+file with a query string no one has used, such as =?probe=123=. Cloudflare
+treats it as a new URL and fetches it from the server.
+
+** Step 3: Time the server without the network
+
+On the server, bypass Cloudflare and Caddy:
+
+#+begin_src sh
+curl -s -o /dev/null -w 'ttfb %{time_starttransfer}\n' -D - http://127.0.0.1:5000/ | grep -i -E 'server-timing|^ttfb'
+#+end_src
+
+- The first byte here is Woo and Lisp only.
+- Compare it with Caddy's log, whose =duration= field covers Caddy and Lisp.
+- Subtract this from step 2's page time, for a region near the server.
+  What remains is the trip from Cloudflare to the server.
+- Run =uptime= and =free -m= too. A loaded server answers slowly whatever
+  the code does.
+
+** Step 4: Read the server's own numbers
+
+After M2 and M3 are deployed:
+
+#+begin_src sh
+curl -s http://127.0.0.1:5000/_shiso/stats
+journalctl -u <site> --since today | grep -E 'ms=[0-9]{3,}'     # requests over 100 ms
+#+end_src
+
+Record the 95th percentile per route and the query count per page. A route
+over budget goes to step 7. If step 3's time is much higher than the stats'
+=total= under traffic, requests are waiting for Woo's thread (S6).
+
+** Step 5: Load pages in a lab
+
+Use WebPageTest (=webpagetest.org=):
+
+- Locations: the site's main region, and one far from the server.
+- Settings: Chrome, mobile, a "4G" connection, 3 runs, first and repeat
+  view.
+- Pages: the ones listed in the site's file.
+
+Record the median run's:
+
+- Largest Contentful Paint, Cumulative Layout Shift and Total Blocking Time;
+- first byte and start render;
+- bytes and requests, first and repeat view;
+- the waterfall's longest item, and what blocks rendering, such as fonts.
+
+The repeat view shows whether caching works: it should fetch almost nothing.
+Lighthouse in Chrome's developer tools gives similar numbers for a quick
+check, but from your own connection.
+
+** Step 6: Check real visitors
+
+In Cloudflare Web Analytics, for the last 7 days, record the 75th percentile
+of LCP, INP and CLS. Record them per country and per page, and the share of
+visits rated "good". Lab numbers say what is possible; these say what
+visitors get. When the two disagree, trust these.
+
+** Step 7: Find the slow code
+
+For a route over budget, in the REPL with production settings and a copy of
+the production database:
+
+#+begin_src lisp
+(s:time-request "/works")                     ; queries, time, allocation
+(s:profile-request "/works" :count 500)       ; where the CPU time goes
+(s:profile-request "/works" :mode :alloc)     ; where the garbage comes from
+#+end_src
+
+Fix the largest item, then run =time-request= again to confirm.
+
+** Step 8: Load-test before large changes
+
+Never against the live site. Run a production build on another machine, or
+locally with =SHISO_ENV=production=, and use =oha= or =wrk=:
+
+#+begin_src sh
+oha -z 30s -c 10 http://127.0.0.1:5000/
+oha -z 30s -c 50 http://127.0.0.1:5000/
+#+end_src
+
+Record requests per second, the 99th percentile and errors at each
+concurrency. When the 99th percentile climbs steeply between 10 and 50, the
+single thread is the limit (S6).
+
+** Step 9: Decide
+
+- Compare each number with the site's budgets and with the last entry in
+  =perf/log.org=.
+- For each miss, note the step that shows it and the likely cause.
+- Change one thing, deploy it, and run the steps it affects again.

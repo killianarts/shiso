@@ -69,11 +69,17 @@ by =stop=. Reading this directly is fine; mutating it from outside
 Wrap =INNER-APP= with Shiso's standard middleware stack:
 
 #+begin_example
-session middleware (DBI-backed via Mito's connection)
-  └─ locale middleware (cookie / Accept-Language → *locale*)
-       └─ CSRF middleware
-            └─ INNER-APP
+request timing (Server-Timing header, access log)
+  └─ HTTP errors (error pages, debug pages)
+       └─ session middleware (DBI-backed via Mito's connection)
+            └─ locale middleware (cookie / Accept-Language → *locale*)
+                 └─ CSRF middleware
+                      └─ request transaction (POST, PUT, PATCH, DELETE)
+                           └─ INNER-APP
 #+end_example
+
+Requests under =/static/= and under mounts with =:sessions nil= skip the
+session and CSRF middleware. See [[file:../how-to/measure-request-time.org][how to measure request time]].
 
 The session middleware must precede CSRF so the CSRF layer can
 read the session from the env. Locale sits between them so a

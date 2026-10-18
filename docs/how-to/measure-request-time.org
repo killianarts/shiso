@@ -1,0 +1,120 @@
+#+TITLE: How to measure request time
+#+OPTIONS: toc:2 num:nil
+
+Shiso times every request it serves. It reports the time in a
+=Server-Timing= header and in one log line per request. Use them to tell
+time spent in Lisp from time spent on the network.
+
+* Read the =Server-Timing= header
+
+Every response carries the time the request spent in Lisp:
+
+#+begin_example
+Server-Timing: total;dur=12.2
+#+end_example
+
+In debug mode, requests from your own machine get the full breakdown:
+
+#+begin_example
+Server-Timing: total;dur=12.2, db;dur=0.3;desc="6 queries", gc;dur=0.0, render;dur=8.1
+#+end_example
+
+- =total=: the time in Lisp, in milliseconds, error pages included.
+- =db=: the time in SQL statements, and how many ran. The session's own
+  queries count. cl-dbi reports no time for =BEGIN= and =COMMIT=.
+- =gc=: time in garbage collection while the request ran.
+- Every other entry is a phase you name with =shiso:with-timing=.
+
+Browsers show the header under the request's "Timing" tab in the developer
+tools. With =curl=:
+
+#+begin_src sh
+curl -s -o /dev/null -D - http://127.0.0.1:5000/ | grep -i server-timing
+#+end_src
+
+The =:server/timing-header= setting chooses what is sent:
+
+- =:total= (the default) sends only =total=. Anyone can read the header,
+  and a breakdown tells strangers how your pages work.
+- =:full= sends the breakdown to everyone.
+- =:off= sends no header.
+
+The header doesn't include the time Woo spends sending the body. When a CDN
+answers from its cache, the header is from the request that filled the
+cache.
+
+* Time part of a request
+
+Wrap the part in =shiso:with-timing=, with a name:
+
+#+begin_src lisp
+(defun index ()
+  (let ((photos (s:with-timing (:query) (find-photos))))
+    (s:http-response
+     (s:with-timing (:render)
+       (ah:render-to-string (hm:photo-grid :photos photos))))))
+#+end_src
+
+Each name becomes an entry in the breakdown. A name used twice adds up.
+Outside a request, =with-timing= runs its body and records nothing.
+
+* Read the access log
+
+Each request writes one line to standard output. Under systemd, the line
+goes to the journal:
+
+#+begin_example
+time=2026-10-18T02:50:34Z method=GET path=/notes status=200 ms=12.2 db_ms=0.3 queries=6 gc_ms=0.0 bytes=2089 route=demo:notes
+#+end_example
+
+- =path= leaves out the query string, which can hold a token.
+- =route= is the module and route name that answered. It's missing when no
+  route did, as for a 404 or a static file.
+- =bytes= is missing when Shiso can't know the size before sending, as for
+  a streamed response.
+
+Find slow requests in the journal:
+
+#+begin_src sh
+journalctl -u my-app --since today | grep -E ' ms=[0-9]{3,}'
+#+end_src
+
+The =:server/access-log= setting chooses the format: =:logfmt= (the
+default), =:json= for one JSON object per line, or =:off=. To send the
+lines somewhere else, bind =shiso/timing:*access-log-stream*=.
+
+* Find slow requests and their SQL
+
+A request that takes 500 ms or more also logs its SQL statements, in
+order, with their times:
+
+#+begin_example
+slow request: GET /works took 812.3 ms, 214 queries in 640.1 ms
+     0.4 ms  SELECT "id", "title" FROM "work" ORDER BY "rank"
+     2.9 ms  SELECT * FROM "photo" WHERE "work_id" = ?
+  …
+#+end_example
+
+Change the threshold with =:server/slow-request-ms=. =0= turns this log
+off.
+
+* Find repeated queries
+
+In debug mode, Shiso warns when one request runs the same SQL more than 10
+times:
+
+#+begin_example
+repeated query: 34 times in GET /works: SELECT * FROM "photo" WHERE "work_id" = ?
+  Usually an N+1 query: load the rows in one query instead.
+#+end_example
+
+This usually means a loop runs one query per row. Load the rows for every
+item in one query, then match them up in Lisp. Change the count with
+=shiso/timing:*repeated-query-threshold*=.
+
+* Serve files without sessions
+
+A request with a session cookie reads and saves its session, which costs
+several SQL statements. Mount modules that serve files with =:sessions nil=,
+as [[file:mount-a-module-under-a-prefix.org][How to mount a module]]
+describes. =/static/= never has a session.
